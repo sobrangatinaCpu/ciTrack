@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { supabase } from './lib/supabase'
+
+console.log("Supabase URL:", import.meta.env.VITE_SUPABASE_URL)
+console.log("Supabase:", supabase)
 
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
 
@@ -169,6 +173,19 @@ const classes = [
     meetingDays: ["MON", "SAT"],
   },
 ]
+type ClassItem = {
+  id: number | string
+  subject: string
+  code: string
+  time: string
+  room: string
+  color: string
+  status: string
+  attendance: number
+  semesterStart: string
+  semesterEnd: string
+  meetingDays: string[]
+}
 
 const meetingDayOptions = [
   { value: "MON", label: "Mon" },
@@ -1274,36 +1291,54 @@ function AddClassModal({
   const updateForm = (field: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [field]: value }))
 
-  const submitClass = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (
-      !form.subject.trim() ||
-      !form.code.trim() ||
-      !form.semesterStart ||
-      !form.semesterEnd ||
-      !form.startTime ||
-      !form.endTime ||
-      meetingDays.length === 0 ||
-      form.semesterEnd < form.semesterStart
-    ) {
-      return
-    }
+const submitClass = async (
+  event: React.FormEvent<HTMLFormElement>
+) => {
+  event.preventDefault()
 
-    onSave({
-      id: initialClass?.id ?? Date.now(),
-      subject: form.subject.trim(),
-      code: form.code.trim(),
-      time: `${formatTime(form.startTime)} – ${formatTime(form.endTime)}`,
-      room: form.room.trim() || "To be confirmed",
-      color: initialClass?.color ?? "#7a62d3",
-      status: initialClass?.status ?? "Scheduled",
-      attendance: Number(form.attendance) || 0,
-      semesterStart: form.semesterStart,
-      semesterEnd: form.semesterEnd,
-      meetingDays,
-    })
+  if (
+    !form.subject.trim() ||
+    !form.code.trim() ||
+    !form.semesterStart ||
+    !form.semesterEnd ||
+    !form.startTime ||
+    !form.endTime ||
+    meetingDays.length === 0 ||
+    form.semesterEnd < form.semesterStart
+  ) {
+    return
   }
 
+  const { data, error } = await supabase
+    .from('classes')
+    .insert([
+      {
+        subject: form.subject.trim(),
+        code: form.code.trim(),
+        room: form.room.trim() || "To be confirmed",
+        section: "Default Section",
+      }
+    ])
+
+  if (error) {
+    console.error(error)
+    return
+  }
+
+  onSave({
+    id: initialClass?.id ?? Date.now(),
+    subject: form.subject.trim(),
+    code: form.code.trim(),
+    time: `${formatTime(form.startTime)} – ${formatTime(form.endTime)}`,
+    room: form.room.trim() || "To be confirmed",
+    color: initialClass?.color ?? "#7a62d3",
+    status: initialClass?.status ?? "Scheduled",
+    attendance: Number(form.attendance) || 0,
+    semesterStart: form.semesterStart,
+    semesterEnd: form.semesterEnd,
+    meetingDays,
+  })
+}
   return (
     <div
       className="modal-backdrop"
@@ -1515,7 +1550,38 @@ function ClassesPage({
   setPage: (page: string) => void
   endedClassIds: number[]
 }) {
-  const [classList, setClassList] = useState(classes)
+  const [classList, setClassList] = useState<ClassItem[]>(classes)
+  useEffect(() => {
+    async function loadClasses() {
+      const { data, error } = await supabase
+        .from("classes")
+        .select("*")
+        .order("created_at", { ascending: true })
+
+    if (error) {
+      console.error("Unable to load classes:", error)
+      return
+    }
+
+    const loadedClasses: ClassItem[] = (data ?? []).map((item) => ({
+      id: item.id,
+      subject: item.subject ?? "",
+      code: item.code ?? "",
+      time: "8:00 – 10:00 AM",
+      room: item.room ?? "To be confirmed",
+      color: "#7a62d3",
+      status: "Scheduled",
+      attendance: 0,
+      semesterStart: "",
+      semesterEnd: "",
+      meetingDays: [],
+    }))
+
+    setClassList(loadedClasses)
+  }
+
+  loadClasses()
+}, [])
   const [isAddingClass, setIsAddingClass] = useState(false)
   const [editingClass, setEditingClass] = useState<typeof classes[0] | null>(
     null,
