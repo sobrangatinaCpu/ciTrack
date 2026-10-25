@@ -1306,24 +1306,67 @@ const submitClass = async (
     return
   }
 
+const classValues = {
+  subject: form.subject.trim(),
+  code: form.code.trim(),
+  section: "Default Section",
+  room: form.room.trim() || "To be confirmed",
+
+  capacity: Number(form.attendance),
+  meeting_days: meetingDays,
+
+  semester_start: form.semesterStart,
+  semester_end: form.semesterEnd,
+  start_time: form.startTime,
+  end_time: form.endTime,
+
+  color: initialClass?.color ?? "#7a62d3",
+  status: initialClass?.status ?? "Scheduled",
+}
+
+let savedClass
+if (initialClass) {
+  console.log("Editing class ID:", initialClass.id)
+
   const { data, error } = await supabase
-    .from('classes')
-    .insert([
-      {
-        subject: form.subject.trim(),
-        code: form.code.trim(),
-        room: form.room.trim() || "To be confirmed",
-        section: "Default Section",
-      }
-    ])
+    .from("classes")
+    .update(classValues)
+    .eq("id", initialClass.id)
+    .select()
+    .maybeSingle()
 
   if (error) {
-    console.error(error)
+    console.error("Unable to update class:", error)
+    alert(`Unable to update class: ${error.message}`)
     return
   }
 
+  if (!data) {
+    console.error("No class found with ID:", initialClass.id)
+    alert("No matching class was found. Refresh the page and try again.")
+    return
+  }
+
+  savedClass = data
+} else {
+  // Adding a new class
+  const { data, error } = await supabase
+    .from("classes")
+    .insert(classValues)
+    .select()
+    .single()
+
+  if (error) {
+    console.error("Unable to create class:", error)
+    alert(`Unable to create class: ${error.message}`)
+    return
+  }
+
+  savedClass = data
+}
+
   onSave({
-    id: initialClass?.id ?? Date.now(),
+    id: savedClass.id,
     subject: form.subject.trim(),
     code: form.code.trim(),
     time: `${formatTime(form.startTime)} – ${formatTime(form.endTime)}`,
@@ -1568,7 +1611,7 @@ function ClassesPage({
       room: item.room ?? "To be confirmed",
       color: "#7a62d3",
       status: "Scheduled",
-      attendance: 0,
+      attendance: item.capacity ?? 0,
       semesterStart: item.semester_start ?? "2026-06-01",
       semesterEnd: item.semester_end ?? "2026-11-30",
       meetingDays: item.meeting_days ?? [],
