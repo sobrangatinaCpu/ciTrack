@@ -1,0 +1,10 @@
+{
+  "description": "This app streamlines user interactions by providing an intuitive interface for efficient task management, enhancing productivity for individuals and teams.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
