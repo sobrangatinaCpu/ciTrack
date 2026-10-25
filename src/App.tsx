@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from './lib/supabase'
 
-console.log("Supabase URL:", import.meta.env.VITE_SUPABASE_URL)
-console.log("Supabase:", supabase)
-
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
 
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
