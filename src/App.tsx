@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from './lib/supabase'
-
+import {loginFaculty, registerFaculty,} from "./lib/auth"
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
 
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
@@ -1305,8 +1305,18 @@ const submitClass = async (
   ) {
     return
   }
+  const {
+  data: { user },
+  error: userError,
+} = await supabase.auth.getUser()
+
+if (userError || !user) {
+  alert("Please sign in before creating or editing a class.")
+  return
+}
 
 const classValues = {
+  faculty_id: user.id,
   subject: form.subject.trim(),
   code: form.code.trim(),
   section: "Default Section",
@@ -1319,6 +1329,9 @@ const classValues = {
   semester_end: form.semesterEnd,
   start_time: form.startTime,
   end_time: form.endTime,
+
+  access_code: form.accessCode.trim() || null,
+  requirements: form.requirements.trim() || null,
 
   color: initialClass?.color ?? "#7a62d3",
   status: initialClass?.status ?? "Scheduled",
@@ -1352,6 +1365,7 @@ if (initialClass) {
   // Adding a new class
   const { data, error } = await supabase
     .from("classes")
+    
     .insert(classValues)
     .select()
     .single()
@@ -4168,10 +4182,49 @@ function LandingPage({ onSignIn }: { onSignIn: () => void }) {
   {/* 3. Form Fields */}
   <form
     className="sign-in-form"
-    onSubmit={(event) => {
-      event.preventDefault()
+    onSubmit={async (event) => {
+  event.preventDefault()
+
+  const formData = new FormData(event.currentTarget)
+
+  const email = String(formData.get("email") ?? "")
+  const password = String(formData.get("password") ?? "")
+
+  try {
+    if (isSignUp) {
+      const fullName = String(formData.get("fullName") ?? "")
+      const facultyNumber = String(
+        formData.get("facultyNumber") ?? ""
+      )
+      const department = String(
+        formData.get("department") ?? ""
+      )
+
+      await registerFaculty({
+        email,
+        password,
+        fullName,
+        facultyNumber,
+        department,
+      })
+
+      alert(
+        "Faculty account created. Check your email and confirm your account before signing in."
+      )
+    } else {
+      await loginFaculty(email, password)
       onSignIn()
-    }}
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Authentication failed."
+
+    console.error("Faculty authentication error:", error)
+    alert(message)
+  }
+}}
   >
     {isSignUp && (
       <label>
