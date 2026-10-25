@@ -1572,9 +1572,9 @@ function ClassesPage({
       color: "#7a62d3",
       status: "Scheduled",
       attendance: 0,
-      semesterStart: "",
-      semesterEnd: "",
-      meetingDays: [],
+      semesterStart: item.semester_start ?? "2026-06-01",
+      semesterEnd: item.semester_end ?? "2026-11-30",
+      meetingDays: item.meeting_days ?? [],
     }))
 
     setClassList(loadedClasses)
