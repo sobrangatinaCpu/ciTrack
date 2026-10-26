@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from './lib/supabase'
 import {loginFaculty, registerFaculty,} from "./lib/auth"
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
+const formatDatabaseTime = (value: string) => {
+  const [hoursValue, minutesValue] = value.split(":")
+  const hours = Number(hoursValue)
+  const minutes = Number(minutesValue ?? 0)
+  const meridiem = hours >= 12 ? "PM" : "AM"
+
+  return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")} ${meridiem}`
+}
 
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -171,7 +179,7 @@ const classes = [
   },
 ]
 type ClassItem = {
-  id: number | string
+  id: string
   subject: string
   code: string
   time: string
@@ -561,14 +569,14 @@ function ConnectionNotice({
 function ClassCard({
   item,
   onStart,
-  ended,
   onEdit,
+  ended,
   activity,
 }: {
-  item: typeof classes[0]
-  onStart: (item: typeof classes[0]) => void
-  ended?: boolean
-  onEdit?: (item: typeof classes[0]) => void
+  item: ClassItem
+  onStart: (item: ClassItem) => void
+  onEdit?: (item: ClassItem) => void
+  ended: boolean
   activity?: ActivityItem
 }) {
   const semesterEnded = hasSemesterEnded(item)
@@ -669,14 +677,16 @@ function ClassCard({
 }
 
 function Dashboard({
+  classList = [],
   onStart,
   setPage,
   endedClassIds,
   activities,
 }: {
-  onStart: (item: typeof classes[0]) => void
+  classList?: ClassItem[]
+  onStart: (item: ClassItem) => void
   setPage: (page: string) => void
-  endedClassIds: number[]
+  endedClassIds: Array<string | number>
   activities: ActivityItem[]
 }) {
   const todayActivities = activities.filter(
@@ -813,19 +823,22 @@ function Dashboard({
             See all <Icon name="arrow" size={16} />
           </button>
         </div>
-        <div className="class-grid">
-          {classes.map((item) => (
-            <ClassCard
-              key={item.id}
-              item={item}
-              onStart={onStart}
-              ended={endedClassIds.includes(item.id)}
-              activity={todayActivities.find(
-                (activity) => activity.classId === item.id,
-              )}
-            />
-          ))}
-        </div>
+<div className="class-grid">
+  {classList.map((item) => (
+    <ClassCard
+      key={item.id}
+      item={item}
+      onStart={() => {}}
+      ended={endedClassIds
+        .map(String)
+        .includes(String(item.id))}
+      activity={todayActivities.find(
+        (activity) =>
+          String(activity.classId) === String(item.id),
+      )}
+    />
+  ))}
+</div>
       </section>
     </>
   )
@@ -1600,17 +1613,35 @@ function ClassesPage({
   setPage,
   endedClassIds,
 }: {
-  onStart: (item: typeof classes[0]) => void
+  onStart: (item: ClassItem) => void
   setPage: (page: string) => void
-  endedClassIds: number[]
+  endedClassIds: string[]
 }) {
-  const [classList, setClassList] = useState<ClassItem[]>(classes)
-  useEffect(() => {
-    async function loadClasses() {
-      const { data, error } = await supabase
-        .from("classes")
-        .select("*")
-        .order("created_at", { ascending: true })
+  const [classList, setClassList] = useState<ClassItem[]>([])
+useEffect(() => {
+  async function loadClasses() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser()
+
+    if (userError) {
+      console.error("Unable to get signed-in faculty:", userError)
+      setClassList([])
+      return
+    }
+
+    if (!user) {
+      console.log("No faculty account is currently signed in.")
+      setClassList([])
+      return
+    }
+
+    const { data, error } = await supabase
+      .from("classes")
+      .select("*")
+      .eq("faculty_id", user.id)
+      .order("created_at", { ascending: true })
 
     if (error) {
       console.error("Unable to load classes:", error)
@@ -1621,13 +1652,16 @@ function ClassesPage({
       id: item.id,
       subject: item.subject ?? "",
       code: item.code ?? "",
-      time: "8:00 – 10:00 AM",
+      time:
+        item.start_time && item.end_time
+          ? `${formatDatabaseTime(item.start_time)} - ${formatDatabaseTime(item.end_time)}`
+          : "",
       room: item.room ?? "To be confirmed",
-      color: "#7a62d3",
-      status: "Scheduled",
+      color: item.color ?? "#7a62d3",
+      status: item.status ?? "Scheduled",
       attendance: item.capacity ?? 0,
-      semesterStart: item.semester_start ?? "2026-06-01",
-      semesterEnd: item.semester_end ?? "2026-11-30",
+      semesterStart: item.semester_start ?? "",
+      semesterEnd: item.semester_end ?? "",
       meetingDays: item.meeting_days ?? [],
     }))
 
@@ -3298,7 +3332,7 @@ function ActivitiesPage({
                   setDraft({ ...draft, classId: Number(e.target.value) })
                 }
               >
-                {classes.map((item) => (
+                {classes.map((item)=> (
                   <option key={item.id} value={item.id}>
                     {item.subject} · {item.code}
                   </option>
@@ -4354,7 +4388,7 @@ export default function App() {
   const [omrDraftScores, setOmrDraftScores] = useState<Record<string, number>>(
     {},
   )
-  const [endedClassIds, setEndedClassIds] = useState<number[]>([])
+  const [endedClassIds, setEndedClassIds] = useState<string[]>([])
   const [online, setOnline] = useState(true)
 
   const logout = () => {
@@ -4423,12 +4457,13 @@ export default function App() {
         </>
       )
     return (
-      <Dashboard
-        onStart={openClass}
-        setPage={setPage}
-        endedClassIds={endedClassIds}
-        activities={activities}
-      />
+<Dashboard
+  classList={[]}
+  onStart={() => {}}
+  setPage={setPage}
+  endedClassIds={endedClassIds}
+  activities={activities}
+/>
     )
   }
 
