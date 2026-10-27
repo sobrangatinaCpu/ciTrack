@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { QRCodeCanvas } from "qrcode.react"
 import { supabase } from './lib/supabase'
 import {loginFaculty, registerFaculty,} from "./lib/auth"
 import citLogo from "./assets/cit.png"
@@ -245,9 +246,14 @@ const normalizedMeetingDays = (value: unknown): string[] => {
   const values = Array.isArray(value)
     ? value
     : typeof value === "string"
-      ? value.split(/[,&/]+/)
+      ? value
+          .replace(/^\s*[\[{]/, "")
+          .replace(/[\]}]\s*$/, "")
+          .replace(/["']/g, "")
+          .split(/[,&/]+/)
       : []
-  return values.map(normalizeMeetingDay).filter(Boolean)
+
+  return [...new Set(values.map(normalizeMeetingDay).filter(Boolean))]
 }
 
 const mapDatabaseClass = (item: any): ClassItem => {
@@ -478,12 +484,17 @@ function MessageDialogHost() {
   return (
     <div className="modal-backdrop formal-message-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDialog(null)}>
       <section className={`formal-message-dialog ${dialog.tone ?? "error"}`} role="alertdialog" aria-modal="true" aria-labelledby="formal-message-title" aria-describedby="formal-message-description">
-        <span className="formal-message-icon"><Icon name={dialog.tone === "success" ? "check" : dialog.tone === "info" ? "bell" : "minus"} size={20} /></span>
-        <div>
-          <h2 id="formal-message-title">{title}</h2>
-          <p id="formal-message-description">{dialog.message}</p>
+        <button type="button" className="formal-message-close" onClick={() => setDialog(null)} aria-label="Close message" title="Close">×</button>
+        <div className="formal-message-heading">
+          <span className="formal-message-icon" aria-hidden="true"><Icon name={dialog.tone === "success" ? "check" : dialog.tone === "info" ? "bell" : "minus"} size={18} /></span>
+          <div className="formal-message-copy">
+            <h2 id="formal-message-title">{title}</h2>
+            <p id="formal-message-description">{dialog.message}</p>
+          </div>
         </div>
-        <button type="button" className="primary-button" onClick={() => setDialog(null)} autoFocus>Okay</button>
+        <div className="formal-message-actions">
+          <button type="button" className="primary-button" onClick={() => setDialog(null)} autoFocus>Okay</button>
+        </div>
       </section>
     </div>
   )
@@ -1106,14 +1117,18 @@ function Dashboard({
   }, [])
 
   useEffect(() => {
-    async function loadDashboardClasses() {
+    let active = true
+
+    const loadDashboardClasses = async () => {
       setDashboardClassesLoading(true)
       setDashboardClassesError("")
+
       const { data: { user }, error: userError } = await supabase.auth.getUser()
       if (userError || !user) {
-        if (userError) console.error("Unable to get signed-in faculty:", userError)
-        setDashboardClasses([])
-        setDashboardClassesLoading(false)
+        if (active) {
+          setDashboardClasses([])
+          setDashboardClassesLoading(false)
+        }
         return
       }
 
@@ -1123,18 +1138,38 @@ function Dashboard({
         .eq("faculty_id", user.id)
         .order("created_at", { ascending: true })
 
+      if (!active) return
       if (error) {
         console.error("Unable to load dashboard classes:", error)
-        setDashboardClassesError(error.message)
         setDashboardClasses([])
-        setDashboardClassesLoading(false)
-        return
+        setDashboardClassesError(error.message)
+      } else {
+        setDashboardClasses((data ?? []).map(mapDatabaseClass))
       }
-
-      setDashboardClasses((data ?? []).map(mapDatabaseClass))
       setDashboardClassesLoading(false)
     }
-    loadDashboardClasses()
+
+    void loadDashboardClasses()
+
+    const classChannel = supabase
+      .channel("dashboard-class-schedule-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "classes" }, () => void loadDashboardClasses())
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_schedules" }, () => void loadDashboardClasses())
+      .subscribe()
+
+    const reloadVisibleDashboard = () => {
+      if (document.visibilityState === "visible") void loadDashboardClasses()
+    }
+    const reloadFocusedDashboard = () => void loadDashboardClasses()
+    document.addEventListener("visibilitychange", reloadVisibleDashboard)
+    window.addEventListener("focus", reloadFocusedDashboard)
+
+    return () => {
+      active = false
+      document.removeEventListener("visibilitychange", reloadVisibleDashboard)
+      window.removeEventListener("focus", reloadFocusedDashboard)
+      void supabase.removeChannel(classChannel)
+    }
   }, [])
 
   useEffect(() => {
@@ -1237,26 +1272,40 @@ function Dashboard({
     (activity) => activity.date === selectedDateKey,
   )
   const selectedClasses = dashboardClasses.filter((item) => {
-    if (item.semesterStart && selectedDateKey < item.semesterStart) return false
-    if (item.semesterEnd && selectedDateKey > item.semesterEnd) return false
+    const insideSemester =
+      (!item.semesterStart || selectedDateKey >= item.semesterStart) &&
+      (!item.semesterEnd || selectedDateKey <= item.semesterEnd)
+    if (!insideSemester) return false
+
+    const selectedDay = normalizeMeetingDay(selectedDayCode)
     return schedulesForDashboardClass(item).some((schedule) =>
-      schedule.meetingDays.map(normalizeMeetingDay).includes(normalizeMeetingDay(selectedDayCode)),
+      normalizedMeetingDays(schedule.meetingDays).includes(selectedDay),
     )
   })
   const selectedConcernCount = selectedDateKey === todayKey
     ? dashboardOpenConcerns
     : 0
-  const selectedRecordCount = selectedDateKey === todayKey ? 4 : 0
+  const selectedRecordCount = 0
   function schedulesForDashboardClass(item: ClassItem): ClassSchedule[] {
-    if ((item.schedules ?? []).length > 0) return item.schedules ?? []
-    if (item.meetingDays.length === 0) return []
+    const classMeetingDays = normalizedMeetingDays(item.meetingDays)
+    const schedules = (item.schedules ?? []).map((schedule) => {
+      const scheduleMeetingDays = normalizedMeetingDays(schedule.meetingDays)
+      return {
+        ...schedule,
+        meetingDays: scheduleMeetingDays.length > 0 ? scheduleMeetingDays : classMeetingDays,
+      }
+    })
+    const validSchedules = schedules.filter((schedule) => schedule.meetingDays.length > 0)
+    if (validSchedules.length > 0) return validSchedules
+    if (classMeetingDays.length === 0) return []
+
     const timeParts = item.time.split(/\s+-\s+/)
     return [{
       id: `${item.id}-fallback-schedule`,
-      meetingDays: item.meetingDays.map(normalizeMeetingDay),
+      meetingDays: classMeetingDays,
       startTime: timeParts[0] ?? "",
       endTime: timeParts[1] ?? "",
-      room: item.room,
+      room: item.room || "To be confirmed",
     }]
   }
 
@@ -1457,8 +1506,8 @@ function Dashboard({
               <Icon name="clipboard" />
             </span>
             <span>
-              <strong>4 drafts</strong>
-              <small>Records to finish</small>
+              <strong>0 drafts</strong>
+              <small>No records waiting for review</small>
             </span>
           </button>
           <button onClick={() => setPage("activities")}>
@@ -1510,7 +1559,7 @@ function Dashboard({
               <span className="dashboard-class-empty-icon"><Icon name="calendar" size={22} /></span>
               <div>
                 <strong>No classes scheduled for {selectedDateKey === todayKey ? "today" : selectedDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })}</strong>
-                <p>Comp Prog 4 and your other classes remain available. Hover or select one of the class meeting days, or open Classes to view every class.</p>
+                <p>No active class has a meeting schedule matching {selectedDate.toLocaleDateString("en-US", { weekday: "long" })}. Select another calendar date or open Classes to view all active classes.</p>
               </div>
               <button type="button" className="secondary-button" onClick={() => setPage("classes")}>View all classes</button>
             </div>
@@ -2229,30 +2278,31 @@ function ClassesPage({
   endedClassIds: string[]
 }) {
   const [classList, setClassList] = useState<ClassItem[]>([])
- const deleteClass = async (classId: string) => {
-  const confirmed = window.confirm(
-    "Are you sure you want to delete this class?",
-  )
+  const [classToDelete, setClassToDelete] = useState<ClassItem | null>(null)
+  const [classDeleting, setClassDeleting] = useState(false)
 
-  if (!confirmed) return
+  const deleteClass = async () => {
+    if (!classToDelete || classDeleting) return
+    setClassDeleting(true)
 
-  const { error } = await supabase
-    .from("classes")
-    .delete()
-    .eq("id", classId)
+    const { error } = await supabase
+      .from("classes")
+      .delete()
+      .eq("id", String(classToDelete.id))
 
-  if (error) {
-    console.error("Unable to delete class:", error)
-    showMessage(`Unable to delete class: ${error.message}`)
-    return
+    setClassDeleting(false)
+    if (error) {
+      console.error("Unable to delete class:", error)
+      showMessage(`Unable to delete class: ${error.message}`, "error", "Class was not deleted")
+      return
+    }
+
+    setClassList((current) =>
+      current.filter((classItem) => String(classItem.id) !== String(classToDelete.id)),
+    )
+    setClassToDelete(null)
+    showToast("Class deleted successfully.")
   }
-
-  setClassList((current) =>
-    current.filter(
-      (classItem) => String(classItem.id) !== classId,
-    ),
-  )
-}
 useEffect(() => {
   async function loadClasses() {
     const {
@@ -2381,7 +2431,7 @@ useEffect(() => {
     setIsAddingClass(true)
   }}
   onDelete={(classToDelete) => {
-    deleteClass(String(classToDelete.id))
+    setClassToDelete(classToDelete)
   }}
 />
         ))}
@@ -2393,6 +2443,26 @@ useEffect(() => {
         <h3>{scheduleStatus.title}</h3>
         <p>{scheduleStatus.message}</p>
       </div>
+      {classToDelete && (
+        <div className="modal-backdrop class-confirm-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !classDeleting) setClassToDelete(null)
+        }}>
+          <section className="class-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-class-title" aria-describedby="delete-class-description">
+            <button type="button" className="class-confirm-close" onClick={() => setClassToDelete(null)} disabled={classDeleting} aria-label="Close delete class dialog">×</button>
+            <div className="class-confirm-header">
+              <span className="class-confirm-icon" aria-hidden="true"><Icon name="minus" size={18} /></span>
+              <div>
+                <h2 id="delete-class-title">Delete class?</h2>
+                <p id="delete-class-description"><strong>{classToDelete.subject}</strong> ({classToDelete.code}) will be permanently removed, including connected schedules. This action cannot be undone.</p>
+              </div>
+            </div>
+            <div className="class-confirm-actions">
+              <button type="button" className="secondary-button" onClick={() => setClassToDelete(null)} disabled={classDeleting}>Cancel</button>
+              <button type="button" className="danger-button" onClick={() => void deleteClass()} disabled={classDeleting}>{classDeleting ? "Deleting..." : "Delete class"}</button>
+            </div>
+          </section>
+        </div>
+      )}
       {isAddingClass && (
         <AddClassModal
           initialClass={editingClass}
@@ -3960,7 +4030,6 @@ function ActivitiesPage({
           card_uid: detectedNfcCode,
           status: "active",
           registered_at: new Date().toISOString(),
-          deactivated_at: null,
         },
         { onConflict: "student_id" },
       )
@@ -4733,10 +4802,14 @@ const reminderFormValid = Boolean(
 }
 
 function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; onLogout: () => void }) {
+  type ProfilePanel = "profile" | "notifications" | "security" | "classes" | "exports" | "attendance" | null
   const [profile, setProfile] = useState<FacultyProfile>(emptyFacultyProfile)
   const [draftProfile, setDraftProfile] = useState<FacultyProfile>(emptyFacultyProfile)
   const [editingProfile, setEditingProfile] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
+  const [activePanel, setActivePanel] = useState<ProfilePanel>(null)
+  const [notifications, setNotifications] = useState({ classStarts: true, studentRequests: true, attendance: true, reminders: true })
+  const [attendanceSettings, setAttendanceSettings] = useState({ lateMinutes: 15, closeMinutes: 30, allowExcused: true })
 
   const loadProfile = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -4757,8 +4830,17 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
       facultyNumber: draftProfile.facultyNumber.trim(),
       email: draftProfile.email.trim(),
     }
-    const { error } = await supabase.auth.updateUser({
-      email: updated.email || undefined,
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setSavingProfile(false)
+      showMessage("Your session expired. Please sign in again.")
+      return
+    }
+
+    // Keep the university email read-only here. Updating an authenticated email
+    // may require confirmation and can fail as a generic "Error updating user".
+    const stableEmail = String(user.email ?? updated.email).trim()
+    const { error: metadataError } = await supabase.auth.updateUser({
       data: {
         full_name: updated.name,
         department: updated.department,
@@ -4766,53 +4848,94 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
         avatar_url: updated.photoUrl,
       },
     })
+    if (metadataError) {
+      setSavingProfile(false)
+      showMessage(`Unable to save profile: ${metadataError.message}`)
+      return
+    }
+
+    const { error: profileError } = await supabase
+      .from("faculty_profiles")
+      .update({
+        email: stableEmail,
+        full_name: updated.name,
+        department: updated.department,
+        faculty_number: updated.facultyNumber,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id)
+
     setSavingProfile(false)
-    if (error) { showMessage(`Unable to save profile: ${error.message}`); return }
-    setProfile(updated)
+    if (profileError) {
+      showMessage(`Unable to save profile details: ${profileError.message}`)
+      return
+    }
+    const savedProfile = { ...updated, email: stableEmail }
+    setProfile(savedProfile)
+    setDraftProfile(savedProfile)
     setEditingProfile(false)
+    showToast("Profile updated successfully.")
+  }
+
+  const savePreferencePanel = () => {
+    setActivePanel(null)
+    showToast("Settings saved successfully.")
+  }
+
+  const panelTitle: Record<Exclude<ProfilePanel, null>, string> = {
+    profile: "Profile information", notifications: "Notification preferences", security: "Privacy & security",
+    classes: "Class defaults", exports: "Records & exports", attendance: "Attendance settings",
   }
 
   return (<>
     <Header title="Profile" onNotify={() => setPage("notifications")} onProfile={() => setPage("profile")} />
+    <main className="profile-page-compact">
     <section className="profile-hero">
-      <img src={profile.photoUrl} alt="" />
-      <div>
+      <img src={profile.photoUrl} alt="Faculty profile" />
+      <div className="profile-identity">
         <span className="status-pill">Faculty</span>
         {profile.name ? (
           <>
             <h2>{profile.name}</h2>
-            {profile.department && <p>{profile.department}</p>}
-            {profile.facultyNumber && <small>Faculty No. {profile.facultyNumber}</small>}
+            <div className="profile-visible-details">
+              <span><strong>University email</strong>{profile.email || "Not set"}</span>
+              <span><strong>College or department</strong>{profile.department || "Not set"}</span>
+              <span><strong>Faculty number</strong>{profile.facultyNumber || "Not set"}</span>
+            </div>
           </>
-        ) : (
-          <div className="profile-hero-loading" aria-label="Loading faculty profile">
-            <span /><span /><span />
-          </div>
-        )}
+        ) : <div className="profile-hero-loading"><span/><span/><span/></div>}
       </div>
       <button className="secondary-button" disabled={!profile.name} onClick={() => { setDraftProfile(profile); setEditingProfile(true) }}>Edit profile</button>
     </section>
-    <div className="profile-grid">
-      <section className="profile-panel"><p className="eyebrow">Account</p><h3>Personal settings</h3>{["Profile information","Notification preferences","Privacy & security"].map(x => <button key={x}>{x}<Icon name="chevron" /></button>)}</section>
-      <section className="profile-panel"><p className="eyebrow">Teaching</p><h3>Class management</h3>{["Class records export","Assessment templates","Attendance settings"].map(x => <button key={x}>{x}<Icon name="chevron" /></button>)}</section>
-    </div>
-    <button className="profile-mobile-logout" onClick={onLogout}><Icon name="logout" size={18}/>Log out</button>
-    {editingProfile && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setEditingProfile(false)}>
-      <section className="profile-form-modal" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
-        <button className="modal-close" onClick={() => setEditingProfile(false)} aria-label="Close edit profile">×</button>
-        <p className="eyebrow">Faculty profile</p><h2 id="edit-profile-title">Edit profile</h2><p>Changes synchronize with the header profile card.</p>
-        <form onSubmit={saveProfile}>
-          <div className="profile-photo-summary"><img src={profile.photoUrl} alt=""/><div><strong>{profile.name}</strong><small>This information comes from the signed-in faculty account.</small></div></div>
-          <div className="profile-form-fields">
-            <label>Full name <em>Required</em><input value={draftProfile.name} onChange={e => setDraftProfile({...draftProfile,name:e.target.value})} required/></label>
-            <label>University email <em>Required</em><input type="email" value={draftProfile.email} onChange={e => setDraftProfile({...draftProfile,email:e.target.value})} required/></label>
-            <label>College or department <em>Required</em><input value={draftProfile.department} onChange={e => setDraftProfile({...draftProfile,department:e.target.value})} required/></label>
-            <label>Faculty number <em>Required</em><input value={draftProfile.facultyNumber} onChange={e => setDraftProfile({...draftProfile,facultyNumber:e.target.value})} required/></label>
-          </div>
-          <div className="profile-form-actions"><button type="button" className="secondary-button" onClick={() => setEditingProfile(false)}>Cancel</button><button className="primary-button" disabled={savingProfile}>{savingProfile ? "Saving..." : "Save changes"}</button></div>
-        </form>
+
+    <div className="profile-panels profile-settings-grid">
+      <section className="profile-panel"><p className="eyebrow">Account</p><h3>Personal settings</h3>
+        <button onClick={() => setActivePanel("profile")}>Profile information<Icon name="chevron" /></button>
+        <button onClick={() => setActivePanel("notifications")}>Notification preferences<Icon name="chevron" /></button>
+        <button onClick={() => setActivePanel("security")}>Privacy & security<Icon name="chevron" /></button>
       </section>
-    </div>}
+      <section className="profile-panel"><p className="eyebrow">Teaching</p><h3>Teaching settings</h3>
+        <button onClick={() => setActivePanel("classes")}>Class defaults<Icon name="chevron" /></button>
+        <button onClick={() => setActivePanel("exports")}>Records & exports<Icon name="chevron" /></button>
+        <button onClick={() => setActivePanel("attendance")}>Attendance settings<Icon name="chevron" /></button>
+      </section>
+    </div>
+
+
+
+    </main>
+
+    {activePanel && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setActivePanel(null)}><section className="profile-settings-modal" role="dialog" aria-modal="true" aria-labelledby="profile-settings-title">
+      <button className="modal-close" onClick={() => setActivePanel(null)} aria-label="Close">×</button><p className="eyebrow">Profile settings</p><h2 id="profile-settings-title">{panelTitle[activePanel as Exclude<ProfilePanel, null>]}</h2>
+      {activePanel === "profile" && <div className="settings-summary-list"><p><strong>Full name</strong><span>{profile.name || "Not set"}</span></p><p><strong>Email</strong><span>{profile.email || "Not set"}</span></p><p><strong>Department</strong><span>{profile.department || "Not set"}</span></p><p><strong>Faculty number</strong><span>{profile.facultyNumber || "Not set"}</span></p><button className="primary-button" onClick={() => { setDraftProfile(profile); setActivePanel(null); setEditingProfile(true) }}>Edit profile information</button></div>}
+      {activePanel === "notifications" && <div className="settings-toggle-list">{[["classStarts","Class-start reminders"],["studentRequests","Student request notifications"],["attendance","Attendance reminders"],["reminders","Activity and quiz reminders"]].map(([key,label]) => <label key={key}><span>{label}</span><input type="checkbox" checked={notifications[key as keyof typeof notifications]} onChange={e => setNotifications({...notifications,[key]:e.target.checked})}/></label>)}<button className="primary-button" onClick={savePreferencePanel}>Save preferences</button></div>}
+      {activePanel === "security" && <div className="settings-summary-list"><button onClick={() => showMessage("Use the password-reset link from the sign-in page to change your password.", "info", "Change password")}>Change password<Icon name="chevron" /></button><button onClick={() => void supabase.auth.signOut().then(onLogout)}>Sign out from this device<Icon name="chevron" /></button></div>}
+      {activePanel === "classes" && <div className="settings-summary-list"><p><strong>Default semester</strong><span>Use each class semester dates</span></p><p><strong>Default room</strong><span>To be confirmed</span></p><button className="primary-button" onClick={savePreferencePanel}>Save defaults</button></div>}
+      {activePanel === "exports" && <div className="settings-summary-list"><p>Export attendance and grade records from the Records page after selecting a class.</p><button className="primary-button" onClick={() => { setActivePanel(null); setPage("records") }}>Open records</button></div>}
+      {activePanel === "attendance" && <div className="settings-form-list"><label>Late after (minutes)<input type="number" min="0" max="180" value={attendanceSettings.lateMinutes} onChange={e => setAttendanceSettings({...attendanceSettings,lateMinutes:Number(e.target.value)})}/></label><label>Close attendance after (minutes)<input type="number" min="1" max="240" value={attendanceSettings.closeMinutes} onChange={e => setAttendanceSettings({...attendanceSettings,closeMinutes:Number(e.target.value)})}/></label><label className="settings-checkbox"><input type="checkbox" checked={attendanceSettings.allowExcused} onChange={e => setAttendanceSettings({...attendanceSettings,allowExcused:e.target.checked})}/>Allow excused absences</label><button className="primary-button" onClick={savePreferencePanel}>Save settings</button></div>}
+    </section></div>}
+
+    {editingProfile && <div className="modal-backdrop"><section className="profile-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title"><button type="button" className="profile-modal-close" onClick={() => setEditingProfile(false)} aria-label="Close edit profile" title="Close">×</button><p className="eyebrow">Faculty profile</p><h2 id="edit-profile-title">Edit profile</h2><p>Changes synchronize with the header profile card.</p><form onSubmit={saveProfile}><div className="profile-photo-summary"><img src={profile.photoUrl} alt=""/><div><strong>{profile.name}</strong><small>This information comes from the signed-in faculty account.</small></div></div><div className="profile-form-fields"><label><span className="profile-field-heading">Full name <em>Required</em></span><input value={draftProfile.name} onChange={e => setDraftProfile({...draftProfile,name:e.target.value})} required/></label><label><span className="profile-field-heading">University email <em>Required</em></span><input type="email" value={draftProfile.email} readOnly aria-readonly="true" required/><small className="profile-readonly-note">University email is managed by the signed-in account.</small></label><label><span className="profile-field-heading">College or department <em>Required</em></span><input value={draftProfile.department} onChange={e => setDraftProfile({...draftProfile,department:e.target.value})} required/></label><label><span className="profile-field-heading">Faculty number <em>Required</em></span><input value={draftProfile.facultyNumber} onChange={e => setDraftProfile({...draftProfile,facultyNumber:e.target.value})} required/></label></div><div className="profile-form-actions"><button type="button" className="secondary-button" onClick={() => setEditingProfile(false)}>Cancel</button><button className="primary-button" disabled={savingProfile}>{savingProfile ? "Saving..." : "Save changes"}</button></div></form></section></div>}
   </>)
 }
 
@@ -4856,6 +4979,27 @@ function ActiveClass({
 }) {
   const [started, setStarted] = useState(initialStarted)
   const [startedAt, setStartedAt] = useState(initialStartedAt)
+  const [sessionToken, setSessionToken] = useState(() => crypto.randomUUID())
+  const [generatedAt, setGeneratedAt] = useState(() => Date.now())
+  const [countdown, setCountdown] = useState(60)
+
+  useEffect(() => {
+    if (!started || viewOnly) return
+    const qrTimer = window.setInterval(() => {
+      setSessionToken(crypto.randomUUID())
+      setGeneratedAt(Date.now())
+      setCountdown(60)
+    }, 60_000)
+    return () => window.clearInterval(qrTimer)
+  }, [started, viewOnly])
+
+  useEffect(() => {
+    if (!started || viewOnly) return
+    const countdownTimer = window.setInterval(() => {
+      setCountdown((value) => (value > 1 ? value - 1 : 60))
+    }, 1_000)
+    return () => window.clearInterval(countdownTimer)
+  }, [started, viewOnly])
   const [scannerMode, setScannerMode] = useState<"attendance" | "performance">(
     "attendance",
   )
@@ -5012,32 +5156,34 @@ function ActiveClass({
             </section>
             {scannerMode === "attendance" ? (
               <section className="qr-card" aria-labelledby="qr-check-in-title">
-              <div className="qr-card-heading">
-                <div>
-                  <span>Alternative check-in</span>
-                  <strong id="qr-check-in-title">Student QR code</strong>
+                <div className="qr-card-heading">
+                  <div>
+                    <span>Alternative check-in</span>
+                    <strong id="qr-check-in-title">Attendance QR</strong>
+                  </div>
+                  <Icon name="scan" size={18} />
                 </div>
-                <Icon name="scan" size={18} />
-              </div>
-              <div className="qr-pattern" aria-label="Student QR check-in code">
-                <span />
-                <span />
-                <span />
-                <i />
-                <i />
-                <i />
-                <b />
-                <b />
-                <b />
-              </div>
-              <p>Students can scan this code to join the session.</p>
-              <div className="progress-label">
-                <span>Joined students</span>
-                <strong>24 of {item.attendance}</strong>
-              </div>
-              <div className="progress">
-                <span style={{ width: "75%" }} />
-              </div>
+                <div className="qr-pattern" aria-label="Attendance QR code">
+                  <QRCodeCanvas
+                    value={JSON.stringify({
+                      classId: item.id,
+                      token: sessionToken,
+                      generatedAt,
+                    })}
+                    size={140}
+                    level="H"
+                    includeMargin
+                  />
+                </div>
+                <p>Students can scan this code to record attendance.</p>
+                <small className="qr-refresh-note">QR refreshes in {countdown}s</small>
+                <div className="progress-label">
+                  <span>Attendance recorded</span>
+                  <strong>24 of {item.attendance}</strong>
+                </div>
+                <div className="progress">
+                  <span style={{ width: "75%" }} />
+                </div>
               </section>
             ) : (
               <section className="performance-mode-card" aria-label="Performance mode">
