@@ -1007,3 +1007,259 @@ h6,
   opacity: 1 !important;
   visibility: visible !important;
 }
+
+/* Faculty profile loading states: prevent placeholder-name flashes */
+.profile-name-skeleton,
+.profile-tooltip-skeleton,
+.profile-hero-loading span {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #dce8f1 25%, #eef4f8 50%, #dce8f1 75%);
+  background-size: 200% 100%;
+  animation: faculty-profile-shimmer 1.2s linear infinite;
+}
+.dashboard-name-skeleton {
+  width: min(330px, 72vw);
+  height: 34px;
+  margin-top: 8px;
+  border-radius: 9px;
+  background: linear-gradient(90deg, rgba(255,255,255,.18) 25%, rgba(255,255,255,.34) 50%, rgba(255,255,255,.18) 75%);
+  background-size: 200% 100%;
+}
+.profile-tooltip-skeleton { width: 135px; height: 32px; }
+.profile-hero-loading { display: grid; gap: 9px; margin-top: 10px; }
+.profile-hero-loading span:nth-child(1) { width: 210px; height: 26px; }
+.profile-hero-loading span:nth-child(2) { width: 168px; height: 14px; }
+.profile-hero-loading span:nth-child(3) { width: 120px; height: 12px; }
+@keyframes faculty-profile-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .profile-name-skeleton,
+  .profile-tooltip-skeleton,
+  .profile-hero-loading span { animation: none; }
+}
+
+/* Database-backed reminder controls */
+.reminder-card-actions { display: flex; align-items: center; gap: 8px; }
+.reminder-card-actions > button { min-width: 38px; min-height: 38px; padding: 0 10px; border: 1px solid #cfdee9; border-radius: 9px; color: #3e627d; background: #fff; }
+.reminder-card-actions > button:hover { border-color: #8ab6d8; background: #f4f9fd; }
+.reminder-card-actions .reminder-delete-button { color: #a13b3b; border-color: #e8c0c0; font-size: 12px; font-weight: 700; }
+.reminder-card-actions .reminder-delete-button:hover { background: #fff3f3; }
+.reminder-database-notice { margin: 12px 0; padding: 10px 12px; border: 1px solid #bdd6e8; border-radius: 9px; color: #245a7e; background: #f3f9fd; font-size: 13px; }
+.reminder-list-state { grid-column: 1 / -1; padding: 30px 18px; border: 1px dashed #c8d8e4; border-radius: 14px; color: #6b8192; background: #fff; text-align: center; }
+@media (max-width: 680px) { .reminder-card-actions { width: 100%; justify-content: flex-end; } }
+
+/* Required reminder fields and visible actions */
+.reminder-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.reminder-field-label em {
+  color: #d63c3c;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+.reminder-card-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.reminder-modal .primary-button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+/* Auto-dismissing application toast notifications */
+.app-toast {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 10000;
+  width: min(390px, calc(100vw - 36px));
+  min-height: 58px;
+  padding: 12px 12px 12px 14px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #b9dfce;
+  border-radius: 13px;
+  color: #174a36;
+  background: #f2fbf7;
+  box-shadow: 0 14px 38px rgba(20, 55, 78, .18);
+  font-size: 14px;
+  font-weight: 700;
+  animation: app-toast-in .22s ease-out;
+}
+.app-toast.error { color: #842f2f; border-color: #efc1c1; background: #fff5f5; }
+.app-toast.info { color: #225b83; border-color: #bdd9ec; background: #f3f9fd; }
+.app-toast-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: #239569; }
+.app-toast.error .app-toast-icon { background: #cc4d4d; }
+.app-toast.info .app-toast-icon { background: #247bb8; }
+.app-toast > button { width: 28px; height: 28px; border: 0; border-radius: 7px; color: currentColor; background: transparent; font-size: 20px; line-height: 1; }
+.app-toast > button:hover { background: rgba(0,0,0,.06); }
+@keyframes app-toast-in { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: translateX(0); } }
+@media (max-width: 680px) { .app-toast { top: 12px; right: 12px; width: calc(100vw - 24px); } }
+@media (prefers-reduced-motion: reduce) { .app-toast { animation: none; } }
+
+/* Reminder save guidance */
+.reminder-field-error {
+  display: block;
+  margin-top: 6px;
+  color: #c43c3c;
+  font-size: 11px;
+  font-weight: 700;
+}
+.reminder-modal .primary-button:disabled {
+  cursor: wait;
+  opacity: .68;
+}
+
+/* In-app delete confirmation and reminder action layout */
+.confirmation-backdrop { z-index: 11000; }
+.confirmation-modal {
+  width: min(430px, calc(100vw - 32px));
+  padding: 28px;
+  border: 1px solid #dce6ee;
+  border-radius: 18px;
+  color: #173d5c;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(8, 38, 62, .25);
+  text-align: center;
+}
+.confirmation-modal-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #b63636;
+  background: #fff0f0;
+}
+.confirmation-modal h2 { margin: 0; font-size: 23px; }
+.confirmation-modal p { margin: 10px 0 24px; color: #667f92; font-size: 14px; line-height: 1.55; }
+.confirmation-modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.confirmation-modal-actions button { min-height: 44px; border-radius: 10px; font-weight: 800; }
+.danger-button { border: 1px solid #c84242; color: #fff; background: #c84242; }
+.danger-button:hover { background: #ad3030; }
+.danger-button:disabled { cursor: wait; opacity: .65; }
+.timeline-content { min-width: 0; }
+.reminder-card-actions { flex: 0 0 auto; margin-left: auto; }
+.reminder-card-actions > button { white-space: nowrap; }
+@media (max-width: 680px) {
+  .confirmation-modal { padding: 22px 18px; }
+  .confirmation-modal-actions { grid-template-columns: 1fr; }
+  .reminder-card-actions { margin-left: 0; }
+}
+
+/* Final reminder card containment fix */
+.activities-workspace .timeline article {
+  grid-template-columns: 55px 28px minmax(0, 1fr) 104px !important;
+  column-gap: 8px;
+  overflow: hidden;
+  padding-right: 16px;
+}
+.activities-workspace .timeline-content {
+  min-width: 0;
+  overflow: hidden;
+}
+.activities-workspace .timeline-content h3,
+.activities-workspace .timeline-content p,
+.activities-workspace .timeline-content small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activities-workspace .reminder-card-actions {
+  width: 96px;
+  min-width: 96px;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+  justify-self: end;
+}
+.activities-workspace .reminder-card-actions > button {
+  width: 96px;
+  min-width: 0;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 9px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+@media (max-width: 760px) {
+  .activities-workspace .timeline article {
+    grid-template-columns: 43px 20px minmax(0, 1fr) !important;
+    row-gap: 12px;
+    overflow: hidden;
+  }
+  .activities-workspace .reminder-card-actions {
+    grid-column: 3 / -1;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-self: stretch;
+  }
+  .activities-workspace .reminder-card-actions > button {
+    width: 100%;
+  }
+}
+
+/* Formal in-app message dialog replaces browser localhost alerts */
+.formal-message-backdrop {
+  z-index: 12000;
+  padding: 18px;
+}
+.formal-message-dialog {
+  width: min(440px, calc(100vw - 36px));
+  padding: 26px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 14px 16px;
+  align-items: start;
+  border: 1px solid #d8e4ed;
+  border-radius: 18px;
+  color: #173d5c;
+  background: #fff;
+  box-shadow: 0 26px 80px rgba(6, 31, 52, .28);
+}
+.formal-message-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #c84949;
+}
+.formal-message-dialog.info .formal-message-icon { background: #287fb8; }
+.formal-message-dialog.success .formal-message-icon { background: #27966d; }
+.formal-message-dialog h2 {
+  margin: 1px 0 7px;
+  font-size: 21px;
+  line-height: 1.2;
+}
+.formal-message-dialog p {
+  margin: 0;
+  color: #637b8e;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.formal-message-dialog > .primary-button {
+  grid-column: 1 / -1;
+  min-height: 44px;
+  margin-top: 8px;
+}
+@media (max-width: 520px) {
+  .formal-message-dialog {
+    padding: 22px 18px;
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+  .formal-message-icon { width: 42px; height: 42px; }
+}

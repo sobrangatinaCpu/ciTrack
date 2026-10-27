@@ -272,7 +272,8 @@ type ActivityGroup = {
 }
 
 type ActivityItem = {
-  classId: number
+  id?: string
+  classId: string
   date: string
   title: string
   type: string
@@ -284,47 +285,10 @@ type ActivityItem = {
 
 const dashboardDate = "2026-10-23"
 
-const initialActivities: ActivityItem[] = [
-  {
-    classId: 1,
-    date: dashboardDate,
-    title: "Quiz 3",
-    type: "Quiz",
-    startTime: "10:00",
-    endTime: "11:00",
-    participation: "Individual",
-    groups: [],
-  },
-  {
-    classId: 2,
-    date: "2026-10-29",
-    title: "Network Configuration",
-    type: "Hands-on activity",
-    startTime: "13:00",
-    endTime: "15:00",
-    participation: "Group",
-    groups: [
-      {
-        id: "network-group-a",
-        name: "Group A",
-        studentIds: ["2026-0025", "2026-0026"],
-      },
-    ],
-  },
-  {
-    classId: 1,
-    date: "2026-11-05",
-    title: "Laboratory Project",
-    type: "Class activity",
-    startTime: "09:00",
-    endTime: "11:00",
-    participation: "Individual",
-    groups: [],
-  },
-]
+const initialActivities: ActivityItem[] = []
 
 const createActivityDraft = (): ActivityItem => ({
-  classId: 1,
+  classId: "",
   title: "",
   type: "Quiz",
   date: "2026-10-30",
@@ -477,6 +441,88 @@ const navItems: { id: string; label: string; icon: IconName }[] = [
 const professorPhoto =
   "https://images.unsplash.com/photo-1573497161161-c3e73707e25c?auto=format&fit=crop&w=240&q=85"
 
+type MessageDialogDetail = {
+  title?: string
+  message: string
+  tone?: "error" | "info" | "success"
+}
+
+const showMessage = (
+  message: string,
+  tone: MessageDialogDetail["tone"] = "error",
+  title?: string,
+) => {
+  window.dispatchEvent(
+    new CustomEvent<MessageDialogDetail>("classtrack:message", {
+      detail: { message, tone, title },
+    }),
+  )
+}
+
+function MessageDialogHost() {
+  const [dialog, setDialog] = useState<MessageDialogDetail | null>(null)
+
+  useEffect(() => {
+    const handleMessage = (event: Event) => {
+      const detail = (event as CustomEvent<MessageDialogDetail>).detail
+      if (detail?.message) setDialog(detail)
+    }
+    window.addEventListener("classtrack:message", handleMessage)
+    return () => window.removeEventListener("classtrack:message", handleMessage)
+  }, [])
+
+  if (!dialog) return null
+  const title = dialog.title ?? (dialog.tone === "success" ? "Success" : dialog.tone === "info" ? "Notice" : "Something went wrong")
+  return (
+    <div className="modal-backdrop formal-message-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDialog(null)}>
+      <section className={`formal-message-dialog ${dialog.tone ?? "error"}`} role="alertdialog" aria-modal="true" aria-labelledby="formal-message-title" aria-describedby="formal-message-description">
+        <span className="formal-message-icon"><Icon name={dialog.tone === "success" ? "check" : dialog.tone === "info" ? "bell" : "minus"} size={20} /></span>
+        <div>
+          <h2 id="formal-message-title">{title}</h2>
+          <p id="formal-message-description">{dialog.message}</p>
+        </div>
+        <button type="button" className="primary-button" onClick={() => setDialog(null)} autoFocus>Okay</button>
+      </section>
+    </div>
+  )
+}
+
+type ToastTone = "success" | "error" | "info"
+type ToastDetail = { message: string; tone?: ToastTone }
+
+const showToast = (message: string, tone: ToastTone = "success") => {
+  window.dispatchEvent(new CustomEvent<ToastDetail>("classtrack:toast", { detail: { message, tone } }))
+}
+
+function ToastHost() {
+  const [toast, setToast] = useState<(ToastDetail & { id: number }) | null>(null)
+
+  useEffect(() => {
+    let timer: number | undefined
+    const handleToast = (event: Event) => {
+      const detail = (event as CustomEvent<ToastDetail>).detail
+      if (!detail?.message) return
+      if (timer !== undefined) window.clearTimeout(timer)
+      setToast({ id: Date.now(), message: detail.message, tone: detail.tone ?? "success" })
+      timer = window.setTimeout(() => setToast(null), 3500)
+    }
+    window.addEventListener("classtrack:toast", handleToast)
+    return () => {
+      window.removeEventListener("classtrack:toast", handleToast)
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [])
+
+  if (!toast) return null
+  return (
+    <aside className={`app-toast ${toast.tone ?? "success"}`} role="status" aria-live="polite">
+      <span className="app-toast-icon"><Icon name={toast.tone === "error" ? "minus" : "check"} size={16} /></span>
+      <span>{toast.message}</span>
+      <button type="button" onClick={() => setToast(null)} aria-label="Dismiss notification">×</button>
+    </aside>
+  )
+}
+
 type FacultyProfile = {
   name: string
   department: string
@@ -494,9 +540,9 @@ type FacultyNotification = {
 }
 
 const emptyFacultyProfile: FacultyProfile = {
-  name: "Faculty member",
-  department: "College of Industrial Technology",
-  facultyNumber: "Not set",
+  name: "",
+  department: "",
+  facultyNumber: "",
   email: "",
   photoUrl: professorPhoto,
 }
@@ -625,12 +671,18 @@ function Header({
           <Icon name="bell" />
           {notificationCount > 0 && <span />}
         </button>
-        <button className="avatar-menu" onClick={onProfile} aria-label={`Open ${profile.name} profile`}>
+        <button className="avatar-menu" onClick={onProfile} aria-label={profile.name ? `Open ${profile.name} profile` : "Open faculty profile"}>
           <img className="mini-avatar" src={profile.photoUrl} alt="" />
           <span className="avatar-tooltip">
-            <strong>{profile.name}</strong>
-            <small>{profile.department}</small>
-            {profile.facultyNumber !== "Not set" && <small>Faculty No. {profile.facultyNumber}</small>}
+            {profile.name ? (
+              <>
+                <strong>{profile.name}</strong>
+                {profile.department && <small>{profile.department}</small>}
+                {profile.facultyNumber && <small>Faculty No. {profile.facultyNumber}</small>}
+              </>
+            ) : (
+              <span className="profile-tooltip-skeleton" aria-label="Loading faculty profile" />
+            )}
           </span>
         </button>
       </div>
@@ -1015,13 +1067,27 @@ function Dashboard({
   activities: ActivityItem[]
 }) {
   const [dashboardClasses, setDashboardClasses] = useState<ClassItem[]>([])
-  const [dashboardFacultyName, setDashboardFacultyName] = useState("Faculty")
+  const [dashboardFacultyName, setDashboardFacultyName] = useState("")
+  const [dashboardNow, setDashboardNow] = useState(() => new Date())
 
   const dashboardDisplayName = (() => {
+    if (!dashboardFacultyName.trim()) return ""
     const cleanedName = dashboardFacultyName.replace(/^prof\.?\s+/i, "").trim()
-    const firstName = cleanedName.split(/\s+/)[0] || "Faculty"
-    return `Prof. ${firstName}`
+    const firstName = cleanedName.split(/\s+/)[0] || ""
+    return firstName ? `Prof. ${firstName}` : ""
   })()
+
+  const dashboardGreeting = (() => {
+    const hour = dashboardNow.getHours()
+    if (hour < 12) return "Good morning"
+    if (hour < 18) return "Good afternoon"
+    return "Good evening"
+  })()
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setDashboardNow(new Date()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     async function loadDashboardFaculty() {
@@ -1151,8 +1217,12 @@ function Dashboard({
       <section className="welcome">
         <div className="welcome-main">
           <div className="welcome-copy">
-            <p className="eyebrow welcome-greeting">Good morning</p>
-            <h2>Ready for today, {dashboardDisplayName}?</h2>
+            <p className="eyebrow welcome-greeting">{dashboardGreeting}</p>
+            {dashboardDisplayName ? (
+              <h2>Ready for today, {dashboardDisplayName}?</h2>
+            ) : (
+              <div className="profile-name-skeleton dashboard-name-skeleton" aria-label="Loading faculty profile" />
+            )}
             <p className="welcome-status-message">
               <span className="fg-inline-bold" data-fge-id="fge-361">
                 You have {selectedClasses.length} {selectedClasses.length === 1 ? "class" : "classes"} and {selectedRecordCount} records waiting for review.
@@ -1864,12 +1934,12 @@ function AddClassModal({
       form.semesterEnd < form.semesterStart ||
       !schedulesAreValid
     ) {
-      alert("Complete all required class and schedule information. Each schedule needs at least one day and a valid start and end time.")
+      showMessage("Complete all required class and schedule information. Each schedule needs at least one day and a valid start and end time.")
       return
     }
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) {
-      alert("Please sign in before creating or editing a class.")
+      showMessage("Please sign in before creating or editing a class.")
       return
     }
     setSaving(true)
@@ -1896,7 +1966,7 @@ function AddClassModal({
         .maybeSingle()
       if (error || !data) {
         setSaving(false)
-        alert(`Unable to update class: ${error?.message ?? "Class not found"}`)
+        showMessage(`Unable to update class: ${error?.message ?? "Class not found"}`)
         return
       }
       savedClass = data
@@ -1906,7 +1976,7 @@ function AddClassModal({
         .eq("class_id", initialClass.id)
       if (deleteError) {
         setSaving(false)
-        alert(`Unable to replace schedules: ${deleteError.message}`)
+        showMessage(`Unable to replace schedules: ${deleteError.message}`)
         return
       }
     } else {
@@ -1917,7 +1987,7 @@ function AddClassModal({
         .single()
       if (error) {
         setSaving(false)
-        alert(`Unable to create class: ${error.message}`)
+        showMessage(`Unable to create class: ${error.message}`)
         return
       }
       savedClass = data
@@ -1935,7 +2005,7 @@ function AddClassModal({
       .select()
     if (scheduleError) {
       setSaving(false)
-      alert(`Unable to save schedules: ${scheduleError.message}`)
+      showMessage(`Unable to save schedules: ${scheduleError.message}`)
       return
     }
     const savedSchedules: ClassSchedule[] = (savedScheduleRows ?? []).map(
@@ -1965,7 +2035,7 @@ function AddClassModal({
     })
     setSaving(false)
     if (!initialClass) {
-      alert(`Class created. Student access code: ${savedClass.access_code ?? studentAccessCode}`)
+      showToast(`Class created successfully. Access code: ${savedClass.access_code ?? studentAccessCode}`)
     }
   }
 
@@ -2080,7 +2150,7 @@ function ClassesPage({
 
   if (error) {
     console.error("Unable to delete class:", error)
-    alert(`Unable to delete class: ${error.message}`)
+    showMessage(`Unable to delete class: ${error.message}`)
     return
   }
 
@@ -3442,6 +3512,80 @@ function ActivitiesPage({
   const [editing, setEditing] = useState<number | null>(null)
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   const [draft, setDraft] = useState<ActivityItem>(createActivityDraft)
+  const [remindersLoading, setRemindersLoading] = useState(true)
+  const [reminderClasses, setReminderClasses] = useState<Array<{ id: string; subject: string; code: string }>>([])
+  const [reminderSaving, setReminderSaving] = useState(false)
+  const [reminderNotice, setReminderNotice] = useState("")
+  const [reminderToDelete, setReminderToDelete] = useState<ActivityItem | null>(null)
+  const [reminderDeleting, setReminderDeleting] = useState(false)
+
+  const mapReminderRow = (row: any): ActivityItem => ({
+    id: String(row.id),
+    classId: row.class_id ?? "",
+    date: String(row.reminder_date ?? ""),
+    title: String(row.title ?? ""),
+    type: String(row.activity_type ?? "Quiz"),
+    startTime: String(row.start_time ?? "").slice(0, 5),
+    endTime: String(row.end_time ?? "").slice(0, 5),
+    participation: String(row.participation ?? "Individual"),
+    groups: Array.isArray(row.groups) ? row.groups : [],
+  })
+
+  const loadReminderClasses = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data, error } = await supabase
+      .from("classes")
+      .select("id, subject, code")
+      .eq("faculty_id", user.id)
+      .order("subject", { ascending: true })
+    if (error) {
+      setReminderNotice(`Unable to load classes: ${error.message}`)
+      setReminderClasses([])
+      return
+    }
+    setReminderClasses((data ?? []).map((item: any) => ({
+      id: String(item.id),
+      subject: String(item.subject ?? "Untitled class"),
+      code: String(item.code ?? ""),
+    })))
+  }
+
+  const loadReminders = async () => {
+    setRemindersLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setReminders([])
+      setRemindersLoading(false)
+      return
+    }
+    const { data, error } = await supabase
+      .from("faculty_reminders")
+      .select("id, class_id, reminder_date, title, activity_type, start_time, end_time, participation, groups")
+      .eq("faculty_id", user.id)
+      .order("reminder_date", { ascending: true })
+      .order("start_time", { ascending: true })
+    if (error) setReminderNotice(`Unable to load reminders: ${error.message}`)
+    else setReminders((data ?? []).map(mapReminderRow))
+    setRemindersLoading(false)
+  }
+
+  useEffect(() => {
+    if (editing === -1 && !draft.classId && reminderClasses.length > 0) {
+      setDraft((current) => ({ ...current, classId: reminderClasses[0].id }))
+    }
+  }, [editing, draft.classId, reminderClasses])
+
+  useEffect(() => {
+    void loadReminderClasses()
+    void loadReminders()
+    const channel = supabase
+      .channel("faculty-reminders-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "faculty_reminders" }, () => void loadReminders())
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [])
+
   const [studentConcerns, setStudentConcerns] = useState(initialStudentConcerns)
   const [expandedConcernId, setExpandedConcernId] = useState<string | null>(
     null,
@@ -3566,7 +3710,7 @@ function ActivitiesPage({
 
     if (!("NDEFReader" in window)) {
       setNfcScanStatus("idle")
-      alert(
+      showMessage(
         "NFC scanning is not supported here. Open the deployed HTTPS website in Chrome on an NFC-enabled Android phone.",
       )
       return
@@ -3584,7 +3728,7 @@ function ActivitiesPage({
           const serialNumber = String(event.serialNumber ?? "").trim()
           if (!serialNumber) {
             setNfcScanStatus("idle")
-            alert("The NFC card was detected, but no card identifier was available.")
+            showMessage("The NFC card was detected, but no card identifier was available.")
             return
           }
           setDetectedNfcCode(serialNumber)
@@ -3598,7 +3742,7 @@ function ActivitiesPage({
         () => {
           setNfcScanStatus("idle")
           setDetectedNfcCode("")
-          alert("The NFC card could not be read. Keep the card near the phone and try again.")
+          showMessage("The NFC card could not be read. Keep the card near the phone and try again.")
         },
         { once: true },
       )
@@ -3607,9 +3751,9 @@ function ActivitiesPage({
       setDetectedNfcCode("")
       const errorName = error instanceof DOMException ? error.name : "UnknownError"
       if (errorName === "NotAllowedError") {
-        alert("NFC permission was denied. Allow NFC access in Chrome and try again.")
+        showMessage("NFC permission was denied. Allow NFC access in Chrome and try again.")
       } else {
-        alert("NFC scanning could not start. Keep Chrome open in the foreground and try again.")
+        showMessage("NFC scanning could not start. Keep Chrome open in the foreground and try again.")
       }
     }
   }
@@ -3671,7 +3815,7 @@ function ActivitiesPage({
   }
 
   const openNewReminder = () => {
-    setDraft(createActivityDraft())
+    setDraft({ ...createActivityDraft(), classId: reminderClasses[0]?.id ?? "" })
     setActiveGroupId(null)
     setEditing(-1)
   }
@@ -3724,23 +3868,95 @@ function ActivitiesPage({
       }),
     }))
 
-  const saveReminder = () => {
-    if (
-      !draft.title.trim() ||
-      !draft.date ||
-      !draft.startTime ||
-      !draft.endTime ||
-      draft.endTime <= draft.startTime ||
-      (draft.participation === "Group" && draft.groups.length === 0)
-    )
+  const saveReminder = async () => {
+    if (!draft.title.trim()) {
+      showToast("Enter a reminder title.", "error")
       return
-    if (editing === -1) setReminders((items) => [...items, draft])
-    else if (editing !== null)
-      setReminders((items) =>
-        items.map((item, index) => (index === editing ? draft : item)),
-      )
+    }
+    if (!draft.classId) {
+      showToast("Select a class before saving the reminder.", "error")
+      return
+    }
+    if (!draft.date || !draft.startTime || !draft.endTime) {
+      showToast("Complete the required date and time fields.", "error")
+      return
+    }
+    if (draft.endTime <= draft.startTime) {
+      showToast("End time must be later than start time.", "error")
+      return
+    }
+    if (draft.participation === "Group" && draft.groups.length === 0) {
+      showToast("Add at least one group for a group activity.", "error")
+      return
+    }
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setReminderNotice("Your session expired. Sign in again before saving.")
+      return
+    }
+
+    setReminderSaving(true)
+    setReminderNotice("")
+    const payload = {
+      faculty_id: user.id,
+      class_id: String(draft.classId),
+      reminder_date: draft.date,
+      title: draft.title.trim(),
+      activity_type: draft.type,
+      start_time: draft.startTime,
+      end_time: draft.endTime,
+      participation: draft.participation,
+      groups: draft.groups,
+      updated_at: new Date().toISOString(),
+    }
+
+    const result = draft.id
+      ? await supabase.from("faculty_reminders").update(payload).eq("id", draft.id).eq("faculty_id", user.id)
+      : await supabase.from("faculty_reminders").insert(payload)
+
+    setReminderSaving(false)
+    if (result.error) {
+      showToast(`Unable to save reminder: ${result.error.message}`, "error")
+      return
+    }
     setEditing(null)
+    showToast(draft.id ? "Reminder updated successfully." : "Reminder added successfully.")
+    await loadReminders()
   }
+
+  const deleteReminder = async () => {
+    if (!reminderToDelete?.id) return
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      showToast("Your session expired. Sign in again.", "error")
+      return
+    }
+    setReminderDeleting(true)
+    const { error } = await supabase
+      .from("faculty_reminders")
+      .delete()
+      .eq("id", reminderToDelete.id)
+      .eq("faculty_id", user.id)
+    setReminderDeleting(false)
+    if (error) {
+      showToast(`Unable to delete reminder: ${error.message}`, "error")
+      return
+    }
+    setReminderToDelete(null)
+    showToast("Reminder deleted successfully.")
+    await loadReminders()
+  }
+
+const reminderFormValid = Boolean(
+    draft.title.trim() &&
+    draft.classId &&
+    draft.date &&
+    draft.startTime &&
+    draft.endTime &&
+    draft.endTime > draft.startTime &&
+    (draft.participation !== "Group" || draft.groups.length > 0),
+  )
 
   return (
     <>
@@ -3755,8 +3971,8 @@ function ActivitiesPage({
           <h2>Assessments & reminders</h2>
           <p>Schedule exams, quizzes, and activities for your classes.</p>
         </div>
-        <button className="primary-button" onClick={openNewReminder}>
-          <Icon name="plus" /> Add reminder
+        <button className="primary-button" onClick={openNewReminder} disabled={reminderClasses.length === 0}>
+          <Icon name="plus" /> {reminderClasses.length === 0 ? "Create a class first" : "Add reminder"}
         </button>
       </div>
       <section className="enrollment-operations" aria-labelledby="enrollment-title">
@@ -4016,8 +4232,12 @@ function ActivitiesPage({
           </div>
         </section>
         <div className="timeline">
-          {reminders.map((a, i) => (
-            <article key={`${a.title}-${i}`}>
+          {remindersLoading ? (
+            <p className="reminder-list-state">Loading reminders...</p>
+          ) : reminders.length === 0 ? (
+            <p className="reminder-list-state">No reminders yet. Select Add reminder to create one.</p>
+          ) : reminders.map((a, i) => (
+            <article key={a.id ?? `${a.title}-${i}`}>
               {(() => {
                 const status = getActivityStatus(a, i)
                 return (
@@ -4038,7 +4258,7 @@ function ActivitiesPage({
                       <h3>{a.title}</h3>
                       <p>
                         {a.type} ·{" "}
-                        {classes.find((item) => item.id === a.classId)?.code ??
+                        {reminderClasses.find((item) => item.id === a.classId)?.code ??
                           "Unassigned class"}
                       </p>
                       <small>
@@ -4054,16 +4274,28 @@ function ActivitiesPage({
                         </small>
                       )}
                     </div>
-                    <button
-                      aria-label={`Edit ${a.title}`}
-                      onClick={() => {
-                        setDraft(a)
-                        setActiveGroupId(null)
-                        setEditing(i)
-                      }}
-                    >
-                      <Icon name="edit" />
-                    </button>
+                    <div className="reminder-card-actions">
+                      <button
+                        type="button"
+                        aria-label={`Edit ${a.title}`}
+                        onClick={() => {
+                          setDraft({ ...a, groups: a.groups.map((group) => ({ ...group, studentIds: [...group.studentIds] })) })
+                          setActiveGroupId(null)
+                          setEditing(i)
+                        }}
+                      >
+                        <Icon name="edit" size={15} />
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="reminder-delete-button"
+                        aria-label={`Delete ${a.title}`}
+                        onClick={() => setReminderToDelete(a)}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </>
                 )
               })()}
@@ -4071,6 +4303,26 @@ function ActivitiesPage({
           ))}
         </div>
       </div>
+      {reminderToDelete && (
+        <div
+          className="modal-backdrop confirmation-backdrop"
+          onMouseDown={(event) => event.target === event.currentTarget && !reminderDeleting && setReminderToDelete(null)}
+        >
+          <section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-reminder-title" aria-describedby="delete-reminder-description">
+            <span className="confirmation-modal-icon"><Icon name="minus" size={20} /></span>
+            <h2 id="delete-reminder-title">Delete reminder?</h2>
+            <p id="delete-reminder-description">
+              “{reminderToDelete.title}” will be permanently removed. This action cannot be undone.
+            </p>
+            <div className="confirmation-modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setReminderToDelete(null)} disabled={reminderDeleting}>Cancel</button>
+              <button type="button" className="danger-button" onClick={() => void deleteReminder()} disabled={reminderDeleting}>
+                {reminderDeleting ? "Deleting..." : "Delete reminder"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {editing !== null && (
         <div
           className="modal-backdrop"
@@ -4095,16 +4347,16 @@ function ActivitiesPage({
             </h2>
             <p>Create a scheduled exam, quiz, or class activity.</p>
             <label>
-              Title
+              <span className="reminder-field-label">Title <em>Required</em></span>
               <input
                 value={draft.title}
                 onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                placeholder="e.g. Midterm examination"
+                required
               />
             </label>
             <label>
-              Activity type
-              <select
+              <span className="reminder-field-label">Activity type <em>Required</em></span>
+              <select required
                 value={draft.type}
                 onChange={(e) => setDraft({ ...draft, type: e.target.value })}
               >
@@ -4116,23 +4368,29 @@ function ActivitiesPage({
               </select>
             </label>
             <label>
-              Class
-              <select
+              <span className="reminder-field-label">Class <em>Required</em></span>
+              <select required
                 value={draft.classId}
                 onChange={(e) =>
-                  setDraft({ ...draft, classId: Number(e.target.value) })
+                  setDraft({ ...draft, classId: e.target.value })
                 }
               >
-                {classes.map((item)=> (
+                <option value="">Select a class</option>
+                {reminderClasses.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.subject} · {item.code}
                   </option>
                 ))}
               </select>
+              {reminderClasses.length === 0 ? (
+                <small className="reminder-field-error">No database classes are available. Create a class first.</small>
+              ) : !draft.classId ? (
+                <small className="reminder-field-error">Select a class.</small>
+              ) : null}
             </label>
             <label>
-              Participation
-              <select
+              <span className="reminder-field-label">Participation <em>Required</em></span>
+              <select required
                 value={draft.participation}
                 onChange={(e) => {
                   const participation = e.target.value
@@ -4241,7 +4499,7 @@ function ActivitiesPage({
               </section>
             )}
             <label>
-              Date
+              <span className="reminder-field-label">Date <em>Required</em></span>
               <input
                 type="date"
                 value={draft.date}
@@ -4254,7 +4512,7 @@ function ActivitiesPage({
             </label>
             <div className="reminder-fields">
               <label>
-                Start time
+                <span className="reminder-field-label">Start time <em>Required</em></span>
                 <input
                   type="time"
                   value={draft.startTime}
@@ -4265,7 +4523,7 @@ function ActivitiesPage({
                 />
               </label>
               <label>
-                End time
+                <span className="reminder-field-label">End time <em>Required</em></span>
                 <input
                   type="time"
                   min={draft.startTime}
@@ -4277,8 +4535,13 @@ function ActivitiesPage({
                 />
               </label>
             </div>
-            <button className="primary-button" onClick={saveReminder}>
-              Save reminder
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => void saveReminder()}
+              disabled={reminderSaving}
+            >
+              {reminderSaving ? "Saving..." : editing === -1 ? "Save reminder" : "Save changes"}
             </button>
           </section>
         </div>
@@ -4322,7 +4585,7 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
       },
     })
     setSavingProfile(false)
-    if (error) { alert(`Unable to save profile: ${error.message}`); return }
+    if (error) { showMessage(`Unable to save profile: ${error.message}`); return }
     setProfile(updated)
     setEditingProfile(false)
   }
@@ -4331,8 +4594,21 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
     <Header title="Profile" onNotify={() => setPage("notifications")} onProfile={() => setPage("profile")} />
     <section className="profile-hero">
       <img src={profile.photoUrl} alt="" />
-      <div><span className="status-pill">Faculty</span><h2>{profile.name}</h2><p>{profile.department}</p><small>Faculty No. {profile.facultyNumber}</small></div>
-      <button className="secondary-button" onClick={() => { setDraftProfile(profile); setEditingProfile(true) }}>Edit profile</button>
+      <div>
+        <span className="status-pill">Faculty</span>
+        {profile.name ? (
+          <>
+            <h2>{profile.name}</h2>
+            {profile.department && <p>{profile.department}</p>}
+            {profile.facultyNumber && <small>Faculty No. {profile.facultyNumber}</small>}
+          </>
+        ) : (
+          <div className="profile-hero-loading" aria-label="Loading faculty profile">
+            <span /><span /><span />
+          </div>
+        )}
+      </div>
+      <button className="secondary-button" disabled={!profile.name} onClick={() => { setDraftProfile(profile); setEditingProfile(true) }}>Edit profile</button>
     </section>
     <div className="profile-grid">
       <section className="profile-panel"><p className="eyebrow">Account</p><h3>Personal settings</h3>{["Profile information","Notification preferences","Privacy & security"].map(x => <button key={x}>{x}<Icon name="chevron" /></button>)}</section>
@@ -4824,6 +5100,7 @@ function LandingPage({
 
   return (
     <main className="landing-page">
+      <MessageDialogHost />
       {/* Left Intro Panel with Background Image & Bleeding Vignette Effect */}
       <section className="landing-intro">
         <img
@@ -4947,7 +5224,7 @@ function LandingPage({
       setShowPassword(false)
       setShowConfirmation(false)
 
-      alert(
+      showMessage(
         "Faculty account created. Please sign in using the account you just created."
       )
     } else {
@@ -4961,7 +5238,7 @@ function LandingPage({
         : "Authentication failed."
 
     console.error("Faculty authentication error:", error)
-    alert(message)
+    showMessage(message)
   }
 }}
   >
@@ -4971,7 +5248,7 @@ function LandingPage({
         <input
           type="text"
           name="fullName"
-          placeholder="Prof. Maria Santos"
+          placeholder="Enter your full name"
           autoComplete="name"
           required
         />
@@ -5327,6 +5604,8 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <MessageDialogHost />
+      <ToastHost />
       <Sidebar page={page} setPage={setPage} onLogout={logout} />
       <main className="main-content">
         <ConnectionNotice
