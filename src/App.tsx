@@ -4741,8 +4741,59 @@ export default function App() {
   const [omrDraftScores, setOmrDraftScores] = useState<Record<string, number>>(
     {},
   )
-  const [endedClassIds, setEndedClassIds] = useState<string[]>([])
+  const endedClassesStorageKey = "ci-track-ended-classes"
+  const localDateKey = () => {
+    const date = new Date()
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-")
+  }
+  const [endedClassIds, setEndedClassIds] = useState<string[]>(() => {
+    try {
+      const storedValue = window.localStorage.getItem(endedClassesStorageKey)
+      if (!storedValue) return []
+      const stored = JSON.parse(storedValue) as { date?: string; classIds?: string[] }
+      if (stored.date !== localDateKey()) {
+        window.localStorage.removeItem(endedClassesStorageKey)
+        return []
+      }
+      return Array.isArray(stored.classIds) ? stored.classIds.map(String) : []
+    } catch {
+      return []
+    }
+  })
   const [online, setOnline] = useState(true)
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      endedClassesStorageKey,
+      JSON.stringify({ date: localDateKey(), classIds: endedClassIds }),
+    )
+  }, [endedClassIds])
+
+  useEffect(() => {
+    let midnightTimer: number | undefined
+
+    const resetEndedClassesAtMidnight = () => {
+      const current = new Date()
+      const nextMidnight = new Date(current)
+      nextMidnight.setHours(24, 0, 0, 0)
+      const delay = nextMidnight.getTime() - current.getTime() + 250
+
+      midnightTimer = window.setTimeout(() => {
+        setEndedClassIds([])
+        window.localStorage.removeItem(endedClassesStorageKey)
+        resetEndedClassesAtMidnight()
+      }, delay)
+    }
+
+    resetEndedClassesAtMidnight()
+    return () => {
+      if (midnightTimer !== undefined) window.clearTimeout(midnightTimer)
+    }
+  }, [])
 
   const logout = () => {
     setSignedIn(false)
@@ -4750,7 +4801,6 @@ export default function App() {
     setActiveClass(null)
     setActiveSessionStartedAt(null)
     setMinimizedSession(null)
-    setEndedClassIds([])
     setOmrScannerOpen(false)
     setOmrDraftScores({})
   }
@@ -4859,7 +4909,7 @@ export default function App() {
         <ActiveClass
           item={activeClass}
           viewOnly={
-            endedClassIds.includes(activeClass.id) ||
+            endedClassIds.includes(String(activeClass.id)) ||
             hasSemesterEnded(activeClass)
           }
           initialStarted={activeSessionStartedAt !== null}
@@ -4872,7 +4922,9 @@ export default function App() {
             setActiveClass(null)
             setActiveSessionStartedAt(null)
             setEndedClassIds((ids) =>
-              ids.includes(activeClass.id) ? ids : [...ids, activeClass.id],
+              ids.includes(String(activeClass.id))
+                ? ids
+                : [...ids, String(activeClass.id)],
             )
           }}
           onMinimize={(startedAt) => {
