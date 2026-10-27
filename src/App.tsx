@@ -4825,17 +4825,13 @@ function LandingPage({
   return (
     <main className="landing-page">
       {/* Left Intro Panel with Background Image & Bleeding Vignette Effect */}
-      <section
-        className="landing-intro"
-        style={{
-          backgroundImage: `linear-gradient(135deg, rgba(7, 44, 82, 0.52) 0%, rgba(10, 71, 120, 0.34) 100%), url(${citBuilding})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-          boxShadow: "inset -30px 0 40px -15px rgba(7, 44, 82, 0.95)",
-          position: "relative",
-        }}
-      >
+      <section className="landing-intro">
+        <img
+          src={citBuilding}
+          alt="College of Industrial Technology building"
+          className="landing-building-image"
+        />
+        <div className="landing-background-overlay" aria-hidden="true" />
         <div className="landing-brand">
           <span
             className="landing-logo-placeholder"
