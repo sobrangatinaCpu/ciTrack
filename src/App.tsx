@@ -1342,6 +1342,12 @@ function OmrScannerModal({
   )
 }
 
+const generateStudentAccessCode = () => {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+  const values = crypto.getRandomValues(new Uint32Array(8))
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("")
+}
+
 function AddClassModal({
   onClose,
   onSave,
@@ -1379,6 +1385,9 @@ function AddClassModal({
     initialClass?.schedules?.length ? initialClass.schedules : [legacySchedule],
   )
   const [saving, setSaving] = useState(false)
+  const [studentAccessCode] = useState(
+    () => initialClass?.accessCode || generateStudentAccessCode(),
+  )
   const updateForm = (field: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [field]: value }))
   const addSchedule = () =>
@@ -1449,6 +1458,7 @@ function AddClassModal({
       semester_start: form.semesterStart,
       semester_end: form.semesterEnd,
       requirements: form.requirements.trim() || null,
+      access_code: studentAccessCode,
       color: initialClass?.color ?? "#7a62d3",
       status: initialClass?.status ?? "Scheduled",
     }
@@ -1526,18 +1536,18 @@ function AddClassModal({
       semesterStart: savedClass.semester_start ?? form.semesterStart,
       semesterEnd: savedClass.semester_end ?? form.semesterEnd,
       meetingDays: firstSchedule.meetingDays,
-      accessCode: savedClass.access_code ?? initialClass?.accessCode ?? "",
+      accessCode: savedClass.access_code ?? studentAccessCode,
       schedules: savedSchedules,
     })
     setSaving(false)
-    if (!initialClass && savedClass.access_code) {
-      alert(`Class created. Student access code: ${savedClass.access_code}`)
+    if (!initialClass) {
+      alert(`Class created. Student access code: ${savedClass.access_code ?? studentAccessCode}`)
     }
   }
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="add-class-title">
+      <section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="add-class-title" style={{ fontFamily: "inherit" }}>
         <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         <p className="eyebrow">Class setup</p>
         <h2 id="add-class-title">{isEditing ? "Edit class" : "Add a class"}</h2>
@@ -1568,10 +1578,10 @@ function AddClassModal({
           <p>Add another schedule when the same subject meets at a different time or room.</p>
           <div className="schedule-list">
             {schedules.map((schedule, index) => (
-              <section className="schedule-form-card" key={schedule.id} style={{ border: "1px solid #dbe6f0", borderRadius: 12, padding: 16, marginBottom: 14 }}>
+              <section className="schedule-form-card" key={schedule.id} style={{ border: "1px solid #dbe6f0", borderRadius: 12, padding: 16, marginBottom: 14, fontFamily: "inherit" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <strong>Schedule {index + 1}</strong>
-                  {schedules.length > 1 && <button type="button" className="class-card-delete" onClick={() => removeSchedule(schedule.id)}>Remove</button>}
+                  {schedules.length > 1 && <button type="button" className="class-card-delete" style={{ fontFamily: "inherit" }} onClick={() => removeSchedule(schedule.id)}>Remove</button>}
                 </div>
                 <fieldset className="meeting-days">
                   <legend>Class days <em>Required</em></legend>
@@ -1601,10 +1611,10 @@ function AddClassModal({
               </section>
             ))}
           </div>
-          <button type="button" className="secondary-button" onClick={addSchedule}><Icon name="plus" size={16} /> Add another schedule</button>
+          <button type="button" className="secondary-button" style={{ fontFamily: "inherit" }} onClick={addSchedule}><Icon name="plus" size={16} /> Add another schedule</button>
           <label>Student access code
-            <input type="text" value={initialClass?.accessCode || "Generated automatically after saving"} readOnly />
-            <small>A unique code is generated automatically when the class is created.</small>
+            <input type="text" value={studentAccessCode} readOnly />
+            <small>This unique code is generated automatically. Students use it to join the class.</small>
           </label>
           <label>Required materials or prerequisites
             <textarea value={form.requirements} onChange={(event) => updateForm("requirements", event.target.value)} placeholder="e.g. Laptop, network cable, and completed safety orientation" />
