@@ -546,7 +546,7 @@ type FacultyProfile = {
 
 type FacultyNotification = {
   id: string
-  kind: "class" | "concern" | "petition"
+  kind: "concern" | "petition" | "request"
   title: string
   message: string
   createdAt: string
@@ -571,55 +571,48 @@ const profileFromUser = (user: any): FacultyProfile => {
   }
 }
 
+const normalizeStudentRequestCategory = (value: unknown): "concern" | "petition" | "request" => {
+  const category = String(value ?? "request").trim().toLowerCase()
+  if (category.includes("petition")) return "petition"
+  if (category.includes("concern")) return "concern"
+  return "request"
+}
+
+const studentRequestCategoryLabel = (value: unknown) => {
+  const category = normalizeStudentRequestCategory(value)
+  return category === "petition" ? "Petition" : category === "concern" ? "Concern" : "Request"
+}
+
 const loadFacultyNotifications = async (): Promise<FacultyNotification[]> => {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return []
-  const notices: FacultyNotification[] = []
-  const now = new Date()
-  const today = dayCodeFromDate(now)
-  const nowMinutes = now.getHours() * 60 + now.getMinutes()
 
-  const { data: classRows } = await supabase
-    .from("classes")
-    .select("id, subject, code, class_schedules(meeting_days, start_time, room)")
+  const { data, error } = await supabase
+    .from("student_requests")
+    .select("id, faculty_id, student_name, category, message, status, created_at")
     .eq("faculty_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(30)
 
-  for (const classRow of classRows ?? []) {
-    for (const schedule of classRow.class_schedules ?? []) {
-      const startMinutes = minutesFromTime(schedule.start_time ?? "")
-      const minutesUntil = startMinutes - nowMinutes
-      if ((schedule.meeting_days ?? []).includes(today) && minutesUntil >= 0 && minutesUntil <= 30) {
-        notices.push({
-          id: `class-${classRow.id}-${schedule.start_time}`,
-          kind: "class",
-          title: `${classRow.subject} starts soon`,
-          message: `${minutesUntil === 0 ? "Starting now" : `Starts in ${minutesUntil} minute${minutesUntil === 1 ? "" : "s"}`} · ${classRow.code}${schedule.room ? ` · ${schedule.room}` : ""}`,
-          createdAt: now.toISOString(),
-        })
-      }
-    }
+  if (error) {
+    console.error("Unable to load student request notifications:", error)
+    return []
   }
 
-  for (const table of ["student_requests"] as const) {
-    const kind: "concern" | "petition" = "concern"
-    const { data } = await supabase
-      .from(table)
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(10)
-    for (const row of data ?? []) {
-      const status = String(row.status ?? "open").toLowerCase()
-      if (!["open", "pending", "submitted"].includes(status)) continue
-      notices.push({
+  return (data ?? [])
+    .filter((row) => ["open", "pending", "submitted"].includes(String(row.status ?? "open").toLowerCase()))
+    .map((row) => {
+      const kind = normalizeStudentRequestCategory(row.category)
+      const label = studentRequestCategoryLabel(row.category)
+      const studentName = String(row.student_name ?? "A student")
+      return {
         id: `${kind}-${row.id}`,
         kind,
-        title: kind === "concern" ? "New student concern" : "New student petition",
-        message: String(row.subject ?? row.category ?? row.message ?? `A student submitted a ${kind}.`),
+        title: `${label} from ${studentName}`,
+        message: String(row.message ?? `${studentName} submitted a ${label.toLowerCase()}.`),
         createdAt: String(row.created_at ?? new Date().toISOString()),
-      })
-    }
-  }
-  return notices.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      }
+    })
 }
 
 function Header({
@@ -647,7 +640,6 @@ function Header({
     const timer = window.setInterval(loadHeader, 60_000)
     const profileChannel = supabase
       .channel("faculty-header-sync")
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, loadHeader)
       .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, loadHeader)
       .subscribe()
     return () => {
@@ -2362,39 +2354,45 @@ useEffect(() => {
         minutesFromTime(a.schedule.startTime) -
         minutesFromTime(b.schedule.startTime),
     )
-  const nextClassToday = todaySchedule.find(
-    ({ schedule }: { schedule: ClassSchedule }) =>
-      minutesFromTime(schedule.startTime) > currentMinutes,
-  )
-  const activeClassToday = todaySchedule.find(
-    ({ schedule }: { schedule: ClassSchedule }) => {
+  const activeScheduleToday = todaySchedule.find(({ item, schedule }: { item: ClassItem; schedule: ClassSchedule }) => {
+    if (endedClassIds.includes(String(item.id))) return false
     const start = minutesFromTime(schedule.startTime)
     const end = minutesFromTime(schedule.endTime)
-      return currentMinutes >= start && currentMinutes < end
-    },
+    return currentMinutes >= start && currentMinutes < end
+  })
+  const nextClassToday = todaySchedule.find(({ item, schedule }: { item: ClassItem; schedule: ClassSchedule }) =>
+    !endedClassIds.includes(String(item.id)) && minutesFromTime(schedule.startTime) > currentMinutes,
   )
+  const endedClassesToday = todaySchedule.filter(({ item }: { item: ClassItem; schedule: ClassSchedule }) => endedClassIds.includes(String(item.id)))
   const lastClassToday = todaySchedule.at(-1)
-  const scheduleStatus = activeClassToday
+  const scheduleStatus = activeScheduleToday
     ? {
-        title: `${activeClassToday.item.subject} is in progress`,
-        message: `${formatDatabaseTime(activeClassToday.schedule.startTime)} - ${formatDatabaseTime(activeClassToday.schedule.endTime)}${activeClassToday.schedule.room ? ` · ${activeClassToday.schedule.room}` : ""}`,
+        title: `${activeScheduleToday.item.subject} is in progress`,
+        message: `${formatDatabaseTime(activeScheduleToday.schedule.startTime)} - ${formatDatabaseTime(activeScheduleToday.schedule.endTime)}${activeScheduleToday.schedule.room ? ` · ${activeScheduleToday.schedule.room}` : ""}`,
       }
     : nextClassToday
       ? {
           title: `Next class: ${nextClassToday.item.subject}`,
           message: `${formatDatabaseTime(nextClassToday.schedule.startTime)} - ${formatDatabaseTime(nextClassToday.schedule.endTime)}${nextClassToday.schedule.room ? ` · ${nextClassToday.schedule.room}` : ""}`,
         }
-      : todaySchedule.length === 0
+      : endedClassesToday.length > 0
         ? {
-            title: "No classes scheduled today",
-            message: "Your teaching schedule is clear for today.",
+            title: endedClassesToday.length === 1 ? "Class ended" : "Classes ended for today",
+            message: endedClassesToday.length === 1
+              ? `${endedClassesToday[0].item.subject} has ended. Attendance and class records remain available.`
+              : `${endedClassesToday.length} classes have ended. Attendance and class records remain available.`,
           }
-        : {
-            title: "Your schedule is clear",
-            message: lastClassToday
-              ? `Your final class ended at ${formatDatabaseTime(lastClassToday.schedule.endTime)}.`
-              : "There are no more scheduled classes today.",
-          }
+        : todaySchedule.length === 0
+          ? {
+              title: "No classes scheduled today",
+              message: "Your teaching schedule is clear for today.",
+            }
+          : {
+              title: "Your schedule is clear",
+              message: lastClassToday
+                ? `Your final class ended at ${formatDatabaseTime(lastClassToday.schedule.endTime)}.`
+                : "There are no more scheduled classes today.",
+            }
 
   return (
     <>
@@ -2438,7 +2436,7 @@ useEffect(() => {
       </div>
       <div className="empty-prompt" aria-live="polite">
         <span>
-          <Icon name={activeClassToday ? "clock" : "calendar"} />
+          <Icon name={activeScheduleToday ? "clock" : endedClassesToday.length > 0 ? "check" : "calendar"} />
         </span>
         <h3>{scheduleStatus.title}</h3>
         <p>{scheduleStatus.message}</p>
@@ -3751,6 +3749,7 @@ function ActivitiesPage({
 
   const [studentConcerns, setStudentConcerns] = useState(initialStudentConcerns)
   const [studentConcernsLoading, setStudentConcernsLoading] = useState(true)
+  const [requestCategoryFilter, setRequestCategoryFilter] = useState<"All" | "Petition" | "Request" | "Concern">("All")
   const [reviewSavingId, setReviewSavingId] = useState<string | null>(null)
 
   const formatRequestSubmittedAt = (value: string) => {
@@ -4322,7 +4321,7 @@ const reminderFormValid = Boolean(
           <div className="concerns-heading">
             <div>
               <p className="eyebrow">Student requests</p>
-              <h2 id="concerns-title">Concerns & petitions</h2>
+              <h2 id="concerns-title">Student Concerns / Requests</h2>
             </div>
             <span className="concerns-count">
               {
@@ -4332,6 +4331,19 @@ const reminderFormValid = Boolean(
               open
             </span>
           </div>
+          <div className="request-category-filter" aria-label="Filter student requests">
+            {(["All", "Petition", "Request", "Concern"] as const).map((category) => (
+              <button
+                key={category}
+                type="button"
+                className={requestCategoryFilter === category ? "active" : ""}
+                aria-pressed={requestCategoryFilter === category}
+                onClick={() => setRequestCategoryFilter(category)}
+              >
+                {category}
+              </button>
+            ))}
+          </div>
           <div className="concerns-list">
             {studentConcernsLoading ? (
               <p className="concerns-empty-state">Loading student requests...</p>
@@ -4339,9 +4351,11 @@ const reminderFormValid = Boolean(
               <div className="concerns-empty-state">
                 <Icon name="clipboard" size={22} />
                 <strong>No student requests</strong>
-                <span>New concerns and petitions will appear here.</span>
+                <span>New petitions, requests, and concerns will appear here.</span>
               </div>
-            ) : studentConcerns.map((concern) => {
+            ) : studentConcerns
+                .filter((concern) => requestCategoryFilter === "All" || studentRequestCategoryLabel(concern.category) === requestCategoryFilter)
+                .map((concern) => {
               const student = {
                 id: concern.studentId,
                 name: concern.studentName || "Student",
@@ -4364,7 +4378,7 @@ const reminderFormValid = Boolean(
                   <div className="concern-copy">
                     <div className="concern-meta">
                       <strong>{student.name}</strong>
-                      <span>{concern.category}</span>
+                      <span className={`request-category-badge ${normalizeStudentRequestCategory(concern.category)}`}>{studentRequestCategoryLabel(concern.category)}</span>
                     </div>
                     <p>{concern.message}</p>
                     <small>
@@ -4945,18 +4959,16 @@ function NotificationsPage({ setPage }: { setPage: (page: string) => void }) {
   const load = async () => { setLoading(true); setItems(await loadFacultyNotifications()); setLoading(false) }
   useEffect(() => {
     void load()
-    const timer = window.setInterval(load, 60_000)
     const channel = supabase.channel("faculty-notifications-page")
       .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, load)
       .subscribe()
-    return () => { window.clearInterval(timer); void supabase.removeChannel(channel) }
+    return () => { void supabase.removeChannel(channel) }
   }, [])
   return (<>
     <Header title="Notifications" onNotify={() => setPage("notifications")} onProfile={() => setPage("profile")} />
     <section className="notifications-page" aria-labelledby="notifications-title">
       <div className="section-heading"><div><p className="eyebrow">Teacher updates</p><h2 id="notifications-title">Notifications</h2></div><button onClick={() => void load()}>Refresh</button></div>
-      {loading ? <p className="notification-empty">Loading notifications...</p> : items.length === 0 ? <div className="empty-prompt"><span><Icon name="bell"/></span><h3>You’re all caught up</h3><p>Classes starting within 30 minutes and new concerns or petitions will appear here.</p></div> : <div className="notification-list">{items.map(item => <button key={item.id} className={`notification-item ${item.kind}`} onClick={() => item.kind === "class" ? setPage("classes") : setPage("activities")}><span className="notification-item-icon"><Icon name={item.kind === "class" ? "clock" : item.kind === "concern" ? "users" : "clipboard"}/></span><span><strong>{item.title}</strong><small>{item.message}</small></span><Icon name="chevron" size={16}/></button>)}</div>}
+      {loading ? <p className="notification-empty">Loading notifications...</p> : items.length === 0 ? <div className="empty-prompt"><span><Icon name="bell"/></span><h3>You’re all caught up</h3><p>New student petitions, requests, and concerns will appear here.</p></div> : <div className="notification-list">{items.map(item => <button key={item.id} className={`notification-item ${item.kind}`} onClick={() => setPage("activities")}><span className="notification-item-icon"><Icon name={item.kind === "concern" ? "users" : "clipboard"}/></span><span><strong>{item.title}</strong><small>{item.message}</small></span><Icon name="chevron" size={16}/></button>)}</div>}
     </section>
   </>)
 }

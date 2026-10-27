@@ -1895,3 +1895,41 @@ h6,
   .qr-pattern { min-height: 164px; padding: 10px; }
   .qr-pattern canvas { width: 132px !important; }
 }
+
+/* Student Concerns / Requests category controls */
+.request-category-filter {
+  margin: 14px 0 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.request-category-filter button {
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid #d6e3ec;
+  border-radius: 999px;
+  color: #557084;
+  background: #fff;
+  font: 700 14px/1 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.request-category-filter button:hover,
+.request-category-filter button.active {
+  border-color: #7cb3df;
+  color: #1769aa;
+  background: #edf6fd;
+}
+.request-category-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font: 800 12px/1 'DM Sans', sans-serif;
+}
+.request-category-badge.petition { color: #7654b8; background: #f1ebff; }
+.request-category-badge.request { color: #1c6fa9; background: #e9f5fd; }
+.request-category-badge.concern { color: #9b5a13; background: #fff1d5; }
+.notification-item.request .notification-item-icon { color: #1c6fa9; background: #e9f5fd; }
+.notification-item.petition .notification-item-icon { color: #7654b8; background: #f1ebff; }
+.notification-item.concern .notification-item-icon { color: #9b5a13; background: #fff1d5; }
