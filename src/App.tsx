@@ -232,11 +232,29 @@ const formatMeetingDays = (days: string[]) =>
     )
     .filter(Boolean)
     .join(" & ")
+const normalizeMeetingDay = (value: unknown) => {
+  const day = String(value ?? "").trim().slice(0, 3).toUpperCase()
+  const aliases: Record<string, string> = {
+    MON: "MON", TUE: "TUE", WED: "WED", THU: "THU",
+    FRI: "FRI", SAT: "SAT", SUN: "SUN",
+  }
+  return aliases[day] ?? day
+}
+
+const normalizedMeetingDays = (value: unknown): string[] => {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,&/]+/)
+      : []
+  return values.map(normalizeMeetingDay).filter(Boolean)
+}
+
 const mapDatabaseClass = (item: any): ClassItem => {
   const schedules: ClassSchedule[] = (item.class_schedules ?? []).map(
     (schedule: any) => ({
       id: schedule.id,
-      meetingDays: schedule.meeting_days ?? [],
+      meetingDays: normalizedMeetingDays(schedule.meeting_days),
       startTime: schedule.start_time ?? "",
       endTime: schedule.end_time ?? "",
       room: schedule.room ?? "",
@@ -259,7 +277,9 @@ const mapDatabaseClass = (item: any): ClassItem => {
     attendance: item.capacity ?? 0,
     semesterStart: item.semester_start ?? "",
     semesterEnd: item.semester_end ?? "",
-    meetingDays: firstSchedule?.meetingDays ?? item.meeting_days ?? [],
+    meetingDays: firstSchedule?.meetingDays?.length
+      ? firstSchedule.meetingDays
+      : normalizedMeetingDays(item.meeting_days),
     accessCode: item.access_code ?? "",
     schedules,
   }
@@ -325,35 +345,17 @@ const students = [
 type StudentConcern = {
   id: string
   studentId: string
+  studentName: string
   category: string
   message: string
   section: string
   submittedAt: string
+  createdAt: string
   status: "Open" | "Accepted" | "Denied"
+  facultyReply?: string
 }
 
-const initialStudentConcerns: StudentConcern[] = [
-  {
-    id: "concern-ana-quiz",
-    studentId: "2026-0026",
-    category: "Academic petition",
-    message:
-      "May I take Quiz 2 during consultation hours because of a required campus appointment?",
-    section: "BIT-CT 3A",
-    submittedAt: "Today · 8:15 AM",
-    status: "Open",
-  },
-  {
-    id: "concern-mark-absence",
-    studentId: "2026-0027",
-    category: "Attendance concern",
-    message:
-      "I am requesting an excused absence for the hands-on activity and will submit the medical note.",
-    section: "BIT-CT 2B",
-    submittedAt: "Yesterday · 4:40 PM",
-    status: "Open",
-  },
-]
+const initialStudentConcerns: StudentConcern[] = []
 
 const recordSections = [
   {
@@ -587,8 +589,8 @@ const loadFacultyNotifications = async (): Promise<FacultyNotification[]> => {
     }
   }
 
-  for (const table of ["student_concerns", "student_petitions"] as const) {
-    const kind = table === "student_concerns" ? "concern" : "petition"
+  for (const table of ["student_requests"] as const) {
+    const kind: "concern" | "petition" = "concern"
     const { data } = await supabase
       .from(table)
       .select("*")
@@ -634,8 +636,8 @@ function Header({
     const timer = window.setInterval(loadHeader, 60_000)
     const profileChannel = supabase
       .channel("faculty-header-sync")
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_concerns" }, loadHeader)
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_petitions" }, loadHeader)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, loadHeader)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, loadHeader)
       .subscribe()
     return () => {
       active = false
@@ -1067,6 +1069,10 @@ function Dashboard({
   activities: ActivityItem[]
 }) {
   const [dashboardClasses, setDashboardClasses] = useState<ClassItem[]>([])
+  const [dashboardClassesLoading, setDashboardClassesLoading] = useState(true)
+  const [dashboardClassesError, setDashboardClassesError] = useState("")
+  const [dashboardReminders, setDashboardReminders] = useState<ActivityItem[]>([])
+  const [dashboardOpenConcerns, setDashboardOpenConcerns] = useState(0)
   const [dashboardFacultyName, setDashboardFacultyName] = useState("")
   const [dashboardNow, setDashboardNow] = useState(() => new Date())
 
@@ -1101,10 +1107,13 @@ function Dashboard({
 
   useEffect(() => {
     async function loadDashboardClasses() {
+      setDashboardClassesLoading(true)
+      setDashboardClassesError("")
       const { data: { user }, error: userError } = await supabase.auth.getUser()
       if (userError || !user) {
         if (userError) console.error("Unable to get signed-in faculty:", userError)
         setDashboardClasses([])
+        setDashboardClassesLoading(false)
         return
       }
 
@@ -1116,12 +1125,61 @@ function Dashboard({
 
       if (error) {
         console.error("Unable to load dashboard classes:", error)
+        setDashboardClassesError(error.message)
+        setDashboardClasses([])
+        setDashboardClassesLoading(false)
         return
       }
 
       setDashboardClasses((data ?? []).map(mapDatabaseClass))
+      setDashboardClassesLoading(false)
     }
     loadDashboardClasses()
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    const loadDashboardItems = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const [remindersResult, concernsResult] = await Promise.all([
+        supabase
+          .from("faculty_reminders")
+          .select("id, class_id, reminder_date, title, activity_type, start_time, end_time, participation, groups")
+          .eq("faculty_id", user.id)
+          .order("reminder_date", { ascending: true }),
+        supabase
+          .from("student_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("faculty_id", user.id)
+          .eq("status", "Open"),
+      ])
+      if (!active) return
+      if (!remindersResult.error) {
+        setDashboardReminders((remindersResult.data ?? []).map((row: any) => ({
+          id: String(row.id),
+          classId: String(row.class_id ?? ""),
+          date: String(row.reminder_date ?? ""),
+          title: String(row.title ?? "Reminder"),
+          type: String(row.activity_type ?? "Activity"),
+          startTime: String(row.start_time ?? "").slice(0, 5),
+          endTime: String(row.end_time ?? "").slice(0, 5),
+          participation: String(row.participation ?? "Individual"),
+          groups: Array.isArray(row.groups) ? row.groups : [],
+        })))
+      }
+      setDashboardOpenConcerns(concernsResult.error ? 0 : concernsResult.count ?? 0)
+    }
+    void loadDashboardItems()
+    const channel = supabase
+      .channel("dashboard-reminders-concerns-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "faculty_reminders" }, () => void loadDashboardItems())
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, () => void loadDashboardItems())
+      .subscribe()
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
   }, [])
 
   const toLocalDateKey = (date: Date) =>
@@ -1175,20 +1233,33 @@ function Dashboard({
   const selectedDate =
     weekDates.find((date) => toLocalDateKey(date) === selectedDateKey) ?? today
   const selectedDayCode = dayCodeFromDate(selectedDate)
-  const selectedActivities = activities.filter(
+  const selectedActivities = dashboardReminders.filter(
     (activity) => activity.date === selectedDateKey,
   )
   const selectedClasses = dashboardClasses.filter((item) => {
     if (item.semesterStart && selectedDateKey < item.semesterStart) return false
     if (item.semesterEnd && selectedDateKey > item.semesterEnd) return false
-    return (item.schedules ?? []).some((schedule) =>
-      schedule.meetingDays.includes(selectedDayCode),
+    return schedulesForDashboardClass(item).some((schedule) =>
+      schedule.meetingDays.map(normalizeMeetingDay).includes(normalizeMeetingDay(selectedDayCode)),
     )
   })
   const selectedConcernCount = selectedDateKey === todayKey
-    ? initialStudentConcerns.filter((concern) => concern.status === "Open").length
+    ? dashboardOpenConcerns
     : 0
   const selectedRecordCount = selectedDateKey === todayKey ? 4 : 0
+  function schedulesForDashboardClass(item: ClassItem): ClassSchedule[] {
+    if ((item.schedules ?? []).length > 0) return item.schedules ?? []
+    if (item.meetingDays.length === 0) return []
+    const timeParts = item.time.split(/\s+-\s+/)
+    return [{
+      id: `${item.id}-fallback-schedule`,
+      meetingDays: item.meetingDays.map(normalizeMeetingDay),
+      startTime: timeParts[0] ?? "",
+      endTime: timeParts[1] ?? "",
+      room: item.room,
+    }]
+  }
+
   const focusActivity = selectedActivities[0]
   const selectedDateLabel = new Intl.DateTimeFormat("en", {
     weekday: "long",
@@ -1202,8 +1273,10 @@ function Dashboard({
     return dashboardClasses.flatMap((item) => {
       if (item.semesterStart && dateKey < item.semesterStart) return []
       if (item.semesterEnd && dateKey > item.semesterEnd) return []
-      return (item.schedules ?? [])
-        .filter((schedule) => schedule.meetingDays.includes(dayCode))
+      return schedulesForDashboardClass(item)
+        .filter((schedule) =>
+          schedule.meetingDays.map(normalizeMeetingDay).includes(normalizeMeetingDay(dayCode)),
+        )
         .map((schedule) => ({ item, schedule }))
     })
   }
@@ -1329,8 +1402,8 @@ function Dashboard({
                   )}
 
                   {dayActivities.length > 0 && (
-                    <section>
-                      <span>Activities</span>
+                    <section className="day-hover-reminders">
+                      <span>Reminders</span>
                       {dayActivities.map((activity, index) => (
                         <button
                           type="button"
@@ -1375,8 +1448,8 @@ function Dashboard({
               <Icon name="calendar" />
             </span>
             <span>
-              <strong>{selectedClasses.length} {selectedClasses.length === 1 ? "class" : "classes"}</strong>
-              <small>Scheduled for selected date</small>
+              <strong>{dashboardClasses.length} {dashboardClasses.length === 1 ? "class" : "classes"}</strong>
+              <small>Total active classes</small>
             </span>
           </button>
           <button onClick={() => setPage("records")}>
@@ -1393,8 +1466,8 @@ function Dashboard({
               <Icon name="users" />
             </span>
             <span>
-              <strong>2 concerns</strong>
-              <small>Need your attention</small>
+              <strong>{dashboardOpenConcerns} {dashboardOpenConcerns === 1 ? "concern" : "concerns"}</strong>
+              <small>{dashboardOpenConcerns > 0 ? "Need your attention" : "No open concerns"}</small>
             </span>
           </button>
         </div>
@@ -1411,17 +1484,37 @@ function Dashboard({
           </button>
         </div>
 <div className="class-grid">
-          {selectedClasses.map((item) => (
-            <ClassCard
-              key={item.id}
-              item={item}
-              onStart={onStart}
-              ended={endedClassIds.map(String).includes(String(item.id))}
-              activity={selectedActivities.find(
-                (activity) => String(activity.classId) === String(item.id),
-              )}
-            />
-          ))}
+          {dashboardClassesLoading ? (
+            <div className="dashboard-class-empty" role="status">
+              <span className="dashboard-class-empty-icon"><Icon name="calendar" size={22} /></span>
+              <div><strong>Loading classes...</strong><p>Checking the selected date and class schedules.</p></div>
+            </div>
+          ) : dashboardClassesError ? (
+            <div className="dashboard-class-empty error" role="alert">
+              <span className="dashboard-class-empty-icon"><Icon name="minus" size={22} /></span>
+              <div><strong>Classes could not be loaded</strong><p>{dashboardClassesError}</p></div>
+              <button type="button" className="secondary-button" onClick={() => setPage("classes")}>Open classes</button>
+            </div>
+          ) : selectedClasses.length > 0 ? (
+            selectedClasses.map((item) => (
+              <ClassCard
+                key={item.id}
+                item={item}
+                onStart={onStart}
+                ended={endedClassIds.map(String).includes(String(item.id))}
+                activity={selectedActivities.find((activity) => String(activity.classId) === String(item.id))}
+              />
+            ))
+          ) : (
+            <div className="dashboard-class-empty">
+              <span className="dashboard-class-empty-icon"><Icon name="calendar" size={22} /></span>
+              <div>
+                <strong>No classes scheduled for {selectedDateKey === todayKey ? "today" : selectedDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })}</strong>
+                <p>Comp Prog 4 and your other classes remain available. Hover or select one of the class meeting days, or open Classes to view every class.</p>
+              </div>
+              <button type="button" className="secondary-button" onClick={() => setPage("classes")}>View all classes</button>
+            </div>
+          )}
         </div>
       </section>
     </>
@@ -3587,6 +3680,102 @@ function ActivitiesPage({
   }, [])
 
   const [studentConcerns, setStudentConcerns] = useState(initialStudentConcerns)
+  const [studentConcernsLoading, setStudentConcernsLoading] = useState(true)
+  const [reviewSavingId, setReviewSavingId] = useState<string | null>(null)
+
+  const formatRequestSubmittedAt = (value: string) => {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return "Recently"
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date)
+  }
+
+  const loadStudentRequests = async () => {
+    setStudentConcernsLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setStudentConcerns([])
+      setStudentConcernsLoading(false)
+      return
+    }
+    const { data, error } = await supabase
+      .from("student_requests")
+      .select("id, student_id, student_name, category, message, section, status, faculty_reply, created_at")
+      .eq("faculty_id", user.id)
+      .order("created_at", { ascending: false })
+    if (error) {
+      showToast(`Unable to load student requests: ${error.message}`, "error")
+      setStudentConcerns([])
+    } else {
+      setStudentConcerns((data ?? []).map((row: any) => ({
+        id: String(row.id),
+        studentId: String(row.student_id ?? ""),
+        studentName: String(row.student_name ?? "Student"),
+        category: String(row.category ?? "Student request"),
+        message: String(row.message ?? ""),
+        section: String(row.section ?? "Unassigned class"),
+        submittedAt: formatRequestSubmittedAt(String(row.created_at ?? "")),
+        createdAt: String(row.created_at ?? ""),
+        status: row.status === "Accepted" || row.status === "Denied" ? row.status : "Open",
+        facultyReply: String(row.faculty_reply ?? ""),
+      })))
+    }
+    setStudentConcernsLoading(false)
+  }
+
+  useEffect(() => {
+    void loadStudentRequests()
+    const channel = supabase
+      .channel("faculty-student-requests")
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, () => void loadStudentRequests())
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [])
+
+  const submitRequestReview = async (concern: StudentConcern) => {
+    const decision = concernDecisions[concern.id]
+    const reply = concernReplies[concern.id]?.trim()
+    if (!decision || !reply) return
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      showMessage("Your session expired. Please sign in again.")
+      return
+    }
+    setReviewSavingId(concern.id)
+    const { error } = await supabase
+      .from("student_requests")
+      .update({
+        status: decision,
+        faculty_reply: reply,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", concern.id)
+      .eq("faculty_id", user.id)
+    setReviewSavingId(null)
+    if (error) {
+      showToast(`Unable to send review: ${error.message}`, "error")
+      return
+    }
+    setExpandedConcernId(null)
+    setConcernDecisions((current) => {
+      const next = { ...current }
+      delete next[concern.id]
+      return next
+    })
+    setConcernReplies((current) => {
+      const next = { ...current }
+      delete next[concern.id]
+      return next
+    })
+    showToast(`Request ${decision.toLowerCase()} successfully.`)
+    await loadStudentRequests()
+  }
+
   const [expandedConcernId, setExpandedConcernId] = useState<string | null>(
     null,
   )
@@ -4074,16 +4263,20 @@ const reminderFormValid = Boolean(
               open
             </span>
           </div>
-          {sentReviewNotice && (
-            <p className="concern-sent-notice" role="status">
-              <Icon name="check" size={15} /> {sentReviewNotice}
-            </p>
-          )}
           <div className="concerns-list">
-            {studentConcerns.map((concern) => {
-              const student =
-                students.find((item) => item.id === concern.studentId) ??
-                students[0]
+            {studentConcernsLoading ? (
+              <p className="concerns-empty-state">Loading student requests...</p>
+            ) : studentConcerns.length === 0 ? (
+              <div className="concerns-empty-state">
+                <Icon name="clipboard" size={22} />
+                <strong>No student requests</strong>
+                <span>New concerns and petitions will appear here.</span>
+              </div>
+            ) : studentConcerns.map((concern) => {
+              const student = {
+                id: concern.studentId,
+                name: concern.studentName || "Student",
+              }
               const decision = concernDecisions[concern.id]
               const isExpanded = expandedConcernId === concern.id
               return (
@@ -4204,24 +4397,13 @@ const reminderFormValid = Boolean(
                           className="primary-button"
                           type="button"
                           disabled={
-                            !decision || !concernReplies[concern.id]?.trim()
+                            reviewSavingId === concern.id ||
+                            !decision ||
+                            !concernReplies[concern.id]?.trim()
                           }
-                          onClick={() => {
-                            if (!decision) return
-                            setStudentConcerns((concerns) =>
-                              concerns.map((item) =>
-                                item.id === concern.id
-                                  ? { ...item, status: decision }
-                                  : item,
-                              ),
-                            )
-                            setSentReviewNotice(
-                              `Review sent to ${student.name}. Request ${decision.toLowerCase()}.`,
-                            )
-                            setExpandedConcernId(null)
-                          }}
+                          onClick={() => void submitRequestReview(concern)}
                         >
-                          Send
+                          {reviewSavingId === concern.id ? "Sending..." : "Send review"}
                         </button>
                       </div>
                     </div>
@@ -4642,8 +4824,8 @@ function NotificationsPage({ setPage }: { setPage: (page: string) => void }) {
     void load()
     const timer = window.setInterval(load, 60_000)
     const channel = supabase.channel("faculty-notifications-page")
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_concerns" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_petitions" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, load)
       .subscribe()
     return () => { window.clearInterval(timer); void supabase.removeChannel(channel) }
   }, [])

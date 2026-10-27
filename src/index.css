@@ -1263,3 +1263,110 @@ h6,
   }
   .formal-message-icon { width: 42px; height: 42px; }
 }
+
+/* Database-backed concerns and petitions */
+.concerns-empty-state {
+  min-height: 145px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed #c9dae7;
+  border-radius: 14px;
+  color: #6b8294;
+  background: rgba(255,255,255,.7);
+  text-align: center;
+}
+.concerns-empty-state strong { color: #284b65; font-size: 14px; }
+.concerns-empty-state span { font-size: 12px; }
+.concern-review-actions .primary-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+/* Dashboard readability and synchronized hover details */
+.day-hover-card,
+.day-hover-card *,
+.summary-grid,
+.summary-grid *,
+.concerns-section,
+.concerns-section * {
+  font-family: 'DM Sans', sans-serif !important;
+}
+.day-hover-card p,
+.day-hover-card small,
+.day-hover-card button,
+.day-hover-card section > span,
+.day-hover-counts span,
+.summary-grid small,
+.concerns-section p,
+.concerns-section small,
+.concerns-section button,
+.concern-review-panel textarea,
+.concern-review-panel label {
+  font-size: 16px !important;
+  line-height: 1.5 !important;
+}
+.day-hover-card h3,
+.day-hover-card h4,
+.day-hover-card b,
+.summary-grid strong,
+.concerns-section h2,
+.concerns-section h3,
+.concerns-section strong {
+  font-family: 'DM Sans', sans-serif !important;
+}
+.day-hover-card {
+  width: min(420px, calc(100vw - 28px));
+  max-height: 460px;
+  overflow-y: auto;
+}
+.day-hover-card section { gap: 8px; }
+.day-hover-card section > span {
+  color: #657d90;
+  font-weight: 700;
+}
+.day-hover-card button {
+  min-height: 58px;
+  padding: 10px 12px;
+}
+.day-hover-card button b {
+  font-size: 16px !important;
+}
+.day-hover-reminders button { border-left: 3px solid #e7aa35; }
+.day-hover-counts { display: flex; flex-wrap: wrap; gap: 8px; }
+.summary-grid small { display: block; }
+.concerns-count { font-size: 14px !important; }
+@media (max-width: 680px) {
+  .day-hover-card { width: calc(100vw - 24px); max-height: 390px; }
+}
+
+.dashboard-class-empty { grid-column: 1 / -1; min-height: 150px; padding: 24px; display: grid; grid-template-columns: 48px minmax(0,1fr) auto; align-items: center; gap: 16px; border: 1px dashed #bfd3e2; border-radius: 16px; color: #274d68; background: rgba(255,255,255,.72); font-family: 'DM Sans',sans-serif!important; }
+.dashboard-class-empty-icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; color: #247db7; background: #e7f3fb; }
+.dashboard-class-empty strong { display: block; font-size: 17px; }
+.dashboard-class-empty p { margin: 5px 0 0; color: #6a8091; font-size: 16px!important; line-height: 1.5; }
+.dashboard-class-empty.error { border-color: #e4bebe; }
+.dashboard-class-empty.error .dashboard-class-empty-icon { color: #a93b3b; background: #fff0f0; }
+@media(max-width:680px){.dashboard-class-empty{grid-template-columns:44px minmax(0,1fr);padding:18px}.dashboard-class-empty>button{grid-column:1/-1;width:100%}}
+
+/* Keep calendar class names readable in hover cards */
+.day-hover-card section button b {
+  display: block;
+  overflow: visible;
+  color: #173d5c;
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 16px !important;
+  line-height: 1.35;
+  text-overflow: clip;
+  white-space: normal;
+}
+.day-hover-card section button small {
+  display: block;
+  margin-top: 3px;
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 16px !important;
+  line-height: 1.4;
+  white-space: normal;
+}
