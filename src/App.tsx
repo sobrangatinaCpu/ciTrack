@@ -202,12 +202,14 @@ const meetingDayOptions = [
   { value: "SUN", label: "Sun" },
 ]
 
-const formatSemesterDate = (value: string) =>
-  new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(
-    new Date(`${value}T12:00:00`),
-  )
+const formatSemesterDate = (value: string) => {
+  if (!value) return "Date to be set"
+  const date = new Date(`${value}T12:00:00`)
+  if (Number.isNaN(date.getTime())) return "Date to be set"
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date)
+}
 
-const hasSemesterEnded = (item: typeof classes[number]) => {
+const hasSemesterEnded = (item: ClassItem) => {
   const semesterEnd = new Date(`${item.semesterEnd}T23:59:59`)
   return !Number.isNaN(semesterEnd.getTime()) && semesterEnd < new Date()
 }
@@ -673,16 +675,16 @@ function ClassCard({
           className={
             isEnded
               ? "secondary-button compact class-view-button"
-              : item.id === 1
+              : String(item.id) === "1"
                 ? "primary-button compact"
                 : "secondary-button compact"
           }
           onClick={() => onStart(item)}
         >
-          {!isEnded && item.id === 1 ? <Icon name="play" size={16} /> : null}
+          {!isEnded && String(item.id) === "1" ? <Icon name="play" size={16} /> : null}
           {isEnded
             ? "View class"
-            : item.id === 1
+            : String(item.id) === "1"
               ? "Start class"
               : "View class"}
         </button>
@@ -692,18 +694,59 @@ function ClassCard({
 }
 
 function Dashboard({
-  classList = [],
   onStart,
   setPage,
   endedClassIds,
   activities,
 }: {
-  classList?: ClassItem[]
   onStart: (item: ClassItem) => void
   setPage: (page: string) => void
   endedClassIds: Array<string | number>
   activities: ActivityItem[]
 }) {
+  const [dashboardClasses, setDashboardClasses] = useState<ClassItem[]>([])
+
+  useEffect(() => {
+    async function loadDashboardClasses() {
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError || !user) {
+        if (userError) console.error("Unable to get signed-in faculty:", userError)
+        setDashboardClasses([])
+        return
+      }
+
+      const { data, error } = await supabase
+        .from("classes")
+        .select("*")
+        .eq("faculty_id", user.id)
+        .order("created_at", { ascending: true })
+
+      if (error) {
+        console.error("Unable to load dashboard classes:", error)
+        return
+      }
+
+      setDashboardClasses(
+        (data ?? []).map((item) => ({
+          id: item.id,
+          subject: item.subject ?? "",
+          code: item.code ?? "",
+          time: item.start_time && item.end_time
+            ? `${formatDatabaseTime(item.start_time)} - ${formatDatabaseTime(item.end_time)}`
+            : "",
+          room: item.room ?? "To be confirmed",
+          color: item.color ?? "#7a62d3",
+          status: item.status ?? "Scheduled",
+          attendance: item.capacity ?? 0,
+          semesterStart: item.semester_start ?? "",
+          semesterEnd: item.semester_end ?? "",
+          meetingDays: item.meeting_days ?? [],
+        })),
+      )
+    }
+    loadDashboardClasses()
+  }, [])
+
   const todayActivities = activities.filter(
     (activity) => activity.date === dashboardDate,
   )
@@ -739,7 +782,7 @@ function Dashboard({
             <small>
               <Icon name="clock" size={13} />{" "}
               {focusActivity
-                ? `${formatActivityTime(focusActivity.startTime)} · ${classes.find((item) => item.id === focusActivity.classId)?.code ?? "Class"}`
+                ? `${formatActivityTime(focusActivity.startTime)} · ${dashboardClasses.find((item) => String(item.id) === String(focusActivity.classId))?.code ?? "Class"}`
                 : "Add an activity for today"}
             </small>
             <span className="day-activity-people" aria-hidden="true">
@@ -803,7 +846,7 @@ function Dashboard({
               <Icon name="calendar" />
             </span>
             <span>
-              <strong>2 classes</strong>
+              <strong>{dashboardClasses.length} {dashboardClasses.length === 1 ? "class" : "classes"}</strong>
               <small>Scheduled today</small>
             </span>
           </button>
@@ -839,25 +882,18 @@ function Dashboard({
           </button>
         </div>
 <div className="class-grid">
-  {classList.map((item) => (
-  <ClassCard
-  key={item.id}
-  item={item}
-  onStart={onStart}
-  ended={endedClassIds
-    .map(String)
-    .includes(String(item.id))}
-  onEdit={(classToEdit) => {
-    setEditingClass(classToEdit)
-    setIsAddingClass(true)
-  }}
-  onDelete={(classToDelete) => {
-    deleteClass(String(classToDelete.id))
-  }}
-/>
-
-  ))}
-</div>
+          {dashboardClasses.map((item) => (
+            <ClassCard
+              key={item.id}
+              item={item}
+              onStart={onStart}
+              ended={endedClassIds.map(String).includes(String(item.id))}
+              activity={todayActivities.find(
+                (activity) => String(activity.classId) === String(item.id),
+              )}
+            />
+          ))}
+        </div>
       </section>
     </>
   )
@@ -1277,8 +1313,8 @@ function AddClassModal({
   initialClass,
 }: {
   onClose: () => void
-  onSave: (newClass: typeof classes[0]) => void
-  initialClass?: typeof classes[0] | null
+  onSave: (newClass: ClassItem) => void
+  initialClass?: ClassItem | null
 }) {
   const isEditing = Boolean(initialClass)
   const getTimeValue = (position: 0 | 1, fallback: string) => {
@@ -1714,9 +1750,7 @@ useEffect(() => {
   loadClasses()
 }, [])
   const [isAddingClass, setIsAddingClass] = useState(false)
-  const [editingClass, setEditingClass] = useState<typeof classes[0] | null>(
-    null,
-  )
+  const [editingClass, setEditingClass] = useState<ClassItem | null>(null)
 
   return (
     <>
@@ -2659,9 +2693,9 @@ function RecordsPage({
                         type="number"
                         min="0"
                         max="100"
-                        value={recordValue(student, id, Number(fallback))}
+                        value={recordValue(student, String(id), Number(fallback))}
                         onChange={(event) =>
-                          updateRecordValue(student.id, id, event.target.value)
+                          updateRecordValue(student.id, String(id), event.target.value)
                         }
                         aria-label={`Edit ${label} score for ${student.name}`}
                       />
@@ -2682,9 +2716,9 @@ function RecordsPage({
                         type="number"
                         min="0"
                         max="100"
-                        value={recordValue(student, id, Number(fallback))}
+                        value={recordValue(student, String(id), Number(fallback))}
                         onChange={(event) =>
-                          updateRecordValue(student.id, id, event.target.value)
+                          updateRecordValue(student.id, String(id), event.target.value)
                         }
                         aria-label={`Edit ${label} score for ${student.name}`}
                       />
@@ -2877,11 +2911,13 @@ function RecordsPage({
                             student.id,
                             dailySession?.attendanceId ??
                               "midterm-attendance-1",
-                            status === "Present" || status === "Excused"
-                              ? 10
-                              : status === "Late"
-                                ? 7
-                                : 0,
+                            String(
+                              status === "Present" || status === "Excused"
+                                ? 10
+                                : status === "Late"
+                                  ? 7
+                                  : 0,
+                            ),
                             10,
                           )
                         }}
@@ -3742,7 +3778,7 @@ function ActiveClass({
   initialStartedAt,
   viewOnly = false,
 }: {
-  item: typeof classes[0]
+  item: ClassItem
   onClose: () => void
   onEnd: () => void
   onMinimize: (startedAt: number) => void
@@ -4061,7 +4097,7 @@ function MinimizedSession({
   position,
   onPositionChange,
 }: {
-  item: typeof classes[0]
+  item: ClassItem
   startedAt: number
   onRestore: () => void
   className?: string
@@ -4419,11 +4455,11 @@ export default function App() {
   const [signedIn, setSignedIn] = useState(false)
   const [activities, setActivities] =
     useState<ActivityItem[]>(initialActivities)
-  const [activeClass, setActiveClass] = useState<typeof classes[0] | null>(null)
+  const [activeClass, setActiveClass] = useState<ClassItem | null>(null)
   const [activeSessionStartedAt, setActiveSessionStartedAt] =
     useState<number | null>(null)
   const [minimizedSession, setMinimizedSession] = useState<{
-    item: typeof classes[0]
+    item: ClassItem
     startedAt: number
   } | null>(null)
   const [liveSessionPosition, setLiveSessionPosition] = useState({
@@ -4448,7 +4484,7 @@ export default function App() {
     setOmrDraftScores({})
   }
 
-  const openClass = (item: typeof classes[0]) => {
+  const openClass = (item: ClassItem) => {
     if (minimizedSession) {
       setActiveClass(minimizedSession.item)
       setMinimizedSession(null)
@@ -4463,15 +4499,14 @@ export default function App() {
     setActiveClass(minimizedSession.item)
     setMinimizedSession(null)
   }
-
   const renderPage = () => {
     if (page === "classes")
       return (
         <ClassesPage
           onStart={openClass}
-          setPage={setPage}
-          endedClassIds={endedClassIds}
-        />
+  setPage={setPage}
+  endedClassIds={endedClassIds}
+/>
       )
     if (page === "records")
       return <RecordsPage setPage={setPage} omrDraftScores={omrDraftScores} />
@@ -4504,8 +4539,7 @@ export default function App() {
       )
     return (
 <Dashboard
-  classList={[]}
-  onStart={() => {}}
+        onStart={openClass}
   setPage={setPage}
   endedClassIds={endedClassIds}
   activities={activities}
