@@ -129,7 +129,27 @@
 .class-accent { position: absolute; inset: 0 auto 0 0; width: 4px; }
 .class-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 11px; }
 .class-card-top button, .timeline > article > button { border: 0; background: transparent; color: #8491a0; }
-.class-card-top .class-card-edit { min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid #d6e2ee; border-radius: 8px; color: #2266a3; background: #f7fbff; font-size: 9px; font-weight: 700; }.class-card-top .class-card-edit:hover { border-color: #9bc1e6; background: #eaf4ff; }
+.class-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}.class-card-top .class-card-edit { min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid #d6e2ee; border-radius: 8px; color: #2266a3; background: #f7fbff; font-size: 9px; font-weight: 700; }.class-card-top .class-card-edit:hover { border-color: #9bc1e6; background: #eaf4ff; }.class-card-top .class-card-delete {
+  min-height: 30px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #dc2626;
+  background: #fff7f7;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+} .class-card-top .class-card-delete:hover {
+  border-color: #f87171;
+  color: #b91c1c;
+  background: #fef2f2;
+}
 .status-pill { width: max-content; display: inline-flex; align-items: center; border-radius: 100px; padding: 5px 9px; color: #17785f; background: #e9f8f3; font-size: 9px; font-weight: 700; letter-spacing: .02em; }
 .class-card h3 { font-size: 17px; }
 .class-code { color: var(--muted); font-size: 12px; margin-top: 4px; }
