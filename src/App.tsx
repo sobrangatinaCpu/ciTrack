@@ -3293,6 +3293,68 @@ function ActivitiesPage({
   )
   const [sentReviewNotice, setSentReviewNotice] = useState("")
   const [currentTime, setCurrentTime] = useState(() => Date.now())
+  const [accessPanel, setAccessPanel] = useState<"request" | "nfc">("request")
+  const [joinRequests, setJoinRequests] = useState<any[]>([])
+  const [joinRequestsLoading, setJoinRequestsLoading] = useState(true)
+  const loadJoinRequests = async () => {
+    setJoinRequestsLoading(true)
+    const { data, error } = await supabase
+      .from("class_join_requests")
+      .select("id, class_id, student_id, student_number, student_name, status, created_at, classes(subject, code)")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+    if (!error) setJoinRequests(data ?? [])
+    setJoinRequestsLoading(false)
+  }
+  useEffect(() => {
+    void loadJoinRequests()
+    const channel = supabase
+      .channel("faculty-class-join-requests")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "class_join_requests" },
+        () => void loadJoinRequests(),
+      )
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [])
+  const reviewJoinRequest = async (request: any, status: "accepted" | "declined") => {
+    const { error } = await supabase
+      .from("class_join_requests")
+      .update({ status, reviewed_at: new Date().toISOString() })
+      .eq("id", request.id)
+    if (!error) await loadJoinRequests()
+  }
+
+  const [nfcScanStatus, setNfcScanStatus] = useState<
+    "idle" | "waiting" | "detected"
+  >("idle")
+  const [detectedNfcCode, setDetectedNfcCode] = useState("")
+  const [selectedNfcStudentId, setSelectedNfcStudentId] = useState(
+    students[0]?.id ?? "",
+  )
+  const [nfcCards, setNfcCards] = useState<Record<string, string>>({
+    "2026-0025": "NFC-8A24-D1",
+    "2026-0027": "NFC-93BF-72",
+  })
+  const scanNfcCard = () => {
+    setNfcScanStatus("waiting")
+    setDetectedNfcCode("")
+    window.setTimeout(() => {
+      const code = `NFC-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`
+      setDetectedNfcCode(code)
+      setNfcScanStatus("detected")
+    }, 900)
+  }
+  const registerDetectedNfcCard = () => {
+    if (!selectedNfcStudentId || !detectedNfcCode) return
+    setNfcCards((cards) => ({
+      ...cards,
+      [selectedNfcStudentId]: detectedNfcCode,
+    }))
+    setNfcScanStatus("idle")
+    setDetectedNfcCode("")
+  }
 
   useEffect(() => {
     if (!sentReviewNotice) return
@@ -3405,6 +3467,80 @@ function ActivitiesPage({
           <Icon name="plus" /> Add reminder
         </button>
       </div>
+      <section className="enrollment-operations" aria-labelledby="enrollment-title">
+        <div className="enrollment-operations-heading">
+          <div>
+            <p className="eyebrow">Enrollment operations</p>
+            <h2 id="enrollment-title">Student access &amp; NFC cards</h2>
+          </div>
+        </div>
+        <div className="access-panel-tabs" role="tablist" aria-label="Student access tools">
+          <button type="button" role="tab" aria-selected={accessPanel === "request"} className={accessPanel === "request" ? "active" : ""} onClick={() => setAccessPanel("request")}>Request</button>
+          <button type="button" role="tab" aria-selected={accessPanel === "nfc"} className={accessPanel === "nfc" ? "active" : ""} onClick={() => setAccessPanel("nfc")}>NFC cards</button>
+        </div>
+        {accessPanel === "request" && (
+          <div className="join-request-panel">
+            {joinRequestsLoading ? <p>Loading requests...</p> : joinRequests.length === 0 ? <div className="enrollment-empty-state"><Icon name="users" size={24}/><strong>No pending requests</strong><p>Requests appear here when students join with a class access code.</p></div> : joinRequests.map((request) => <article className="join-request-card" key={request.id}>
+              <div><p className="eyebrow">Student join request</p><h3>{request.student_name}</h3><p>{request.student_number}</p><p>{request.classes?.subject ?? "Class"} · {request.classes?.code ?? request.class_id}</p></div>
+              <div className="join-request-actions"><button type="button" className="secondary-button" onClick={() => void reviewJoinRequest(request, "declined")}>Decline</button><button type="button" className="primary-button" onClick={() => void reviewJoinRequest(request, "accepted")}>Accept</button></div>
+            </article>)}
+          </div>
+        )}
+        {accessPanel === "nfc" && (
+        <article className="nfc-registration-card">
+          <p className="eyebrow">Faculty-only registration</p>
+          <h3>Register NFC card</h3>
+          <label className="nfc-student-select">
+            Student
+            <select
+              value={selectedNfcStudentId}
+              onChange={(event) => {
+                setSelectedNfcStudentId(event.target.value)
+                setNfcScanStatus("idle")
+                setDetectedNfcCode("")
+              }}
+            >
+              {students.map((student) => (
+                <option key={student.id} value={student.id}>
+                  {student.name} · {student.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          {(() => {
+            const student =
+              students.find((item) => item.id === selectedNfcStudentId) ??
+              students[0]
+            const registeredCode = student ? nfcCards[student.id] : ""
+            return (
+              <>
+                <dl className="nfc-registration-details">
+                  <div><dt>Student</dt><dd>{student?.name ?? "No student selected"}</dd></div>
+                  <div><dt>Student number</dt><dd>{student?.id ?? "—"}</dd></div>
+                  <div><dt>Card status</dt><dd>{registeredCode ? `Registered · ${registeredCode}` : "Not registered"}</dd></div>
+                </dl>
+                <button type="button" className="nfc-scan-button" onClick={scanNfcCard}>
+                  <Icon name="scan" size={17} />
+                  {nfcScanStatus === "waiting" ? "Waiting for scan..." : "Scan Card"}
+                </button>
+                <p className="nfc-detected-status" aria-live="polite">
+                  Detected: {nfcScanStatus === "detected" ? detectedNfcCode : nfcScanStatus === "waiting" ? "Waiting for scan" : "No card detected"}
+                </p>
+                <button
+                  type="button"
+                  className="primary-button nfc-register-button"
+                  onClick={registerDetectedNfcCard}
+                  disabled={nfcScanStatus !== "detected"}
+                >
+                  Register Card
+                </button>
+                <small>Only faculty can register NFC cards.</small>
+              </>
+            )
+          })()}
+        </article>
+        )}
+      </section>
       <div className="activities-workspace">
         <section className="concerns-section" aria-labelledby="concerns-title">
           <div className="concerns-heading">

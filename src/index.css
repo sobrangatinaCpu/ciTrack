@@ -843,3 +843,57 @@ h6,
 .daily-tracker-table {
   min-width: 980px;
 }
+
+/* Faculty-only NFC registration */
+.enrollment-operations { margin: 24px 0 22px; padding: 22px; border: 1px solid #cfe1ef; border-radius: 18px; background: #f4f9fd; }
+.enrollment-operations, .enrollment-operations * { font-family: 'DM Sans', sans-serif !important; }
+.enrollment-operations-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.enrollment-operations-heading h2 { margin-top: 4px; color: #123a5c; font-size: 21px; }
+.enrollment-tabs { display: flex; gap: 3px; padding: 4px; border-radius: 10px; background: #e7eff5; }
+.enrollment-tabs button { min-height: 38px; padding: 0 13px; border: 0; border-radius: 7px; color: #476176; background: transparent; font-size: 13px; font-weight: 600; }
+.enrollment-tabs button.active { color: #1262a8; background: #fff; }
+.enrollment-tab-content { min-height: 170px; margin-top: 18px; }
+.enrollment-request-card { width: min(560px, 100%); padding: 20px; border: 1px solid #cbddea; border-radius: 14px; background: #fff; }
+.enrollment-request-topline { display: flex; justify-content: space-between; gap: 12px; }
+.enrollment-request-card h3 { margin-top: 12px; font-size: 18px; }
+.enrollment-request-card > p { margin-top: 8px; font-size: 14px; }
+.enrollment-request-actions { display: flex; gap: 9px; margin-top: 16px; }
+.enrollment-status { padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.enrollment-status.pending { color: #86620c; background: #fff1c9; }.enrollment-status.approved { color: #08775b; background: #e1f7ef; }.enrollment-status.declined { color: #a13b48; background: #ffe7eb; }
+.enrollment-empty-state { min-height: 150px; display: grid; place-items: center; align-content: center; gap: 7px; border: 1px dashed #bfd2e1; border-radius: 14px; background: #fff; text-align: center; }
+.nfc-card-panel { width: 100%; }
+.nfc-panel-heading { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.nfc-panel-heading strong { font-size: 17px; }.nfc-panel-heading p { color: #627b90; font-size: 14px; }.nfc-panel-heading > span { padding: 6px 10px; border-radius: 999px; color: #1262a8; background: #e5f2ff; font-size: 13px; font-weight: 700; }
+.nfc-student-list { display: grid; gap: 9px; }.nfc-student-row { padding: 12px 14px; display: grid; grid-template-columns: 42px minmax(150px,1fr) minmax(170px,1fr) auto; align-items: center; gap: 13px; border: 1px solid #d6e3ed; border-radius: 12px; background: #fff; }
+.nfc-student-avatar { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 11px; color: #1768aa; background: #e5f1fa; font-weight: 800; }.nfc-student-identity,.nfc-card-status { display: grid; gap: 3px; }.nfc-card-status > span { width: fit-content; padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }.nfc-card-status > span.registered { color:#08775b;background:#e1f7ef }.nfc-card-status > span.unregistered { color:#7b6570;background:#f1edf0 }.nfc-card-actions { display:flex;justify-content:flex-end;gap:7px }.nfc-card-actions .danger { color:#a13b48;border-color:#efc5cc;background:#fff7f8 }
+@media(max-width:760px){.enrollment-operations-heading,.nfc-panel-heading{flex-direction:column}.nfc-student-row{grid-template-columns:42px 1fr}.nfc-card-status,.nfc-card-actions{grid-column:1/-1}.nfc-card-actions{justify-content:flex-start}}
+
+/* Single faculty-only NFC registration card */
+.enrollment-operations-heading { margin-bottom: 18px; }
+.nfc-registration-card { width: min(560px, 100%); padding: 20px; border: 1px solid #cbddea; border-radius: 14px; background: #fff; }
+.nfc-registration-card > .eyebrow { color: #55738c; font-size: 12px; }
+.nfc-registration-card h3 { margin-top: 8px; color: #173d5c; font-size: 19px; }
+.nfc-student-select { display: grid; gap: 6px; margin-top: 14px; color: #526b80; font-size: 13px; font-weight: 700; }
+.nfc-student-select select { min-height: 42px; padding: 0 11px; border: 1px solid #cbddea; border-radius: 9px; color: #294960; background: #fff; font-size: 14px; }
+.nfc-registration-details { display: grid; gap: 7px; margin-top: 14px; }
+.nfc-registration-details div { display: flex; gap: 5px; color: #526b80; font-size: 13px; }
+.nfc-registration-details dt::after { content: ':'; }
+.nfc-registration-details dd { margin: 0; color: #294960; }
+.nfc-scan-button { width: 100%; min-height: 42px; margin-top: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #9cbddd; border-radius: 9px; color: #075caa; background: #fff; font-size: 14px; font-weight: 700; }
+.nfc-scan-button:hover { background: #f1f7fd; }
+.nfc-detected-status { margin-top: 8px; color: #526b80; font-size: 13px; }
+.nfc-register-button { width: 100%; min-height: 44px; margin-top: 12px; justify-content: center; font-size: 14px; }
+.nfc-register-button:disabled { cursor: not-allowed; opacity: .5; }
+.nfc-registration-card > small { display: block; margin-top: 9px; color: #6d8293; font-size: 12px; }
+
+/* Request and NFC tabs */
+.access-panel-tabs { width: fit-content; display: flex; gap: 4px; margin: 0 0 16px; padding: 4px; border-radius: 10px; background: #e7eff5; }
+.access-panel-tabs button { min-height: 38px; padding: 0 16px; border: 0; border-radius: 7px; color: #526b80; background: transparent; font-size: 14px; font-weight: 700; }
+.access-panel-tabs button.active { color: #1262a8; background: #fff; box-shadow: 0 2px 7px #173b5617; }
+.join-request-panel { display: grid; gap: 10px; }
+.join-request-card { width: min(650px, 100%); padding: 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #cbddea; border-radius: 14px; background: #fff; }
+.join-request-card h3 { margin-top: 6px; color: #173d5c; font-size: 18px; }
+.join-request-card p { margin-top: 4px; color: #627b90; font-size: 14px; }
+.join-request-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.join-request-actions button { min-height: 42px; padding-inline: 16px; }
+@media (max-width: 680px) { .access-panel-tabs { width: 100%; } .access-panel-tabs button { flex: 1; } .join-request-card { align-items: stretch; flex-direction: column; } .join-request-actions button { flex: 1; } }
