@@ -565,18 +565,19 @@ function ConnectionNotice({
     </button>
   )
 }
-
 function ClassCard({
   item,
   onStart,
-  onEdit,
   ended,
+  onEdit,
+  onDelete,
   activity,
 }: {
   item: ClassItem
   onStart: (item: ClassItem) => void
-  onEdit?: (item: ClassItem) => void
   ended: boolean
+  onEdit?: (item: ClassItem) => void
+  onDelete?: (item: ClassItem) => void
   activity?: ActivityItem
 }) {
   const semesterEnded = hasSemesterEnded(item)
@@ -594,16 +595,30 @@ function ClassCard({
         >
           {isEnded ? (ended ? "Class Ended" : "Semester ended") : item.status}
         </span>
-        {onEdit ? (
-          <button
-            className="class-card-edit"
-            aria-label={`Edit ${item.subject}`}
-            onClick={() => onEdit(item)}
-          >
-            <Icon name="edit" size={15} />
-            <span>Edit</span>
-          </button>
-        ) : (
+{onEdit ? (
+  <div className="class-card-actions">
+    <button
+      type="button"
+      className="class-card-edit"
+      aria-label={`Edit ${item.subject}`}
+      onClick={() => onEdit(item)}
+    >
+      <Icon name="edit" size={15} />
+      <span>Edit</span>
+    </button>
+
+    {onDelete && (
+      <button
+        type="button"
+        className="class-card-delete"
+        aria-label={`Delete ${item.subject}`}
+        onClick={() => onDelete(item)}
+      >
+        Delete
+      </button>
+    )}
+  </div>
+) : (
           <button aria-label={`More options for ${item.subject}`}>
             <Icon name="more" />
           </button>
@@ -825,18 +840,22 @@ function Dashboard({
         </div>
 <div className="class-grid">
   {classList.map((item) => (
-    <ClassCard
-      key={item.id}
-      item={item}
-      onStart={() => {}}
-      ended={endedClassIds
-        .map(String)
-        .includes(String(item.id))}
-      activity={todayActivities.find(
-        (activity) =>
-          String(activity.classId) === String(item.id),
-      )}
-    />
+  <ClassCard
+  key={item.id}
+  item={item}
+  onStart={onStart}
+  ended={endedClassIds
+    .map(String)
+    .includes(String(item.id))}
+  onEdit={(classToEdit) => {
+    setEditingClass(classToEdit)
+    setIsAddingClass(true)
+  }}
+  onDelete={(classToDelete) => {
+    deleteClass(String(classToDelete.id))
+  }}
+/>
+
   ))}
 </div>
       </section>
@@ -1618,6 +1637,30 @@ function ClassesPage({
   endedClassIds: string[]
 }) {
   const [classList, setClassList] = useState<ClassItem[]>([])
+ const deleteClass = async (classId: string) => {
+  const confirmed = window.confirm(
+    "Are you sure you want to delete this class?",
+  )
+
+  if (!confirmed) return
+
+  const { error } = await supabase
+    .from("classes")
+    .delete()
+    .eq("id", classId)
+
+  if (error) {
+    console.error("Unable to delete class:", error)
+    alert(`Unable to delete class: ${error.message}`)
+    return
+  }
+
+  setClassList((current) =>
+    current.filter(
+      (classItem) => String(classItem.id) !== classId,
+    ),
+  )
+}
 useEffect(() => {
   async function loadClasses() {
     const {
@@ -1700,16 +1743,19 @@ useEffect(() => {
       </div>
       <div className="class-grid page-grid">
         {classList.map((item) => (
-          <ClassCard
-            key={item.id}
-            item={item}
-            onStart={onStart}
-            ended={endedClassIds.includes(item.id)}
-            onEdit={(classToEdit) => {
-              setEditingClass(classToEdit)
-              setIsAddingClass(true)
-            }}
-          />
+      <ClassCard
+  key={item.id}
+  item={item}
+  onStart={onStart}
+  ended={endedClassIds.includes(String(item.id))}
+  onEdit={(classToEdit) => {
+    setEditingClass(classToEdit)
+    setIsAddingClass(true)
+  }}
+  onDelete={(classToDelete) => {
+    deleteClass(String(classToDelete.id))
+  }}
+/>
         ))}
       </div>
       <div className="empty-prompt">
@@ -4535,3 +4581,4 @@ export default function App() {
     </div>
   )
 }
+
