@@ -1,3 +1,5 @@
+import citLogo from "./assets/cit.png"
+import citBuilding from "./assets/citbuild.jpg"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from './lib/supabase'
 import {loginFaculty, registerFaculty,} from "./lib/auth"
@@ -649,7 +651,7 @@ function Sidebar({
       <div className="brand">
         <div className="brand-mark">
           <img
-            src="/cit.png"
+            src={citLogo}
             alt="CIT Logo"
             style={{ width: "100%", height: "100%", objectFit: "contain" }}
           />
@@ -4826,7 +4828,7 @@ function LandingPage({
       <section
         className="landing-intro"
         style={{
-          backgroundImage: `linear-gradient(135deg, rgba(7, 44, 82, 0.92) 0%, rgba(10, 71, 120, 0.82) 100%), url('/citbuild.jpg')`,
+          backgroundImage: `linear-gradient(135deg, rgba(7, 44, 82, 0.92) 0%, rgba(10, 71, 120, 0.82) 100%), url("$citbuild")`,
           backgroundSize: "cover",
           backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
