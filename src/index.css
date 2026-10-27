@@ -897,3 +897,10 @@ h6,
 .join-request-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 .join-request-actions button { min-height: 42px; padding-inline: 16px; }
 @media (max-width: 680px) { .access-panel-tabs { width: 100%; } .access-panel-tabs button { flex: 1; } .join-request-card { align-items: stretch; flex-direction: column; } .join-request-actions button { flex: 1; } }
+
+.nfc-save-notice {
+  margin-top: 10px;
+  color: #155f9f;
+  font-size: 13px;
+  line-height: 1.45;
+}

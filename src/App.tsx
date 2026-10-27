@@ -3333,10 +3333,31 @@ function ActivitiesPage({
   const [selectedNfcStudentId, setSelectedNfcStudentId] = useState(
     students[0]?.id ?? "",
   )
-  const [nfcCards, setNfcCards] = useState<Record<string, string>>({
-    "2026-0025": "NFC-8A24-D1",
-    "2026-0027": "NFC-93BF-72",
-  })
+  const [nfcCards, setNfcCards] = useState<Record<string, string>>({})
+  const [nfcSaving, setNfcSaving] = useState(false)
+  const [nfcNotice, setNfcNotice] = useState("")
+
+  const loadNfcCards = async () => {
+    const { data, error } = await supabase
+      .from("student_nfc_cards")
+      .select("student_id, card_uid")
+      .eq("status", "active")
+
+    if (error) {
+      setNfcNotice(`Unable to load NFC cards: ${error.message}`)
+      return
+    }
+
+    setNfcCards(
+      Object.fromEntries(
+        (data ?? []).map((card: any) => [String(card.student_id), card.card_uid]),
+      ),
+    )
+  }
+
+  useEffect(() => {
+    void loadNfcCards()
+  }, [])
   const scanNfcCard = async () => {
     setDetectedNfcCode("")
 
@@ -3389,14 +3410,39 @@ function ActivitiesPage({
       }
     }
   }
-  const registerDetectedNfcCard = () => {
-    if (!selectedNfcStudentId || !detectedNfcCode) return
+  const registerDetectedNfcCard = async () => {
+    if (!selectedNfcStudentId || !detectedNfcCode || nfcSaving) return
+
+    setNfcSaving(true)
+    setNfcNotice("")
+
+    const { error } = await supabase
+      .from("student_nfc_cards")
+      .upsert(
+        {
+          student_id: selectedNfcStudentId,
+          card_uid: detectedNfcCode,
+          status: "active",
+          registered_at: new Date().toISOString(),
+          deactivated_at: null,
+        },
+        { onConflict: "student_id" },
+      )
+
+    setNfcSaving(false)
+
+    if (error) {
+      setNfcNotice(`Unable to register NFC card: ${error.message}`)
+      return
+    }
+
     setNfcCards((cards) => ({
       ...cards,
       [selectedNfcStudentId]: detectedNfcCode,
     }))
     setNfcScanStatus("idle")
     setDetectedNfcCode("")
+    setNfcNotice("NFC card registered and saved to the database.")
   }
 
   useEffect(() => {
@@ -3573,10 +3619,13 @@ function ActivitiesPage({
                   type="button"
                   className="primary-button nfc-register-button"
                   onClick={registerDetectedNfcCard}
-                  disabled={nfcScanStatus !== "detected"}
+                  disabled={nfcScanStatus !== "detected" || nfcSaving}
                 >
-                  Register Card
+                  {nfcSaving ? "Saving..." : "Register Card"}
                 </button>
+                {nfcNotice && (
+                  <p className="nfc-save-notice" role="status">{nfcNotice}</p>
+                )}
                 <small>Only faculty can register NFC cards.</small>
               </>
             )
