@@ -608,6 +608,47 @@ function ConnectionNotice({
     </button>
   )
 }
+const dayCodeFromDate = (date: Date) =>
+  ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][date.getDay()]
+
+const minutesFromTime = (value: string) => {
+  const [hoursValue, minutesValue] = value.split(":")
+  const hours = Number(hoursValue)
+  const minutes = Number(minutesValue ?? 0)
+  return Number.isFinite(hours) && Number.isFinite(minutes)
+    ? hours * 60 + minutes
+    : -1
+}
+
+const isClassScheduledNow = (item: ClassItem, now: Date) => {
+  const localDate = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-")
+
+  if (item.semesterStart && localDate < item.semesterStart) return false
+  if (item.semesterEnd && localDate > item.semesterEnd) return false
+
+  const today = dayCodeFromDate(now)
+  const currentMinutes = now.getHours() * 60 + now.getMinutes()
+  const schedules = item.schedules?.length
+    ? item.schedules
+    : []
+
+  return schedules.some((schedule) => {
+    const startMinutes = minutesFromTime(schedule.startTime)
+    const endMinutes = minutesFromTime(schedule.endTime)
+    return (
+      schedule.meetingDays.includes(today) &&
+      startMinutes >= 0 &&
+      endMinutes >= 0 &&
+      currentMinutes >= startMinutes &&
+      currentMinutes <= endMinutes
+    )
+  })
+}
+
 function ClassCard({
   item,
   onStart,
@@ -623,8 +664,16 @@ function ClassCard({
   onDelete?: (item: ClassItem) => void
   activity?: ActivityItem
 }) {
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   const semesterEnded = hasSemesterEnded(item)
   const isEnded = ended || semesterEnded
+  const canStartNow = !isEnded && isClassScheduledNow(item, now)
   return (
     <article className="class-card">
       <div className="class-accent" style={{ background: item.color }} />
@@ -636,7 +685,13 @@ function ClassCard({
             background: isEnded ? "#edf1f4" : `${item.color}12`,
           }}
         >
-          {isEnded ? (ended ? "Class Ended" : "Semester ended") : item.status}
+          {isEnded
+            ? ended
+              ? "Class Ended"
+              : "Semester ended"
+            : canStartNow
+              ? "In session"
+              : item.status}
         </span>
 {onEdit ? (
   <div className="class-card-actions">
@@ -679,27 +734,115 @@ function ClassCard({
           {item.room}
         </span>
       </div>
-      <div className="class-schedule">
-        <span>
-          <Icon name="calendar" size={15} />
-          {formatMeetingDays(item.meetingDays) || "Days to be set"}
-        </span>
-        <small>
-          {formatSemesterDate(item.semesterStart)} –{" "}
-          {formatSemesterDate(item.semesterEnd)},{" "}
-          {new Date(`${item.semesterEnd}T12:00:00`).getFullYear()}
-        </small>
-      </div>
-      {(item.schedules?.length ?? 0) > 1 && (
-        <div className="class-schedule" aria-label="Additional class schedules">
-          {item.schedules!.slice(1).map((schedule, index) => (
-            <span key={schedule.id}>
-              <Icon name="clock" size={15} />
-              Schedule {index + 2}: {formatMeetingDays(schedule.meetingDays)} · {formatDatabaseTime(schedule.startTime)} - {formatDatabaseTime(schedule.endTime)}{schedule.room ? ` · ${schedule.room}` : ""}
-            </span>
-          ))}
+      <div
+        className="class-schedule-overview"
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 16,
+          flexWrap: "wrap",
+          marginTop: 16,
+          padding: "14px 16px",
+          border: "1px solid #e4ebf3",
+          borderRadius: 12,
+          background: "#f8fbff",
+        }}
+      >
+        <div
+          className="class-schedule-list"
+          style={{
+            display: "grid",
+            gap: 10,
+            minWidth: 0,
+            flex: "1 1 360px",
+          }}
+        >
+          {(item.schedules?.length
+            ? item.schedules
+            : [
+                {
+                  id: `legacy-${item.id}`,
+                  meetingDays: item.meetingDays,
+                  startTime: "",
+                  endTime: "",
+                  room: item.room,
+                },
+              ]
+          ).map((schedule, index) => {
+            const scheduleTime =
+              schedule.startTime && schedule.endTime
+                ? `${formatDatabaseTime(schedule.startTime)} - ${formatDatabaseTime(schedule.endTime)}`
+                : index === 0
+                  ? item.time
+                  : "Time to be set"
+
+            return (
+              <div
+                key={schedule.id}
+                className="class-schedule-row"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(120px, 0.9fr) minmax(160px, 1.2fr) minmax(110px, 1fr)",
+                  alignItems: "center",
+                  gap: 12,
+                  color: "#334155",
+                  fontSize: 13,
+                }}
+              >
+                <strong
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 7,
+                    color: "#0f4f8a",
+                    fontWeight: 700,
+                  }}
+                >
+                  <Icon name="calendar" size={15} />
+                  {formatMeetingDays(schedule.meetingDays) || "Days to be set"}
+                </strong>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                  <Icon name="clock" size={15} />
+                  {scheduleTime}
+                </span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                  <Icon name="home" size={15} />
+                  {schedule.room || "To be confirmed"}
+                </span>
+              </div>
+            )
+          })}
         </div>
-      )}
+
+        <div
+          className="class-semester-range"
+          style={{
+            marginLeft: "auto",
+            flex: "0 0 auto",
+            textAlign: "right",
+            paddingLeft: 14,
+            borderLeft: "1px solid #dbe5ef",
+          }}
+        >
+          <small
+            style={{
+              display: "block",
+              marginBottom: 4,
+              color: "#64748b",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: ".08em",
+              textTransform: "uppercase",
+            }}
+          >
+            Semester
+          </small>
+          <strong style={{ color: "#334155", fontSize: 12, whiteSpace: "nowrap" }}>
+            {formatSemesterDate(item.semesterStart)} - {formatSemesterDate(item.semesterEnd)}
+          </strong>
+        </div>
+      </div>
       {activity && (
         <div className="class-activity">
           <span>
@@ -724,20 +867,14 @@ function ClassCard({
         </div>
         <button
           className={
-            isEnded
-              ? "secondary-button compact class-view-button"
-              : String(item.id) === "1"
-                ? "primary-button compact"
-                : "secondary-button compact"
+            canStartNow
+              ? "primary-button compact"
+              : "secondary-button compact class-view-button"
           }
           onClick={() => onStart(item)}
         >
-          {!isEnded && String(item.id) === "1" ? <Icon name="play" size={16} /> : null}
-          {isEnded
-            ? "View class"
-            : String(item.id) === "1"
-              ? "Start class"
-              : "View class"}
+          {canStartNow ? <Icon name="play" size={16} /> : null}
+          {canStartNow ? "Start class" : "View class"}
         </button>
       </div>
     </article>
