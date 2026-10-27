@@ -3337,14 +3337,57 @@ function ActivitiesPage({
     "2026-0025": "NFC-8A24-D1",
     "2026-0027": "NFC-93BF-72",
   })
-  const scanNfcCard = () => {
-    setNfcScanStatus("waiting")
+  const scanNfcCard = async () => {
     setDetectedNfcCode("")
-    window.setTimeout(() => {
-      const code = `NFC-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`
-      setDetectedNfcCode(code)
-      setNfcScanStatus("detected")
-    }, 900)
+
+    if (!("NDEFReader" in window)) {
+      setNfcScanStatus("idle")
+      alert(
+        "NFC scanning is not supported here. Open the deployed HTTPS website in Chrome on an NFC-enabled Android phone.",
+      )
+      return
+    }
+
+    try {
+      setNfcScanStatus("waiting")
+      const NDEFReaderConstructor = (window as any).NDEFReader
+      const reader = new NDEFReaderConstructor()
+      await reader.scan()
+
+      reader.addEventListener(
+        "reading",
+        (event: any) => {
+          const serialNumber = String(event.serialNumber ?? "").trim()
+          if (!serialNumber) {
+            setNfcScanStatus("idle")
+            alert("The NFC card was detected, but no card identifier was available.")
+            return
+          }
+          setDetectedNfcCode(serialNumber)
+          setNfcScanStatus("detected")
+        },
+        { once: true },
+      )
+
+      reader.addEventListener(
+        "readingerror",
+        () => {
+          setNfcScanStatus("idle")
+          setDetectedNfcCode("")
+          alert("The NFC card could not be read. Keep the card near the phone and try again.")
+        },
+        { once: true },
+      )
+    } catch (error) {
+      setNfcScanStatus("idle")
+      setDetectedNfcCode("")
+      const errorName = error instanceof DOMException ? error.name : "UnknownError"
+      if (errorName === "NotAllowedError") {
+        alert("NFC permission was denied. Allow NFC access in Chrome and try again.")
+      } else {
+        alert("NFC scanning could not start. Keep Chrome open in the foreground and try again.")
+      }
+    }
   }
   const registerDetectedNfcCard = () => {
     if (!selectedNfcStudentId || !detectedNfcCode) return
