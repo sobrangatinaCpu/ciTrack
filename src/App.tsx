@@ -919,10 +919,90 @@ function Dashboard({
     loadDashboardClasses()
   }, [])
 
-  const todayActivities = activities.filter(
-    (activity) => activity.date === dashboardDate,
+  const toLocalDateKey = (date: Date) =>
+    [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-")
+
+  const [calendarNow, setCalendarNow] = useState(() => new Date())
+  const today = calendarNow
+  const todayKey = toLocalDateKey(today)
+  const [selectedDateKey, setSelectedDateKey] = useState(todayKey)
+
+  useEffect(() => {
+    let midnightTimer: number | undefined
+
+    const scheduleMidnightRefresh = () => {
+      const current = new Date()
+      const nextMidnight = new Date(current)
+      nextMidnight.setHours(24, 0, 0, 0)
+      const delay = nextMidnight.getTime() - current.getTime() + 250
+
+      midnightTimer = window.setTimeout(() => {
+        const refreshedDate = new Date()
+        setCalendarNow(refreshedDate)
+        setSelectedDateKey(toLocalDateKey(refreshedDate))
+        scheduleMidnightRefresh()
+      }, delay)
+    }
+
+    scheduleMidnightRefresh()
+
+    return () => {
+      if (midnightTimer !== undefined) {
+        window.clearTimeout(midnightTimer)
+      }
+    }
+  }, [])
+
+  const monday = new Date(today)
+  const mondayOffset = (today.getDay() + 6) % 7
+  monday.setHours(12, 0, 0, 0)
+  monday.setDate(today.getDate() - mondayOffset)
+  const weekDates = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + index)
+    return date
+  })
+
+  const selectedDate =
+    weekDates.find((date) => toLocalDateKey(date) === selectedDateKey) ?? today
+  const selectedDayCode = dayCodeFromDate(selectedDate)
+  const selectedActivities = activities.filter(
+    (activity) => activity.date === selectedDateKey,
   )
-  const focusActivity = todayActivities[0]
+  const selectedClasses = dashboardClasses.filter((item) => {
+    if (item.semesterStart && selectedDateKey < item.semesterStart) return false
+    if (item.semesterEnd && selectedDateKey > item.semesterEnd) return false
+    return (item.schedules ?? []).some((schedule) =>
+      schedule.meetingDays.includes(selectedDayCode),
+    )
+  })
+  const selectedConcernCount = selectedDateKey === todayKey
+    ? initialStudentConcerns.filter((concern) => concern.status === "Open").length
+    : 0
+  const selectedRecordCount = selectedDateKey === todayKey ? 4 : 0
+  const focusActivity = selectedActivities[0]
+  const selectedDateLabel = new Intl.DateTimeFormat("en", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(selectedDate)
+
+  const classOccurrencesForDate = (date: Date) => {
+    const dateKey = toLocalDateKey(date)
+    const dayCode = dayCodeFromDate(date)
+    return dashboardClasses.flatMap((item) => {
+      if (item.semesterStart && dateKey < item.semesterStart) return []
+      if (item.semesterEnd && dateKey > item.semesterEnd) return []
+      return (item.schedules ?? [])
+        .filter((schedule) => schedule.meetingDays.includes(dayCode))
+        .map((schedule) => ({ item, schedule }))
+    })
+  }
+
   return (
     <>
       <Header
@@ -936,7 +1016,7 @@ function Dashboard({
             <h2>Ready for today, Prof. Maria?</h2>
             <p className="welcome-status-message">
               <span className="fg-inline-bold" data-fge-id="fge-361">
-                You have 2 classes and 3 records waiting for review.
+                You have {selectedClasses.length} {selectedClasses.length === 1 ? "class" : "classes"} and {selectedRecordCount} records waiting for review.
               </span>
             </p>
           </div>
@@ -945,17 +1025,19 @@ function Dashboard({
             onClick={() => setPage("activities")}
             aria-label={
               focusActivity
-                ? `Open today’s activity, ${focusActivity.title} at ${formatActivityTime(focusActivity.startTime)}`
+                ? `Open selected activity, ${focusActivity.title} at ${formatActivityTime(focusActivity.startTime)}`
                 : "Open activities"
             }
           >
-            <span className="day-activity-label">Today’s focus</span>
+            <span className="day-activity-label">Selected date</span>
             <strong>{focusActivity?.title ?? "No activity yet"}</strong>
             <small>
               <Icon name="clock" size={13} />{" "}
               {focusActivity
                 ? `${formatActivityTime(focusActivity.startTime)} · ${dashboardClasses.find((item) => String(item.id) === String(focusActivity.classId))?.code ?? "Class"}`
-                : "Add an activity for today"}
+                : selectedClasses.length
+                  ? `${selectedClasses.length} scheduled ${selectedClasses.length === 1 ? "class" : "classes"}`
+                  : "No scheduled items"}
             </small>
             <span className="day-activity-people" aria-hidden="true">
               <i>JD</i>
@@ -970,35 +1052,101 @@ function Dashboard({
             </span>
           </button>
         </div>
-        <div className="date-tile">
-          <strong>23</strong>
-          <span>OCT</span>
+        <div className="date-tile" aria-label={selectedDateLabel}>
+          <strong>{selectedDate.getDate()}</strong>
+          <span>{selectedDate.toLocaleString("en", { month: "short" }).toUpperCase()}</span>
         </div>
         <div className="day-strip" aria-label="This week’s dates">
-          {[
-            { day: "MON", date: "21", status: "reminder" },
-            { day: "TUE", date: "22", status: "free" },
-            { day: "WED", date: "23", status: "reminder" },
-            { day: "THU", date: "24", status: "reminder" },
-            { day: "FRI", date: "25", status: "free" },
-            { day: "SAT", date: "26", status: "free" },
-            { day: "SUN", date: "27", status: "free" },
-          ].map(({ day, date, status }) => (
-            <button
-              key={date}
-              className={date === "23" ? "active" : ""}
-              onClick={() => setPage("activities")}
-              aria-label={`View activities for ${day} ${date} — ${
-                status === "free"
-                  ? "no activities scheduled"
-                  : "activity reminder"
-              }`}
-            >
-              <span>{day}</span>
-              <strong>{date}</strong>
-              <i className={`day-status-dot ${status}`} aria-hidden="true" />
-            </button>
-          ))}
+          {weekDates.map((date) => {
+            const dateKey = toLocalDateKey(date)
+            const classOccurrences = classOccurrencesForDate(date)
+            const dayActivities = activities.filter((activity) => activity.date === dateKey)
+            const concernCount = dateKey === todayKey ? selectedConcernCount : 0
+            const recordCount = dateKey === todayKey ? selectedRecordCount : 0
+            const hasItems =
+              classOccurrences.length > 0 ||
+              dayActivities.length > 0 ||
+              concernCount > 0 ||
+              recordCount > 0
+
+            return (
+              <div className="day-strip-item" key={dateKey}>
+                <button
+                  type="button"
+                  className={dateKey === selectedDateKey ? "active" : ""}
+                  onClick={() => setSelectedDateKey(dateKey)}
+                  aria-label={`View schedule for ${new Intl.DateTimeFormat("en", {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                  }).format(date)}`}
+                >
+                  <span>{date.toLocaleString("en", { weekday: "short" }).toUpperCase()}</span>
+                  <strong>{date.getDate()}</strong>
+                  {hasItems && (
+                    <span className="day-event-dots" aria-hidden="true">
+                      {classOccurrences.length > 0 && <i className="class-dot" />}
+                      {dayActivities.length > 0 && <i className="activity-dot" />}
+                      {recordCount > 0 && <i className="record-dot" />}
+                      {concernCount > 0 && <i className="concern-dot" />}
+                    </span>
+                  )}
+                </button>
+
+                <div className="day-hover-card" role="tooltip">
+                  <strong>{new Intl.DateTimeFormat("en", {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                  }).format(date)}</strong>
+
+                  {classOccurrences.length > 0 && (
+                    <section>
+                      <span>Classes</span>
+                      {classOccurrences.map(({ item, schedule }: { item: ClassItem; schedule: ClassSchedule }) => (
+                        <button
+                          type="button"
+                          key={`${item.id}-${schedule.id}`}
+                          onClick={() => onStart(item)}
+                        >
+                          <b>{item.subject}</b>
+                          <small>
+                            {formatDatabaseTime(schedule.startTime)} - {formatDatabaseTime(schedule.endTime)}
+                            {schedule.room ? ` · ${schedule.room}` : ""}
+                          </small>
+                        </button>
+                      ))}
+                    </section>
+                  )}
+
+                  {dayActivities.length > 0 && (
+                    <section>
+                      <span>Activities</span>
+                      {dayActivities.map((activity, index) => (
+                        <button
+                          type="button"
+                          key={`${activity.title}-${index}`}
+                          onClick={() => setPage("activities")}
+                        >
+                          <b>{activity.title}</b>
+                          <small>{formatActivityTime(activity.startTime)}</small>
+                        </button>
+                      ))}
+                    </section>
+                  )}
+
+                  {(recordCount > 0 || concernCount > 0) && (
+                    <section className="day-hover-counts">
+                      {recordCount > 0 && <span>{recordCount} records to review</span>}
+                      {concernCount > 0 && <span>{concernCount} open concerns</span>}
+                    </section>
+                  )}
+
+                  {!hasItems && <p>No scheduled items</p>}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </section>
 
@@ -1018,8 +1166,8 @@ function Dashboard({
               <Icon name="calendar" />
             </span>
             <span>
-              <strong>{dashboardClasses.length} {dashboardClasses.length === 1 ? "class" : "classes"}</strong>
-              <small>Scheduled today</small>
+              <strong>{selectedClasses.length} {selectedClasses.length === 1 ? "class" : "classes"}</strong>
+              <small>Scheduled for selected date</small>
             </span>
           </button>
           <button onClick={() => setPage("records")}>
@@ -1047,20 +1195,20 @@ function Dashboard({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Your schedule</p>
-            <h2>Today’s classes</h2>
+            <h2>{selectedDateKey === todayKey ? "Today’s classes" : `${selectedDate.toLocaleString("en", { weekday: "long" })} classes`}</h2>
           </div>
           <button onClick={() => setPage("classes")}>
             See all <Icon name="arrow" size={16} />
           </button>
         </div>
 <div className="class-grid">
-          {dashboardClasses.map((item) => (
+          {selectedClasses.map((item) => (
             <ClassCard
               key={item.id}
               item={item}
               onStart={onStart}
               ended={endedClassIds.map(String).includes(String(item.id))}
-              activity={todayActivities.find(
+              activity={selectedActivities.find(
                 (activity) => String(activity.classId) === String(item.id),
               )}
             />

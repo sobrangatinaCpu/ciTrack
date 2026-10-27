@@ -475,3 +475,84 @@ td { padding: 14px 18px; border-top: 1px solid #edf0f4; color: #536274; }
 .records-date-picker-trigger { margin: 4px; padding-block: 4px; }
 .records-date-picker-trigger > .icon:first-child { margin: 4px; }
 .records-date-picker-trigger output { height: fit-content; padding: 4px 4px 0; color: var(--ink); font-size: 13px; opacity: .47; }
+
+/* Dynamic weekly dashboard calendar */
+.day-strip { overflow: visible; }
+.day-strip-item { position: relative; min-width: 0; }
+.day-strip-item > button { width: 100%; }
+.day-event-dots { position: absolute; top: 6px; right: 7px; display: flex; gap: 3px; }
+.day-event-dots i { width: 5px; height: 5px; border: 1px solid #08426e; border-radius: 50%; }
+.day-event-dots .class-dot { background: #5aa7ff; }
+.day-event-dots .activity-dot { background: #a78bfa; }
+.day-event-dots .record-dot { background: #f5b942; }
+.day-event-dots .concern-dot { background: #ff6b72; }
+.day-strip-item > button.active .day-event-dots i { border-color: #fff; }
+.day-hover-card { position: absolute; z-index: 50; left: 50%; bottom: calc(100% + 10px); width: min(290px, 78vw); padding: 13px; border: 1px solid #d8e5ef; border-radius: 13px; color: #29465f; background: #fff; box-shadow: 0 18px 38px #001a3030; text-align: left; opacity: 0; visibility: hidden; pointer-events: none; transform: translate(-50%, 7px); transition: opacity .16s ease, transform .16s ease, visibility .16s ease; }
+.day-strip-item:hover .day-hover-card, .day-strip-item:focus-within .day-hover-card { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(-50%, 0); }
+.day-strip-item:first-child .day-hover-card { left: 0; transform: translate(0, 7px); }
+.day-strip-item:first-child:hover .day-hover-card, .day-strip-item:first-child:focus-within .day-hover-card { transform: translate(0, 0); }
+.day-strip-item:last-child .day-hover-card { right: 0; left: auto; transform: translate(0, 7px); }
+.day-strip-item:last-child:hover .day-hover-card, .day-strip-item:last-child:focus-within .day-hover-card { transform: translate(0, 0); }
+.day-hover-card > strong { display: block; padding-bottom: 9px; border-bottom: 1px solid #e7eef4; font-family: 'Manrope', sans-serif; font-size: 12px; }
+.day-hover-card section { display: grid; gap: 5px; padding-top: 9px; }
+.day-hover-card section > span { color: #71879a; font-size: 8px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.day-hover-card section > button { min-height: auto; padding: 7px 8px; display: grid; gap: 2px; place-content: initial; border: 0; border-radius: 8px; color: #29465f; background: #f5f9fc; text-align: left; }
+.day-hover-card section > button:hover { color: #155f9f; background: #eaf4ff; }
+.day-hover-card b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.day-hover-card small { color: #708497; font-size: 8px; }
+.day-hover-card p { padding-top: 10px; color: #7d8d9b; font-size: 9px; }
+.day-hover-card .day-hover-counts { display: flex; flex-wrap: wrap; gap: 5px; }
+.day-hover-card .day-hover-counts span { padding: 5px 7px; border-radius: 20px; color: #6b5a21; background: #fff4d7; font-size: 8px; font-weight: 700; letter-spacing: 0; text-transform: none; }
+
+@media (max-width: 680px) {
+  .day-hover-card { position: fixed; right: 17px !important; bottom: calc(84px + env(safe-area-inset-bottom)); left: 17px !important; width: auto; transform: translateY(8px) !important; }
+  .day-strip-item:hover .day-hover-card, .day-strip-item:focus-within .day-hover-card { transform: translateY(0) !important; }
+}
+
+/* Keep calendar previews fully visible outside the welcome panel */
+.welcome {
+  overflow: visible;
+}
+
+.welcome::after {
+  z-index: 0;
+  pointer-events: none;
+}
+
+.welcome-main,
+.date-tile,
+.day-strip {
+  position: relative;
+  z-index: 2;
+}
+
+.day-strip-item {
+  z-index: 1;
+}
+
+.day-strip-item:hover,
+.day-strip-item:focus-within {
+  z-index: 80;
+}
+
+.day-hover-card {
+  top: calc(100% + 10px);
+  bottom: auto;
+  z-index: 100;
+}
+
+/* Restore the selected-date tile to the upper-right corner */
+.welcome .date-tile {
+  position: absolute;
+  top: 23px;
+  right: 34px;
+  z-index: 4;
+  margin: 0;
+}
+
+@media (max-width: 680px) {
+  .welcome .date-tile {
+    top: 21px;
+    right: 17px;
+  }
+}
