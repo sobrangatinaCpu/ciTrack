@@ -653,7 +653,7 @@ function Sidebar({
           <img
             src={citLogo}
             alt="CIT Logo"
-            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            className="sidebar-cit-logo"
           />
         </div>
         <span>
@@ -4828,7 +4828,7 @@ function LandingPage({
       <section
         className="landing-intro"
         style={{
-          backgroundImage: `linear-gradient(135deg, rgba(7, 44, 82, 0.72) 0%, rgba(10, 71, 120, 0.58) 100%), url("${citBuilding}")`,
+          backgroundImage: `linear-gradient(135deg, rgba(7, 44, 82, 0.52) 0%, rgba(10, 71, 120, 0.34) 100%), url(${citBuilding})`,
           backgroundSize: "cover",
           backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
@@ -4845,7 +4845,7 @@ function LandingPage({
             <img
               src={citLogo}
               alt="CIT Logo"
-              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+              className="landing-cit-logo"
             />
           </span>
           <span className="landing-brand-name">
