@@ -2138,7 +2138,7 @@ useEffect(() => {
   const currentMinutes = classesPageNow.getHours() * 60 + classesPageNow.getMinutes()
   const todaySchedule = classList
     .flatMap((item) =>
-      item.schedules
+      (item.schedules ?? [])
         .filter((schedule) => schedule.meetingDays.includes(todayDayCode))
         .map((schedule) => ({ item, schedule })),
     )
@@ -2457,7 +2457,7 @@ function RecordsPage({
       const insertAt =
         lastMatchingIndex === -1 ? columns.length : lastMatchingIndex + 1
       const newColumn = {
-        id: `${term.toLowerCase()}-${type.toLowerCase().replaceAll(" ", "-")}-${Date.now()}`,
+        id: `${term.toLowerCase()}-${type.toLowerCase().replace(/ /g, "-")}-${Date.now()}`,
         label,
         type,
         term,
@@ -4029,7 +4029,7 @@ function ActivitiesPage({
                       <span
                         className={`status-pill activity-status ${status
                           .toLowerCase()
-                          .replaceAll(" ", "-")}`}
+                          .replace(/ /g, "-")}`}
                       >
                         {status}
                       </span>
