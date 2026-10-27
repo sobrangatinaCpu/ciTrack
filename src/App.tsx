@@ -484,10 +484,42 @@ function Header({
   onNotify: () => void
   onProfile?: () => void
 }) {
+  const [headerDate, setHeaderDate] = useState(() => new Date())
+
+  useEffect(() => {
+    let midnightTimer: number | undefined
+
+    const scheduleHeaderDateRefresh = () => {
+      const current = new Date()
+      const nextMidnight = new Date(current)
+      nextMidnight.setHours(24, 0, 0, 0)
+      const delay = nextMidnight.getTime() - current.getTime() + 250
+
+      midnightTimer = window.setTimeout(() => {
+        setHeaderDate(new Date())
+        scheduleHeaderDateRefresh()
+      }, delay)
+    }
+
+    scheduleHeaderDateRefresh()
+
+    return () => {
+      if (midnightTimer !== undefined) {
+        window.clearTimeout(midnightTimer)
+      }
+    }
+  }, [])
+
+  const formattedHeaderDate = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(headerDate)
+
   return (
     <header className="topbar">
       <div>
-        <p className="eyebrow">Wednesday, October 23</p>
+        <p className="eyebrow">{formattedHeaderDate}</p>
         <h1>{title}</h1>
       </div>
       <div className="top-actions">
