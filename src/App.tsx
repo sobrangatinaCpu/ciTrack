@@ -475,6 +475,92 @@ const navItems: { id: string; label: string; icon: IconName }[] = [
 const professorPhoto =
   "https://images.unsplash.com/photo-1573497161161-c3e73707e25c?auto=format&fit=crop&w=240&q=85"
 
+type FacultyProfile = {
+  name: string
+  department: string
+  facultyNumber: string
+  email: string
+  photoUrl: string
+}
+
+type FacultyNotification = {
+  id: string
+  kind: "class" | "concern" | "petition"
+  title: string
+  message: string
+  createdAt: string
+}
+
+const emptyFacultyProfile: FacultyProfile = {
+  name: "Faculty member",
+  department: "College of Industrial Technology",
+  facultyNumber: "Not set",
+  email: "",
+  photoUrl: professorPhoto,
+}
+
+const profileFromUser = (user: any): FacultyProfile => {
+  const metadata = user?.user_metadata ?? {}
+  return {
+    name: String(metadata.full_name ?? metadata.name ?? user?.email?.split("@")[0] ?? emptyFacultyProfile.name),
+    department: String(metadata.department ?? emptyFacultyProfile.department),
+    facultyNumber: String(metadata.faculty_number ?? metadata.facultyNumber ?? emptyFacultyProfile.facultyNumber),
+    email: String(user?.email ?? metadata.email ?? ""),
+    photoUrl: String(metadata.avatar_url ?? metadata.photo_url ?? professorPhoto),
+  }
+}
+
+const loadFacultyNotifications = async (): Promise<FacultyNotification[]> => {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return []
+  const notices: FacultyNotification[] = []
+  const now = new Date()
+  const today = dayCodeFromDate(now)
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+
+  const { data: classRows } = await supabase
+    .from("classes")
+    .select("id, subject, code, class_schedules(meeting_days, start_time, room)")
+    .eq("faculty_id", user.id)
+
+  for (const classRow of classRows ?? []) {
+    for (const schedule of classRow.class_schedules ?? []) {
+      const startMinutes = minutesFromTime(schedule.start_time ?? "")
+      const minutesUntil = startMinutes - nowMinutes
+      if ((schedule.meeting_days ?? []).includes(today) && minutesUntil >= 0 && minutesUntil <= 30) {
+        notices.push({
+          id: `class-${classRow.id}-${schedule.start_time}`,
+          kind: "class",
+          title: `${classRow.subject} starts soon`,
+          message: `${minutesUntil === 0 ? "Starting now" : `Starts in ${minutesUntil} minute${minutesUntil === 1 ? "" : "s"}`} · ${classRow.code}${schedule.room ? ` · ${schedule.room}` : ""}`,
+          createdAt: now.toISOString(),
+        })
+      }
+    }
+  }
+
+  for (const table of ["student_concerns", "student_petitions"] as const) {
+    const kind = table === "student_concerns" ? "concern" : "petition"
+    const { data } = await supabase
+      .from(table)
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(10)
+    for (const row of data ?? []) {
+      const status = String(row.status ?? "open").toLowerCase()
+      if (!["open", "pending", "submitted"].includes(status)) continue
+      notices.push({
+        id: `${kind}-${row.id}`,
+        kind,
+        title: kind === "concern" ? "New student concern" : "New student petition",
+        message: String(row.subject ?? row.category ?? row.message ?? `A student submitted a ${kind}.`),
+        createdAt: String(row.created_at ?? new Date().toISOString()),
+      })
+    }
+  }
+  return notices.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
 function Header({
   title = "Dashboard",
   onNotify,
@@ -485,68 +571,70 @@ function Header({
   onProfile?: () => void
 }) {
   const [headerDate, setHeaderDate] = useState(() => new Date())
+  const [profile, setProfile] = useState<FacultyProfile>(emptyFacultyProfile)
+  const [notificationCount, setNotificationCount] = useState(0)
 
   useEffect(() => {
-    let midnightTimer: number | undefined
-
-    const scheduleHeaderDateRefresh = () => {
-      const current = new Date()
-      const nextMidnight = new Date(current)
-      nextMidnight.setHours(24, 0, 0, 0)
-      const delay = nextMidnight.getTime() - current.getTime() + 250
-
-      midnightTimer = window.setTimeout(() => {
-        setHeaderDate(new Date())
-        scheduleHeaderDateRefresh()
-      }, delay)
+    let active = true
+    const loadHeader = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (active && user) setProfile(profileFromUser(user))
+      const notices = await loadFacultyNotifications()
+      if (active) setNotificationCount(notices.length)
     }
-
-    scheduleHeaderDateRefresh()
-
+    void loadHeader()
+    const timer = window.setInterval(loadHeader, 60_000)
+    const profileChannel = supabase
+      .channel("faculty-header-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_concerns" }, loadHeader)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_petitions" }, loadHeader)
+      .subscribe()
     return () => {
-      if (midnightTimer !== undefined) {
-        window.clearTimeout(midnightTimer)
-      }
+      active = false
+      window.clearInterval(timer)
+      void supabase.removeChannel(profileChannel)
     }
   }, [])
 
+  useEffect(() => {
+    let midnightTimer: number | undefined
+    const refresh = () => {
+      const current = new Date()
+      const next = new Date(current)
+      next.setHours(24, 0, 0, 0)
+      midnightTimer = window.setTimeout(() => {
+        setHeaderDate(new Date())
+        refresh()
+      }, next.getTime() - current.getTime() + 250)
+    }
+    refresh()
+    return () => { if (midnightTimer !== undefined) window.clearTimeout(midnightTimer) }
+  }, [])
+
   const formattedHeaderDate = new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
+    weekday: "long", month: "long", day: "numeric",
   }).format(headerDate)
 
   return (
     <header className="topbar">
-      <div>
-        <p className="eyebrow">{formattedHeaderDate}</p>
-        <h1>{title}</h1>
-      </div>
+      <div><p className="eyebrow">{formattedHeaderDate}</p><h1>{title}</h1></div>
       <div className="top-actions">
-        <button
-          className="icon-button notification-button"
-          aria-label="Open notifications"
-          onClick={onNotify}
-        >
+        <button className="icon-button notification-button" aria-label={`Open notifications${notificationCount ? `, ${notificationCount} unread` : ""}`} onClick={onNotify}>
           <Icon name="bell" />
-          <span />
+          {notificationCount > 0 && <span />}
         </button>
-        <button
-          className="avatar-menu"
-          onClick={onProfile}
-          aria-label="Open Prof. Maria Santos profile"
-        >
-          <img className="mini-avatar" src={professorPhoto} alt="" />
+        <button className="avatar-menu" onClick={onProfile} aria-label={`Open ${profile.name} profile`}>
+          <img className="mini-avatar" src={profile.photoUrl} alt="" />
           <span className="avatar-tooltip">
-            <strong>Prof. Maria Santos</strong>
-            <small>CIT Department</small>
+            <strong>{profile.name}</strong>
+            <small>{profile.department}</small>
+            {profile.facultyNumber !== "Not set" && <small>Faculty No. {profile.facultyNumber}</small>}
           </span>
         </button>
       </div>
     </header>
   )
 }
-
 function Sidebar({
   page,
   setPage,
@@ -925,6 +1013,23 @@ function Dashboard({
   activities: ActivityItem[]
 }) {
   const [dashboardClasses, setDashboardClasses] = useState<ClassItem[]>([])
+  const [dashboardFacultyName, setDashboardFacultyName] = useState("Faculty")
+
+  const dashboardDisplayName = (() => {
+    const cleanedName = dashboardFacultyName.replace(/^prof\.?\s+/i, "").trim()
+    const firstName = cleanedName.split(/\s+/)[0] || "Faculty"
+    return `Prof. ${firstName}`
+  })()
+
+  useEffect(() => {
+    async function loadDashboardFaculty() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const profile = profileFromUser(user)
+      setDashboardFacultyName(profile.name)
+    }
+    void loadDashboardFaculty()
+  }, [])
 
   useEffect(() => {
     async function loadDashboardClasses() {
@@ -1045,7 +1150,7 @@ function Dashboard({
         <div className="welcome-main">
           <div className="welcome-copy">
             <p className="eyebrow welcome-greeting">Good morning</p>
-            <h2>Ready for today, Prof. Maria?</h2>
+            <h2>Ready for today, {dashboardDisplayName}?</h2>
             <p className="welcome-status-message">
               <span className="fg-inline-bold" data-fge-id="fge-361">
                 You have {selectedClasses.length} {selectedClasses.length === 1 ? "class" : "classes"} and {selectedRecordCount} records waiting for review.
@@ -2027,7 +2132,7 @@ useEffect(() => {
     <>
       <Header
         title="My classes"
-        onNotify={() => {}}
+        onNotify={() => setPage("notifications")}
         onProfile={() => setPage("profile")}
       />
       <div className="page-intro">
@@ -2459,7 +2564,7 @@ function RecordsPage({
     <>
       <Header
         title="Class records"
-        onNotify={() => {}}
+        onNotify={() => setPage("notifications")}
         onProfile={() => setPage("profile")}
       />
       <section className="records-section-manager" aria-label="Section manager">
@@ -3330,9 +3435,52 @@ function ActivitiesPage({
     "idle" | "waiting" | "detected"
   >("idle")
   const [detectedNfcCode, setDetectedNfcCode] = useState("")
-  const [selectedNfcStudentId, setSelectedNfcStudentId] = useState(
-    students[0]?.id ?? "",
-  )
+  const [nfcStudents, setNfcStudents] = useState<
+    Array<{ id: string; studentNumber: string; name: string }>
+  >([])
+  const [nfcStudentsLoading, setNfcStudentsLoading] = useState(true)
+  const [selectedNfcStudentId, setSelectedNfcStudentId] = useState("")
+
+  const loadNfcStudents = async () => {
+    setNfcStudentsLoading(true)
+    const { data, error } = await supabase
+      .from("class_students")
+      .select("*")
+      .order("joined_at", { ascending: false })
+
+    if (error) {
+      setNfcNotice(`Unable to load students: ${error.message}`)
+      setNfcStudents([])
+      setSelectedNfcStudentId("")
+      setNfcStudentsLoading(false)
+      return
+    }
+
+    const mappedStudents = (data ?? [])
+      .map((row: any) => ({
+        id: String(row.student_id ?? row.id ?? ""),
+        studentNumber: String(row.student_number ?? row.student_no ?? ""),
+        name: String(
+          row.student_name ??
+            row.full_name ??
+            [row.last_name, row.first_name].filter(Boolean).join(", ") ??
+            "",
+        ),
+      }))
+      .filter((student) => student.id && student.name)
+
+    setNfcStudents(mappedStudents)
+    setSelectedNfcStudentId((current) =>
+      mappedStudents.some((student) => student.id === current)
+        ? current
+        : mappedStudents[0]?.id ?? "",
+    )
+    setNfcStudentsLoading(false)
+  }
+
+  useEffect(() => {
+    void loadNfcStudents()
+  }, [])
   const [nfcCards, setNfcCards] = useState<Record<string, string>>({})
   const [nfcSaving, setNfcSaving] = useState(false)
   const [nfcNotice, setNfcNotice] = useState("")
@@ -3543,7 +3691,7 @@ function ActivitiesPage({
     <>
       <Header
         title="Activities"
-        onNotify={() => {}}
+        onNotify={() => setPage("notifications")}
         onProfile={() => setPage("profile")}
       />
       <div className="page-intro">
@@ -3589,26 +3737,33 @@ function ActivitiesPage({
                 setDetectedNfcCode("")
               }}
             >
-              {students.map((student) => (
+              <option value="">
+                {nfcStudentsLoading ? "Loading students..." : "Select a registered student"}
+              </option>
+              {nfcStudents.map((student) => (
                 <option key={student.id} value={student.id}>
-                  {student.name} · {student.id}
+                  {student.name} · {student.studentNumber || "No student number"}
                 </option>
               ))}
             </select>
           </label>
+          {!nfcStudentsLoading && nfcStudents.length === 0 && (
+            <p className="nfc-no-students" role="status">
+              No registered students found. Accept a student request first.
+            </p>
+          )}
           {(() => {
             const student =
-              students.find((item) => item.id === selectedNfcStudentId) ??
-              students[0]
+              nfcStudents.find((item) => item.id === selectedNfcStudentId)
             const registeredCode = student ? nfcCards[student.id] : ""
             return (
               <>
                 <dl className="nfc-registration-details">
                   <div><dt>Student</dt><dd>{student?.name ?? "No student selected"}</dd></div>
-                  <div><dt>Student number</dt><dd>{student?.id ?? "—"}</dd></div>
+                  <div><dt>Student number</dt><dd>{student?.studentNumber ?? "—"}</dd></div>
                   <div><dt>Card status</dt><dd>{registeredCode ? `Registered · ${registeredCode}` : "Not registered"}</dd></div>
                 </dl>
-                <button type="button" className="nfc-scan-button" onClick={scanNfcCard}>
+                <button type="button" className="nfc-scan-button" onClick={scanNfcCard} disabled={!student}>
                   <Icon name="scan" size={17} />
                   {nfcScanStatus === "waiting" ? "Waiting for scan..." : "Scan Card"}
                 </button>
@@ -4077,197 +4232,98 @@ function ActivitiesPage({
   )
 }
 
-function ProfilePage({
-  setPage,
-  onLogout,
-}: {
-  setPage: (page: string) => void
-  onLogout: () => void
-}) {
-  const [profile, setProfile] = useState({
-    name: "Prof. Maria Santos",
-    department: "College of Information Technology",
-    facultyNumber: "FAC-0015",
-    email: "maria.santos@classtrack.edu",
-  })
-  const [draftProfile, setDraftProfile] = useState(profile)
+function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; onLogout: () => void }) {
+  const [profile, setProfile] = useState<FacultyProfile>(emptyFacultyProfile)
+  const [draftProfile, setDraftProfile] = useState<FacultyProfile>(emptyFacultyProfile)
   const [editingProfile, setEditingProfile] = useState(false)
-  const openProfileEditor = () => {
-    setDraftProfile(profile)
-    setEditingProfile(true)
+  const [savingProfile, setSavingProfile] = useState(false)
+
+  const loadProfile = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const loaded = profileFromUser(user)
+    setProfile(loaded)
+    setDraftProfile(loaded)
   }
-  const saveProfile = (event: React.FormEvent<HTMLFormElement>) => {
+  useEffect(() => { void loadProfile() }, [])
+
+  const saveProfile = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setProfile({
+    setSavingProfile(true)
+    const updated = {
+      ...draftProfile,
       name: draftProfile.name.trim(),
       department: draftProfile.department.trim(),
       facultyNumber: draftProfile.facultyNumber.trim(),
       email: draftProfile.email.trim(),
+    }
+    const { error } = await supabase.auth.updateUser({
+      email: updated.email || undefined,
+      data: {
+        full_name: updated.name,
+        department: updated.department,
+        faculty_number: updated.facultyNumber,
+        avatar_url: updated.photoUrl,
+      },
     })
+    setSavingProfile(false)
+    if (error) { alert(`Unable to save profile: ${error.message}`); return }
+    setProfile(updated)
     setEditingProfile(false)
   }
 
-  return (
-    <>
-      <Header
-        title="Profile"
-        onNotify={() => {}}
-        onProfile={() => setPage("profile")}
-      />
-      <section className="profile-hero">
-        <img src={professorPhoto} alt={profile.name} />
-        <div>
-          <span className="status-pill">Faculty</span>
-          <h2>{profile.name}</h2>
-          <p>{profile.department}</p>
-          <small>Faculty No. {profile.facultyNumber}</small>
-        </div>
-        <button className="secondary-button" onClick={openProfileEditor}>
-          Edit profile
-        </button>
+  return (<>
+    <Header title="Profile" onNotify={() => setPage("notifications")} onProfile={() => setPage("profile")} />
+    <section className="profile-hero">
+      <img src={profile.photoUrl} alt="" />
+      <div><span className="status-pill">Faculty</span><h2>{profile.name}</h2><p>{profile.department}</p><small>Faculty No. {profile.facultyNumber}</small></div>
+      <button className="secondary-button" onClick={() => { setDraftProfile(profile); setEditingProfile(true) }}>Edit profile</button>
+    </section>
+    <div className="profile-grid">
+      <section className="profile-panel"><p className="eyebrow">Account</p><h3>Personal settings</h3>{["Profile information","Notification preferences","Privacy & security"].map(x => <button key={x}>{x}<Icon name="chevron" /></button>)}</section>
+      <section className="profile-panel"><p className="eyebrow">Teaching</p><h3>Class management</h3>{["Class records export","Assessment templates","Attendance settings"].map(x => <button key={x}>{x}<Icon name="chevron" /></button>)}</section>
+    </div>
+    <button className="profile-mobile-logout" onClick={onLogout}><Icon name="logout" size={18}/>Log out</button>
+    {editingProfile && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setEditingProfile(false)}>
+      <section className="profile-form-modal" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
+        <button className="modal-close" onClick={() => setEditingProfile(false)} aria-label="Close edit profile">×</button>
+        <p className="eyebrow">Faculty profile</p><h2 id="edit-profile-title">Edit profile</h2><p>Changes synchronize with the header profile card.</p>
+        <form onSubmit={saveProfile}>
+          <div className="profile-photo-summary"><img src={profile.photoUrl} alt=""/><div><strong>{profile.name}</strong><small>This information comes from the signed-in faculty account.</small></div></div>
+          <div className="profile-form-fields">
+            <label>Full name <em>Required</em><input value={draftProfile.name} onChange={e => setDraftProfile({...draftProfile,name:e.target.value})} required/></label>
+            <label>University email <em>Required</em><input type="email" value={draftProfile.email} onChange={e => setDraftProfile({...draftProfile,email:e.target.value})} required/></label>
+            <label>College or department <em>Required</em><input value={draftProfile.department} onChange={e => setDraftProfile({...draftProfile,department:e.target.value})} required/></label>
+            <label>Faculty number <em>Required</em><input value={draftProfile.facultyNumber} onChange={e => setDraftProfile({...draftProfile,facultyNumber:e.target.value})} required/></label>
+          </div>
+          <div className="profile-form-actions"><button type="button" className="secondary-button" onClick={() => setEditingProfile(false)}>Cancel</button><button className="primary-button" disabled={savingProfile}>{savingProfile ? "Saving..." : "Save changes"}</button></div>
+        </form>
       </section>
-      <div className="profile-grid">
-        <section className="profile-panel">
-          <p className="eyebrow">Account</p>
-          <h3>Personal settings</h3>
-          {[
-            "Profile information",
-            "Notification preferences",
-            "Privacy & security",
-          ].map((x) => (
-            <button key={x}>
-              {x}
-              <Icon name="chevron" />
-            </button>
-          ))}
-        </section>
-        <section className="profile-panel">
-          <p className="eyebrow">Teaching</p>
-          <h3>Class management</h3>
-          {[
-            "Class records export",
-            "Assessment templates",
-            "Attendance settings",
-          ].map((x) => (
-            <button key={x}>
-              {x}
-              <Icon name="chevron" />
-            </button>
-          ))}
-        </section>
-      </div>
-      <button className="profile-mobile-logout" onClick={onLogout}>
-        <Icon name="logout" size={18} />
-        Log out
-      </button>
-      {editingProfile && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(event) =>
-            event.target === event.currentTarget && setEditingProfile(false)
-          }
-        >
-          <section
-            className="profile-form-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="edit-profile-title"
-          >
-            <button
-              className="modal-close"
-              onClick={() => setEditingProfile(false)}
-              aria-label="Close edit profile"
-            >
-              ×
-            </button>
-            <p className="eyebrow">Faculty profile</p>
-            <h2 id="edit-profile-title">Edit profile</h2>
-            <p>Keep your ClassTrack faculty information up to date.</p>
-            <form onSubmit={saveProfile}>
-              <div className="profile-photo-summary">
-                <img src={professorPhoto} alt="" />
-                <div>
-                  <strong>{profile.name}</strong>
-                  <small>
-                    Your profile photo is managed by your institution.
-                  </small>
-                </div>
-              </div>
-              <div className="profile-form-fields">
-                <label>
-                  Full name <em>Required</em>
-                  <input
-                    value={draftProfile.name}
-                    onChange={(event) =>
-                      setDraftProfile({
-                        ...draftProfile,
-                        name: event.target.value,
-                      })
-                    }
-                    required
-                  />
-                </label>
-                <label>
-                  University email <em>Required</em>
-                  <input
-                    type="email"
-                    value={draftProfile.email}
-                    onChange={(event) =>
-                      setDraftProfile({
-                        ...draftProfile,
-                        email: event.target.value,
-                      })
-                    }
-                    required
-                  />
-                </label>
-                <label>
-                  College or department <em>Required</em>
-                  <input
-                    value={draftProfile.department}
-                    onChange={(event) =>
-                      setDraftProfile({
-                        ...draftProfile,
-                        department: event.target.value,
-                      })
-                    }
-                    required
-                  />
-                </label>
-                <label>
-                  Faculty number <em>Required</em>
-                  <input
-                    value={draftProfile.facultyNumber}
-                    onChange={(event) =>
-                      setDraftProfile({
-                        ...draftProfile,
-                        facultyNumber: event.target.value,
-                      })
-                    }
-                    required
-                  />
-                </label>
-              </div>
-              <div className="profile-form-actions">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setEditingProfile(false)}
-                >
-                  Cancel
-                </button>
-                <button className="primary-button" type="submit">
-                  Save changes
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
-      )}
-    </>
-  )
+    </div>}
+  </>)
 }
 
+function NotificationsPage({ setPage }: { setPage: (page: string) => void }) {
+  const [items, setItems] = useState<FacultyNotification[]>([])
+  const [loading, setLoading] = useState(true)
+  const load = async () => { setLoading(true); setItems(await loadFacultyNotifications()); setLoading(false) }
+  useEffect(() => {
+    void load()
+    const timer = window.setInterval(load, 60_000)
+    const channel = supabase.channel("faculty-notifications-page")
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_concerns" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_petitions" }, load)
+      .subscribe()
+    return () => { window.clearInterval(timer); void supabase.removeChannel(channel) }
+  }, [])
+  return (<>
+    <Header title="Notifications" onNotify={() => setPage("notifications")} onProfile={() => setPage("profile")} />
+    <section className="notifications-page" aria-labelledby="notifications-title">
+      <div className="section-heading"><div><p className="eyebrow">Teacher updates</p><h2 id="notifications-title">Notifications</h2></div><button onClick={() => void load()}>Refresh</button></div>
+      {loading ? <p className="notification-empty">Loading notifications...</p> : items.length === 0 ? <div className="empty-prompt"><span><Icon name="bell"/></span><h3>You’re all caught up</h3><p>Classes starting within 30 minutes and new concerns or petitions will appear here.</p></div> : <div className="notification-list">{items.map(item => <button key={item.id} className={`notification-item ${item.kind}`} onClick={() => item.kind === "class" ? setPage("classes") : setPage("activities")}><span className="notification-item-icon"><Icon name={item.kind === "class" ? "clock" : item.kind === "concern" ? "users" : "clipboard"}/></span><span><strong>{item.title}</strong><small>{item.message}</small></span><Icon name="chevron" size={16}/></button>)}</div>}
+    </section>
+  </>)
+}
 function ActiveClass({
   item,
   onClose,
@@ -5069,23 +5125,7 @@ export default function App() {
       )
     if (page === "profile")
       return <ProfilePage setPage={setPage} onLogout={logout} />
-    if (page === "notifications")
-      return (
-        <>
-          <Header
-            title="Notifications"
-            onNotify={() => {}}
-            onProfile={() => setPage("profile")}
-          />
-          <div className="empty-prompt">
-            <span>
-              <Icon name="bell" />
-            </span>
-            <h3>You’re all caught up</h3>
-            <p>New class and student updates will appear here.</p>
-          </div>
-        </>
-      )
+    if (page === "notifications") return <NotificationsPage setPage={setPage} />
     return (
 <Dashboard
         onStart={openClass}

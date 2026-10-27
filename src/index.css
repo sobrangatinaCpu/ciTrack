@@ -904,3 +904,41 @@ h6,
   font-size: 13px;
   line-height: 1.45;
 }
+
+.nfc-no-students {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #f0d89c;
+  border-radius: 9px;
+  color: #725718;
+  background: #fff8e5;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.nfc-scan-button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+/* Synced faculty profile and notification center */
+.notification-button:not(:has(span))::after { display: none; }
+.notifications-page { margin: 30px 0; }
+.notification-list { display: grid; gap: 10px; }
+.notification-item { width: 100%; min-height: 82px; padding: 15px 17px; display: grid; grid-template-columns: 42px minmax(0,1fr) auto; align-items: center; gap: 12px; border: 1px solid #dce7ef; border-radius: 14px; color: #294960; background: #fff; text-align: left; }
+.notification-item:hover { border-color: #a9cbe5; background: #f8fbfe; }
+.notification-item-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; color: #176db4; background: #e8f3fc; }
+.notification-item.concern .notification-item-icon { color: #a56700; background: #fff4da; }
+.notification-item.petition .notification-item-icon { color: #7a52b5; background: #f1eafd; }
+.notification-item > span:nth-child(2) { min-width: 0; display: grid; gap: 4px; }
+.notification-item strong { font-size: 15px; }
+.notification-item small { overflow: hidden; color: #6d8294; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.notification-empty { padding: 24px; color: #6d8294; text-align: center; }
+.avatar-tooltip small + small { margin-top: 4px; color: #4f6c83; }
+@media (max-width: 680px) {
+  .topbar .mini-avatar, .topbar .avatar-menu { display: block; }
+  .avatar-menu { width: 40px; height: 40px; }
+  .mini-avatar { width: 40px; height: 40px; }
+  .avatar-tooltip { display: none; }
+  .notification-item { min-height: 76px; padding: 13px; }
+}
