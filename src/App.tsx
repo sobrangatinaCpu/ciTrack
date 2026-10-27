@@ -1,8 +1,8 @@
-import citLogo from "./assets/cit.png"
-import citBuilding from "./assets/citbuild.jpg"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from './lib/supabase'
 import {loginFaculty, registerFaculty,} from "./lib/auth"
+import citLogo from "./assets/cit.png"
+import citBuilding from "./assets/citbuild.jpg"
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
 const formatDatabaseTime = (value: string) => {
   const [hoursValue, minutesValue] = value.split(":")
@@ -4828,7 +4828,7 @@ function LandingPage({
       <section
         className="landing-intro"
         style={{
-          backgroundImage: `linear-gradient(135deg, rgba(7, 44, 82, 0.92) 0%, rgba(10, 71, 120, 0.82) 100%), url("$citbuild")`,
+          backgroundImage: `linear-gradient(135deg, rgba(7, 44, 82, 0.72) 0%, rgba(10, 71, 120, 0.58) 100%), url("${citBuilding}")`,
           backgroundSize: "cover",
           backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
@@ -4843,7 +4843,7 @@ function LandingPage({
             style={{ width: "100px", height: "100px", display: "flex" }}
           >
             <img
-              src="/cit.png"
+              src={citLogo}
               alt="CIT Logo"
               style={{ width: "100%", height: "100%", objectFit: "contain" }}
             />
