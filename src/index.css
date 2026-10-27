@@ -578,3 +578,268 @@ td { padding: 14px 18px; border-top: 1px solid #edf0f4; color: #536274; }
     bottom: calc(132px + env(safe-area-inset-bottom)) !important;
   }
 }
+
+/* Add/Edit Class modal: use the same readable font everywhere */
+.class-form-modal,
+.class-form-modal *,
+.class-form-modal *::before,
+.class-form-modal *::after {
+  font-family: 'DM Sans', sans-serif !important;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Readable base size for modal text */
+.class-form-modal p,
+.class-form-modal label,
+.class-form-modal legend,
+.class-form-modal input,
+.class-form-modal select,
+.class-form-modal textarea,
+.class-form-modal button,
+.class-form-modal span,
+.class-form-modal small,
+.class-form-modal strong {
+  font-size: 16px !important;
+  line-height: 1.45;
+}
+
+/* Keep the title larger while using the same font */
+.class-form-modal h2 {
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 26px !important;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+/* Section labels remain distinct but readable */
+.class-form-modal .eyebrow,
+.class-form-modal .form-section-title {
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.05em;
+}
+
+/* Required helper text stays slightly smaller */
+.class-form-modal label em,
+.class-form-modal legend em,
+.class-form-modal label small {
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.4;
+}
+
+/* Schedule heading uses the same font */
+.class-form-modal .schedule-form-card strong,
+.class-form-modal .schedule-form-heading strong {
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 18px !important;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* Give larger text enough space */
+.class-form-modal .class-form input,
+.class-form-modal .class-form select {
+  min-height: 48px;
+}
+
+.class-form-modal .meeting-day-options label {
+  min-height: 48px;
+}
+
+.class-form-modal .secondary-button,
+.class-form-modal .primary-button,
+.class-form-modal .class-card-delete {
+  min-height: 44px;
+  padding-inline: 16px;
+}
+
+/* Global typography: DM Sans everywhere, including all controls */
+html,
+body,
+#root,
+#root *,
+#root *::before,
+#root *::after,
+button,
+input,
+select,
+textarea,
+option,
+label,
+fieldset,
+legend,
+table,
+thead,
+tbody,
+tfoot,
+tr,
+th,
+td,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+span,
+small,
+strong,
+b,
+a,
+nav,
+header,
+main,
+section,
+article,
+aside,
+footer,
+div {
+  font-family: 'DM Sans', sans-serif !important;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ensure native form controls and buttons do not use browser fonts */
+button,
+input,
+select,
+textarea,
+option {
+  font: inherit;
+}
+
+/* Remove Manrope-specific compressed heading spacing while preserving sizes */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.brand {
+  letter-spacing: -0.015em !important;
+}
+
+/* Readability: Quick Summary and Records sections use a 16px minimum */
+.quick-summary,
+.quick-summary *,
+.summary-grid,
+.summary-grid *,
+.records-section-manager,
+.records-section-manager *,
+.records-course-identity,
+.records-course-identity *,
+.records-view-tabs,
+.records-view-tabs *,
+.records-tools,
+.records-tools *,
+.daily-tracker-panel,
+.daily-tracker-panel *,
+.daily-session-bar,
+.daily-session-bar *,
+.daily-tracker-table,
+.daily-tracker-table *,
+.records-card,
+.records-card * {
+  font-family: 'DM Sans', sans-serif !important;
+}
+
+.quick-summary .eyebrow,
+.quick-summary .section-heading h2,
+.summary-grid strong,
+.summary-grid small,
+.records-section-summary .eyebrow,
+.records-section-summary strong,
+.records-section-summary small,
+.section-switcher-trigger small,
+.section-switcher-trigger strong,
+.records-course-identity .eyebrow,
+.records-course-identity h2,
+.records-course-identity p,
+.records-file-import,
+.records-view-tabs button,
+.daily-session-bar label,
+.daily-session-bar input,
+.daily-session-badge,
+.daily-session-bar p,
+.daily-term-switcher button,
+.daily-tracker-table th,
+.daily-tracker-table td,
+.daily-tracker-table td strong,
+.daily-tracker-table td small,
+.daily-tracker-table select,
+.daily-tracker-table input,
+.daily-remarks-input,
+.records-card button,
+.records-card input,
+.records-card select,
+.records-card label,
+.records-card small,
+.records-card strong {
+  font-size: 16px !important;
+  line-height: 1.45;
+}
+
+/* Keep important titles visibly larger */
+.quick-summary .section-heading h2,
+.records-course-identity h2 {
+  font-size: 22px !important;
+  line-height: 1.3;
+}
+
+/* Provide enough room for the larger text */
+.summary-grid button {
+  min-height: 88px;
+  padding: 18px;
+}
+
+.records-section-manager {
+  min-height: 92px;
+  padding: 18px 20px;
+}
+
+.section-switcher-trigger {
+  min-width: 220px;
+  min-height: 58px;
+}
+
+.records-course-identity {
+  min-height: 132px;
+}
+
+.records-view-tabs button,
+.records-file-import,
+.records-card button {
+  min-height: 44px;
+}
+
+.daily-session-bar {
+  grid-template-columns: minmax(330px, auto) 1fr;
+  padding: 16px;
+}
+
+.daily-session-bar input,
+.daily-session-badge {
+  min-height: 40px;
+}
+
+.daily-tracker-table th,
+.daily-tracker-table td {
+  padding: 14px 12px !important;
+}
+
+.daily-tracker-table select,
+.daily-tracker-table input {
+  min-height: 40px;
+}
+
+.daily-tracker-table {
+  min-width: 980px;
+}
