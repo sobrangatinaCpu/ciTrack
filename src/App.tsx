@@ -649,10 +649,10 @@ function Sidebar({
       <div className="brand">
         <div className="brand-mark">
           <img
-              src="/cit.png" alt="CIT Logo" />
-              alt="CIT Logo"
-              style={{ width: "100%", height: "100%", objectFit: "contain" }}
-            />
+            src="/cit.png"
+            alt="CIT Logo"
+            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+          />
         </div>
         <span>
           CIT<span> Portal</span>
