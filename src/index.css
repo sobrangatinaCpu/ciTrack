@@ -942,3 +942,32 @@ h6,
   .avatar-tooltip { display: none; }
   .notification-item { min-height: 76px; padding: 13px; }
 }
+
+/* Authentication validation while checking cached sessions */
+.auth-checking-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  color: #31536d;
+  background: #f4f7fb;
+  font-family: 'DM Sans', sans-serif !important;
+}
+.auth-checking-screen p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.auth-checking-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid #cfe1ef;
+  border-top-color: #176db4;
+  border-radius: 50%;
+  animation: auth-checking-spin .8s linear infinite;
+}
+@keyframes auth-checking-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .auth-checking-spinner { animation: none; border-top-color: #cfe1ef; }
+}

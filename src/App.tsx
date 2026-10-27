@@ -2127,6 +2127,59 @@ useEffect(() => {
 }, [])
   const [isAddingClass, setIsAddingClass] = useState(false)
   const [editingClass, setEditingClass] = useState<ClassItem | null>(null)
+  const [classesPageNow, setClassesPageNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClassesPageNow(new Date()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const todayDayCode = dayCodeFromDate(classesPageNow)
+  const currentMinutes = classesPageNow.getHours() * 60 + classesPageNow.getMinutes()
+  const todaySchedule = classList
+    .flatMap((item) =>
+      item.schedules
+        .filter((schedule) => schedule.meetingDays.includes(todayDayCode))
+        .map((schedule) => ({ item, schedule })),
+    )
+    .sort(
+      (a, b) =>
+        minutesFromTime(a.schedule.startTime) -
+        minutesFromTime(b.schedule.startTime),
+    )
+  const nextClassToday = todaySchedule.find(
+    ({ schedule }: { schedule: ClassSchedule }) =>
+      minutesFromTime(schedule.startTime) > currentMinutes,
+  )
+  const activeClassToday = todaySchedule.find(
+    ({ schedule }: { schedule: ClassSchedule }) => {
+    const start = minutesFromTime(schedule.startTime)
+    const end = minutesFromTime(schedule.endTime)
+      return currentMinutes >= start && currentMinutes < end
+    },
+  )
+  const lastClassToday = todaySchedule.at(-1)
+  const scheduleStatus = activeClassToday
+    ? {
+        title: `${activeClassToday.item.subject} is in progress`,
+        message: `${formatDatabaseTime(activeClassToday.schedule.startTime)} - ${formatDatabaseTime(activeClassToday.schedule.endTime)}${activeClassToday.schedule.room ? ` · ${activeClassToday.schedule.room}` : ""}`,
+      }
+    : nextClassToday
+      ? {
+          title: `Next class: ${nextClassToday.item.subject}`,
+          message: `${formatDatabaseTime(nextClassToday.schedule.startTime)} - ${formatDatabaseTime(nextClassToday.schedule.endTime)}${nextClassToday.schedule.room ? ` · ${nextClassToday.schedule.room}` : ""}`,
+        }
+      : todaySchedule.length === 0
+        ? {
+            title: "No classes scheduled today",
+            message: "Your teaching schedule is clear for today.",
+          }
+        : {
+            title: "Your schedule is clear",
+            message: lastClassToday
+              ? `Your final class ended at ${formatDatabaseTime(lastClassToday.schedule.endTime)}.`
+              : "There are no more scheduled classes today.",
+          }
 
   return (
     <>
@@ -2168,12 +2221,12 @@ useEffect(() => {
 />
         ))}
       </div>
-      <div className="empty-prompt">
+      <div className="empty-prompt" aria-live="polite">
         <span>
-          <Icon name="calendar" />
+          <Icon name={activeClassToday ? "clock" : "calendar"} />
         </span>
-        <h3>Your afternoon is clear</h3>
-        <p>No more scheduled classes after 3:00 PM.</p>
+        <h3>{scheduleStatus.title}</h3>
+        <p>{scheduleStatus.message}</p>
       </div>
       {isAddingClass && (
         <AddClassModal
@@ -4755,7 +4808,13 @@ function MinimizedSession({
   )
 }
 
-function LandingPage({ onSignIn }: { onSignIn: () => void }) {
+function LandingPage({
+  onSignIn,
+  onRegistrationComplete,
+}: {
+  onSignIn: () => void
+  onRegistrationComplete: () => void
+}) {
   const [authMode, setAuthMode] = useState<"signIn" | "signUp">("signIn")
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmation, setShowConfirmation] = useState(false)
@@ -4856,7 +4915,8 @@ function LandingPage({ onSignIn }: { onSignIn: () => void }) {
     onSubmit={async (event) => {
   event.preventDefault()
 
-  const formData = new FormData(event.currentTarget)
+  const form = event.currentTarget
+  const formData = new FormData(form)
 
   const email = String(formData.get("email") ?? "")
   const password = String(formData.get("password") ?? "")
@@ -4871,6 +4931,8 @@ function LandingPage({ onSignIn }: { onSignIn: () => void }) {
         formData.get("department") ?? ""
       )
 
+      onRegistrationComplete()
+
       await registerFaculty({
         email,
         password,
@@ -4879,8 +4941,16 @@ function LandingPage({ onSignIn }: { onSignIn: () => void }) {
         department,
       })
 
+      // Supabase may create a session immediately when email confirmation is disabled.
+      // Registration must not grant dashboard access, so always end that session.
+      await supabase.auth.signOut({ scope: "local" })
+      form.reset()
+      setAuthMode("signIn")
+      setShowPassword(false)
+      setShowConfirmation(false)
+
       alert(
-        "Faculty account created. Check your email and confirm your account before signing in."
+        "Faculty account created. Please sign in using the account you just created."
       )
     } else {
       await loginFaculty(email, password)
@@ -5008,6 +5078,8 @@ function LandingPage({ onSignIn }: { onSignIn: () => void }) {
 export default function App() {
   const [page, setPage] = useState("home")
   const [signedIn, setSignedIn] = useState(false)
+  const [authChecking, setAuthChecking] = useState(true)
+  const registrationLogoutInProgress = useRef(false)
   const [activities, setActivities] =
     useState<ActivityItem[]>(initialActivities)
   const [activeClass, setActiveClass] = useState<ClassItem | null>(null)
@@ -5079,7 +5151,7 @@ export default function App() {
     }
   }, [])
 
-  const logout = () => {
+  const resetSignedInState = () => {
     setSignedIn(false)
     setPage("home")
     setActiveClass(null)
@@ -5087,6 +5159,100 @@ export default function App() {
     setMinimizedSession(null)
     setOmrScannerOpen(false)
     setOmrDraftScores({})
+  }
+
+  const validateAuthenticatedAccount = async () => {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser()
+
+    if (error || !user) {
+      await supabase.auth.signOut({ scope: "local" })
+      resetSignedInState()
+      return false
+    }
+
+    const { data: facultyProfile, error: profileError } = await supabase
+      .from("faculty_profiles")
+      .select("id, role")
+      .eq("id", user.id)
+      .maybeSingle()
+
+    if (
+      profileError ||
+      !facultyProfile ||
+      String(facultyProfile.role).toLowerCase() !== "faculty"
+    ) {
+      await supabase.auth.signOut({ scope: "local" })
+      resetSignedInState()
+      return false
+    }
+
+    setSignedIn(true)
+    return true
+  }
+
+  useEffect(() => {
+    let mounted = true
+
+    const checkAccount = async () => {
+      await validateAuthenticatedAccount()
+      if (mounted) setAuthChecking(false)
+    }
+
+    void checkAccount()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (registrationLogoutInProgress.current) {
+        if (event === "SIGNED_OUT" || !session?.user) {
+          registrationLogoutInProgress.current = false
+          resetSignedInState()
+          setAuthChecking(false)
+        }
+        return
+      }
+
+      if (event === "SIGNED_OUT" || !session?.user) {
+        resetSignedInState()
+        setAuthChecking(false)
+        return
+      }
+
+      // SIGNED_IN is also emitted by signUp when email confirmation is disabled.
+      // Dashboard access is granted only by the explicit Sign in form callback.
+      if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+        void validateAuthenticatedAccount()
+      }
+    })
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        void validateAuthenticatedAccount()
+      }
+    }
+
+    window.addEventListener("focus", handleVisibilityOrFocus)
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus)
+    const validationTimer = window.setInterval(
+      () => void validateAuthenticatedAccount(),
+      60_000,
+    )
+
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+      window.removeEventListener("focus", handleVisibilityOrFocus)
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus)
+      window.clearInterval(validationTimer)
+    }
+  }, [])
+
+  const logout = async () => {
+    await supabase.auth.signOut({ scope: "local" })
+    resetSignedInState()
   }
 
   const openClass = (item: ClassItem) => {
@@ -5136,7 +5302,30 @@ export default function App() {
     )
   }
 
-  if (!signedIn) return <LandingPage onSignIn={() => setSignedIn(true)} />
+  if (authChecking) {
+    return (
+      <div className="auth-checking-screen" role="status" aria-live="polite">
+        <span className="auth-checking-spinner" aria-hidden="true" />
+        <p>Checking your account...</p>
+      </div>
+    )
+  }
+
+  if (!signedIn) {
+    return (
+      <LandingPage
+        onSignIn={() => {
+          setAuthChecking(true)
+          void validateAuthenticatedAccount().finally(() => setAuthChecking(false))
+        }}
+        onRegistrationComplete={() => {
+          registrationLogoutInProgress.current = true
+          resetSignedInState()
+          setAuthChecking(false)
+        }}
+      />
+    )
+  }
 
   return (
     <div className="app-shell">
