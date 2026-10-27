@@ -178,6 +178,13 @@ const classes = [
     meetingDays: ["MON", "SAT"],
   },
 ]
+type ClassSchedule = {
+  id: string
+  meetingDays: string[]
+  startTime: string
+  endTime: string
+  room: string
+}
 type ClassItem = {
   id: string
   subject: string
@@ -190,6 +197,8 @@ type ClassItem = {
   semesterStart: string
   semesterEnd: string
   meetingDays: string[]
+  accessCode?: string
+  schedules?: ClassSchedule[]
 }
 
 const meetingDayOptions = [
@@ -221,6 +230,38 @@ const formatMeetingDays = (days: string[]) =>
     )
     .filter(Boolean)
     .join(" & ")
+const mapDatabaseClass = (item: any): ClassItem => {
+  const schedules: ClassSchedule[] = (item.class_schedules ?? []).map(
+    (schedule: any) => ({
+      id: schedule.id,
+      meetingDays: schedule.meeting_days ?? [],
+      startTime: schedule.start_time ?? "",
+      endTime: schedule.end_time ?? "",
+      room: schedule.room ?? "",
+    }),
+  )
+  const firstSchedule = schedules[0]
+  return {
+    id: item.id,
+    subject: item.subject ?? "",
+    code: item.code ?? "",
+    time:
+      firstSchedule?.startTime && firstSchedule?.endTime
+        ? `${formatDatabaseTime(firstSchedule.startTime)} - ${formatDatabaseTime(firstSchedule.endTime)}`
+        : item.start_time && item.end_time
+          ? `${formatDatabaseTime(item.start_time)} - ${formatDatabaseTime(item.end_time)}`
+          : "",
+    room: firstSchedule?.room || item.room || "To be confirmed",
+    color: item.color ?? "#7a62d3",
+    status: item.status ?? "Scheduled",
+    attendance: item.capacity ?? 0,
+    semesterStart: item.semester_start ?? "",
+    semesterEnd: item.semester_end ?? "",
+    meetingDays: firstSchedule?.meetingDays ?? item.meeting_days ?? [],
+    accessCode: item.access_code ?? "",
+    schedules,
+  }
+}
 
 type ActivityGroup = {
   id: string
@@ -649,6 +690,16 @@ function ClassCard({
           {new Date(`${item.semesterEnd}T12:00:00`).getFullYear()}
         </small>
       </div>
+      {(item.schedules?.length ?? 0) > 1 && (
+        <div className="class-schedule" aria-label="Additional class schedules">
+          {item.schedules!.slice(1).map((schedule, index) => (
+            <span key={schedule.id}>
+              <Icon name="clock" size={15} />
+              Schedule {index + 2}: {formatMeetingDays(schedule.meetingDays)} · {formatDatabaseTime(schedule.startTime)} - {formatDatabaseTime(schedule.endTime)}{schedule.room ? ` · ${schedule.room}` : ""}
+            </span>
+          ))}
+        </div>
+      )}
       {activity && (
         <div className="class-activity">
           <span>
@@ -717,7 +768,7 @@ function Dashboard({
 
       const { data, error } = await supabase
         .from("classes")
-        .select("*")
+        .select("*, class_schedules(id, meeting_days, start_time, end_time, room)")
         .eq("faculty_id", user.id)
         .order("created_at", { ascending: true })
 
@@ -726,23 +777,7 @@ function Dashboard({
         return
       }
 
-      setDashboardClasses(
-        (data ?? []).map((item) => ({
-          id: item.id,
-          subject: item.subject ?? "",
-          code: item.code ?? "",
-          time: item.start_time && item.end_time
-            ? `${formatDatabaseTime(item.start_time)} - ${formatDatabaseTime(item.end_time)}`
-            : "",
-          room: item.room ?? "To be confirmed",
-          color: item.color ?? "#7a62d3",
-          status: item.status ?? "Scheduled",
-          attendance: item.capacity ?? 0,
-          semesterStart: item.semester_start ?? "",
-          semesterEnd: item.semester_end ?? "",
-          meetingDays: item.meeting_days ?? [],
-        })),
-      )
+      setDashboardClasses((data ?? []).map(mapDatabaseClass))
     }
     loadDashboardClasses()
   }, [])
@@ -1317,344 +1352,268 @@ function AddClassModal({
   initialClass?: ClassItem | null
 }) {
   const isEditing = Boolean(initialClass)
-  const getTimeValue = (position: 0 | 1, fallback: string) => {
-    const timePart = initialClass?.time.split("·").at(-1)?.trim() ?? ""
-    const value = timePart.split("–")[position]?.trim()
-    const match = value?.match(/^(\d{1,2}):(\d{2})(?:\s?(AM|PM))?$/i)
-    if (!match) return fallback
-
-    let hours = Number(match[1])
-    const meridiem =
-      match[3]?.toUpperCase() ??
-      timePart.match(/\s(AM|PM)$/i)?.[1]?.toUpperCase()
-    if (meridiem === "PM" && hours !== 12) hours += 12
-    if (meridiem === "AM" && hours === 12) hours = 0
-    return `${String(hours).padStart(2, "0")}:${match[2]}`
-  }
-  const formatTime = (value: string) => {
-    const [hours, minutes] = value.split(":").map(Number)
-    const meridiem = hours >= 12 ? "PM" : "AM"
-    return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")} ${meridiem}`
-  }
+  const makeSchedule = (schedule?: Partial<ClassSchedule>): ClassSchedule => ({
+    id: schedule?.id ?? crypto.randomUUID(),
+    meetingDays: schedule?.meetingDays ?? [],
+    startTime: schedule?.startTime ?? "",
+    endTime: schedule?.endTime ?? "",
+    room: schedule?.room ?? "",
+  })
+  const legacySchedule = initialClass
+    ? makeSchedule({
+        meetingDays: initialClass.meetingDays,
+        startTime: "",
+        endTime: "",
+        room: initialClass.room === "To be confirmed" ? "" : initialClass.room,
+      })
+    : makeSchedule()
   const [form, setForm] = useState({
     subject: initialClass?.subject ?? "",
     code: initialClass?.code ?? "",
     semesterStart: initialClass?.semesterStart ?? "2026-06-06",
     semesterEnd: initialClass?.semesterEnd ?? "2026-11-07",
-    startTime: getTimeValue(0, "08:00"),
-    endTime: getTimeValue(1, "10:00"),
-    room: initialClass?.room ?? "",
-    attendance: String(initialClass?.attendance ?? 30),
-    accessCode: "",
+    attendance: initialClass ? String(initialClass.attendance) : "",
     requirements: "",
   })
-  const [meetingDays, setMeetingDays] = useState<string[]>(
-    initialClass?.meetingDays ?? ["MON", "SAT"],
+  const [schedules, setSchedules] = useState<ClassSchedule[]>(
+    initialClass?.schedules?.length ? initialClass.schedules : [legacySchedule],
   )
-  const [showAccessCode, setShowAccessCode] = useState(false)
-
+  const [saving, setSaving] = useState(false)
   const updateForm = (field: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [field]: value }))
+  const addSchedule = () =>
+    setSchedules((current) => [...current, makeSchedule()])
+  const removeSchedule = (scheduleId: string) =>
+    setSchedules((current) =>
+      current.length === 1
+        ? current
+        : current.filter((schedule) => schedule.id !== scheduleId),
+    )
+  const updateSchedule = (
+    scheduleId: string,
+    changes: Partial<ClassSchedule>,
+  ) =>
+    setSchedules((current) =>
+      current.map((schedule) =>
+        schedule.id === scheduleId ? { ...schedule, ...changes } : schedule,
+      ),
+    )
+  const toggleScheduleDay = (scheduleId: string, day: string) =>
+    setSchedules((current) =>
+      current.map((schedule) => {
+        if (schedule.id !== scheduleId) return schedule
+        const selected = schedule.meetingDays.includes(day)
+        return {
+          ...schedule,
+          meetingDays: selected
+            ? schedule.meetingDays.filter((value) => value !== day)
+            : [...schedule.meetingDays, day],
+        }
+      }),
+    )
 
-const submitClass = async (
-  event: React.FormEvent<HTMLFormElement>
-) => {
-  event.preventDefault()
-
-  if (
-    !form.subject.trim() ||
-    !form.code.trim() ||
-    !form.semesterStart ||
-    !form.semesterEnd ||
-    !form.startTime ||
-    !form.endTime ||
-    meetingDays.length === 0 ||
-    form.semesterEnd < form.semesterStart
-  ) {
-    return
+  const submitClass = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const schedulesAreValid = schedules.every(
+      (schedule) =>
+        schedule.meetingDays.length > 0 &&
+        schedule.startTime &&
+        schedule.endTime &&
+        schedule.endTime > schedule.startTime,
+    )
+    if (
+      !form.subject.trim() ||
+      !form.code.trim() ||
+      !form.attendance ||
+      Number(form.attendance) <= 0 ||
+      !form.semesterStart ||
+      !form.semesterEnd ||
+      form.semesterEnd < form.semesterStart ||
+      !schedulesAreValid
+    ) {
+      alert("Complete all required class and schedule information. Each schedule needs at least one day and a valid start and end time.")
+      return
+    }
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    if (userError || !user) {
+      alert("Please sign in before creating or editing a class.")
+      return
+    }
+    setSaving(true)
+    const classValues = {
+      faculty_id: user.id,
+      subject: form.subject.trim(),
+      code: form.code.trim(),
+      section: form.code.trim(),
+      capacity: Number(form.attendance),
+      semester_start: form.semesterStart,
+      semester_end: form.semesterEnd,
+      requirements: form.requirements.trim() || null,
+      color: initialClass?.color ?? "#7a62d3",
+      status: initialClass?.status ?? "Scheduled",
+    }
+    let savedClass: any
+    if (initialClass) {
+      const { data, error } = await supabase
+        .from("classes")
+        .update(classValues)
+        .eq("id", initialClass.id)
+        .select()
+        .maybeSingle()
+      if (error || !data) {
+        setSaving(false)
+        alert(`Unable to update class: ${error?.message ?? "Class not found"}`)
+        return
+      }
+      savedClass = data
+      const { error: deleteError } = await supabase
+        .from("class_schedules")
+        .delete()
+        .eq("class_id", initialClass.id)
+      if (deleteError) {
+        setSaving(false)
+        alert(`Unable to replace schedules: ${deleteError.message}`)
+        return
+      }
+    } else {
+      const { data, error } = await supabase
+        .from("classes")
+        .insert(classValues)
+        .select()
+        .single()
+      if (error) {
+        setSaving(false)
+        alert(`Unable to create class: ${error.message}`)
+        return
+      }
+      savedClass = data
+    }
+    const scheduleRows = schedules.map((schedule) => ({
+      class_id: savedClass.id,
+      meeting_days: schedule.meetingDays,
+      start_time: schedule.startTime,
+      end_time: schedule.endTime,
+      room: schedule.room.trim() || null,
+    }))
+    const { data: savedScheduleRows, error: scheduleError } = await supabase
+      .from("class_schedules")
+      .insert(scheduleRows)
+      .select()
+    if (scheduleError) {
+      setSaving(false)
+      alert(`Unable to save schedules: ${scheduleError.message}`)
+      return
+    }
+    const savedSchedules: ClassSchedule[] = (savedScheduleRows ?? []).map(
+      (schedule: any) => ({
+        id: schedule.id,
+        meetingDays: schedule.meeting_days ?? [],
+        startTime: schedule.start_time ?? "",
+        endTime: schedule.end_time ?? "",
+        room: schedule.room ?? "",
+      }),
+    )
+    const firstSchedule = savedSchedules[0] ?? schedules[0]
+    onSave({
+      id: savedClass.id,
+      subject: savedClass.subject,
+      code: savedClass.code,
+      time: `${formatDatabaseTime(firstSchedule.startTime)} - ${formatDatabaseTime(firstSchedule.endTime)}`,
+      room: firstSchedule.room || "To be confirmed",
+      color: savedClass.color ?? "#7a62d3",
+      status: savedClass.status ?? "Scheduled",
+      attendance: savedClass.capacity ?? Number(form.attendance),
+      semesterStart: savedClass.semester_start ?? form.semesterStart,
+      semesterEnd: savedClass.semester_end ?? form.semesterEnd,
+      meetingDays: firstSchedule.meetingDays,
+      accessCode: savedClass.access_code ?? initialClass?.accessCode ?? "",
+      schedules: savedSchedules,
+    })
+    setSaving(false)
+    if (!initialClass && savedClass.access_code) {
+      alert(`Class created. Student access code: ${savedClass.access_code}`)
+    }
   }
-  const {
-  data: { user },
-  error: userError,
-} = await supabase.auth.getUser()
 
-if (userError || !user) {
-  alert("Please sign in before creating or editing a class.")
-  return
-}
-
-const classValues = {
-  faculty_id: user.id,
-  subject: form.subject.trim(),
-  code: form.code.trim(),
-  section: "Default Section",
-  room: form.room.trim() || "To be confirmed",
-
-  capacity: Number(form.attendance),
-  meeting_days: meetingDays,
-
-  semester_start: form.semesterStart,
-  semester_end: form.semesterEnd,
-  start_time: form.startTime,
-  end_time: form.endTime,
-
-  access_code: form.accessCode.trim() || null,
-  requirements: form.requirements.trim() || null,
-
-  color: initialClass?.color ?? "#7a62d3",
-  status: initialClass?.status ?? "Scheduled",
-}
-
-let savedClass
-if (initialClass) {
-  console.log("Editing class ID:", initialClass.id)
-
-  const { data, error } = await supabase
-    .from("classes")
-    .update(classValues)
-    .eq("id", initialClass.id)
-    .select()
-    .maybeSingle()
-
-  if (error) {
-    console.error("Unable to update class:", error)
-    alert(`Unable to update class: ${error.message}`)
-    return
-  }
-
-  if (!data) {
-    console.error("No class found with ID:", initialClass.id)
-    alert("No matching class was found. Refresh the page and try again.")
-    return
-  }
-
-  savedClass = data
-} else {
-  // Adding a new class
-  const { data, error } = await supabase
-    .from("classes")
-    
-    .insert(classValues)
-    .select()
-    .single()
-
-  if (error) {
-    console.error("Unable to create class:", error)
-    alert(`Unable to create class: ${error.message}`)
-    return
-  }
-
-  savedClass = data
-}
-
-  onSave({
-    id: savedClass.id,
-    subject: form.subject.trim(),
-    code: form.code.trim(),
-    time: `${formatTime(form.startTime)} – ${formatTime(form.endTime)}`,
-    room: form.room.trim() || "To be confirmed",
-    color: initialClass?.color ?? "#7a62d3",
-    status: initialClass?.status ?? "Scheduled",
-    attendance: Number(form.attendance) || 0,
-    semesterStart: form.semesterStart,
-    semesterEnd: form.semesterEnd,
-    meetingDays,
-  })
-}
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-    >
-      <section
-        className="class-form-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="add-class-title"
-      >
-        <button className="modal-close" onClick={onClose} aria-label="Close">
-          ×
-        </button>
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="add-class-title">
+        <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         <p className="eyebrow">Class setup</p>
         <h2 id="add-class-title">{isEditing ? "Edit class" : "Add a class"}</h2>
-        <p>
-          {isEditing
-            ? "Update the section details and student access."
-            : "Create a section and define how students can join."}
-        </p>
+        <p>{isEditing ? "Update the section details and schedules." : "Create a section and define how students can join."}</p>
         <form className="class-form" onSubmit={submitClass}>
           <div className="form-section-title">Class details</div>
-          <label>
-            Subject name <em>Required</em>
-            <input
-              autoFocus
-              value={form.subject}
-              onChange={(event) => updateForm("subject", event.target.value)}
-              placeholder="e.g. Web Development Fundamentals"
-              required
-            />
+          <label>Subject name <em>Required</em>
+            <input autoFocus value={form.subject} onChange={(event) => updateForm("subject", event.target.value)} placeholder="e.g. Web Development Fundamentals" required />
           </label>
           <div className="class-form-grid">
-            <label>
-              Course code / section <em>Required</em>
-              <input
-                value={form.code}
-                onChange={(event) => updateForm("code", event.target.value)}
-                placeholder="e.g. BIT-CT 3B"
-                required
-              />
+            <label>Course code / section <em>Required</em>
+              <input value={form.code} onChange={(event) => updateForm("code", event.target.value)} placeholder="e.g. BIT-CT 3B" required />
             </label>
-            <label>
-              Student capacity
-              <input
-                type="number"
-                min="1"
-                max="200"
-                value={form.attendance}
-                onChange={(event) =>
-                  updateForm("attendance", event.target.value)
-                }
-              />
+            <label>Student capacity <em>Required</em>
+              <input type="number" min="1" max="200" value={form.attendance} onChange={(event) => updateForm("attendance", event.target.value)} required />
             </label>
           </div>
-
           <div className="form-section-title">Semester schedule & access</div>
           <div className="class-form-grid">
-            <label>
-              Semester start <em>Required</em>
-              <input
-                type="date"
-                value={form.semesterStart}
-                onChange={(event) =>
-                  updateForm("semesterStart", event.target.value)
-                }
-                required
-              />
+            <label>Semester start <em>Required</em>
+              <input type="date" value={form.semesterStart} onChange={(event) => updateForm("semesterStart", event.target.value)} required />
             </label>
-            <label>
-              Semester end <em>Required</em>
-              <input
-                type="date"
-                min={form.semesterStart}
-                value={form.semesterEnd}
-                onChange={(event) =>
-                  updateForm("semesterEnd", event.target.value)
-                }
-                required
-              />
+            <label>Semester end <em>Required</em>
+              <input type="date" min={form.semesterStart} value={form.semesterEnd} onChange={(event) => updateForm("semesterEnd", event.target.value)} required />
             </label>
           </div>
-          <fieldset className="meeting-days">
-            <legend>
-              Class days <em>Required</em>
-            </legend>
-            <p>Choose each recurring day this class meets.</p>
-            <div className="meeting-day-options">
-              {meetingDayOptions.map((day) => {
-                const selected = meetingDays.includes(day.value)
-                return (
-                  <label key={day.value} className={selected ? "selected" : ""}>
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() =>
-                        setMeetingDays((current) =>
-                          selected
-                            ? current.filter((value) => value !== day.value)
-                            : [...current, day.value],
-                        )
-                      }
-                    />
-                    <span>{day.label}</span>
+          <div className="form-section-title">Class schedules</div>
+          <p>Add another schedule when the same subject meets at a different time or room.</p>
+          <div className="schedule-list">
+            {schedules.map((schedule, index) => (
+              <section className="schedule-form-card" key={schedule.id} style={{ border: "1px solid #dbe6f0", borderRadius: 12, padding: 16, marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <strong>Schedule {index + 1}</strong>
+                  {schedules.length > 1 && <button type="button" className="class-card-delete" onClick={() => removeSchedule(schedule.id)}>Remove</button>}
+                </div>
+                <fieldset className="meeting-days">
+                  <legend>Class days <em>Required</em></legend>
+                  <div className="meeting-day-options">
+                    {meetingDayOptions.map((day) => {
+                      const selected = schedule.meetingDays.includes(day.value)
+                      return (
+                        <label key={day.value} className={selected ? "selected" : ""}>
+                          <input type="checkbox" checked={selected} onChange={() => toggleScheduleDay(schedule.id, day.value)} />
+                          <span>{day.label}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </fieldset>
+                <div className="class-form-grid class-time-fields">
+                  <label>Start time <em>Required</em>
+                    <input type="time" value={schedule.startTime} onChange={(event) => updateSchedule(schedule.id, { startTime: event.target.value })} required />
                   </label>
-                )
-              })}
-            </div>
-          </fieldset>
-          <div className="class-form-grid class-time-fields">
-            <label>
-              Start time <em>Required</em>
-              <input
-                type="time"
-                value={form.startTime}
-                onChange={(event) =>
-                  updateForm("startTime", event.target.value)
-                }
-                required
-              />
-            </label>
-            <label>
-              End time <em>Required</em>
-              <input
-                type="time"
-                value={form.endTime}
-                onChange={(event) => updateForm("endTime", event.target.value)}
-                required
-              />
-            </label>
-            <label>
-              Room / virtual space
-              <input
-                value={form.room}
-                onChange={(event) => updateForm("room", event.target.value)}
-                placeholder="e.g. Lab 3"
-              />
-            </label>
+                  <label>End time <em>Required</em>
+                    <input type="time" min={schedule.startTime} value={schedule.endTime} onChange={(event) => updateSchedule(schedule.id, { endTime: event.target.value })} required />
+                  </label>
+                  <label>Room / virtual space
+                    <input value={schedule.room} onChange={(event) => updateSchedule(schedule.id, { room: event.target.value })} placeholder="e.g. Lab 3" />
+                  </label>
+                </div>
+              </section>
+            ))}
           </div>
-          <label>
-            Student access code
-            <span className="access-code-field">
-              <input
-                type={showAccessCode ? "text" : "password"}
-                value={form.accessCode}
-                onChange={(event) =>
-                  updateForm("accessCode", event.target.value)
-                }
-                placeholder="Set a private joining code"
-              />
-              <button
-                type="button"
-                className="access-code-toggle"
-                onClick={() => setShowAccessCode((visible) => !visible)}
-                aria-label={
-                  showAccessCode
-                    ? "Hide student access code"
-                    : "Show student access code"
-                }
-                title={showAccessCode ? "Hide code" : "Show code"}
-              >
-                <Icon name={showAccessCode ? "eyeOff" : "eye"} size={17} />
-              </button>
-            </span>
-            <small>
-              Optional. Students will need this code to join the class.
-            </small>
+          <button type="button" className="secondary-button" onClick={addSchedule}><Icon name="plus" size={16} /> Add another schedule</button>
+          <label>Student access code
+            <input type="text" value={initialClass?.accessCode || "Generated automatically after saving"} readOnly />
+            <small>A unique code is generated automatically when the class is created.</small>
           </label>
-          <label>
-            Required materials or prerequisites
-            <textarea
-              value={form.requirements}
-              onChange={(event) =>
-                updateForm("requirements", event.target.value)
-              }
-              placeholder="e.g. Laptop, network cable, and completed safety orientation"
-            />
+          <label>Required materials or prerequisites
+            <textarea value={form.requirements} onChange={(event) => updateForm("requirements", event.target.value)} placeholder="e.g. Laptop, network cable, and completed safety orientation" />
           </label>
           <div className="class-form-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={onClose}
-            >
-              Cancel
-            </button>
-            <button type="submit" className="primary-button">
-              {isEditing ? (
-                <Icon name="edit" size={16} />
-              ) : (
-                <Icon name="plus" size={17} />
-              )}
-              {isEditing ? "Save changes" : "Add class"}
+            <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
+            <button type="submit" className="primary-button" disabled={saving}>
+              <Icon name={isEditing ? "edit" : "plus"} size={16} />
+              {saving ? "Saving..." : isEditing ? "Save changes" : "Add class"}
             </button>
           </div>
         </form>
@@ -1718,7 +1677,7 @@ useEffect(() => {
 
     const { data, error } = await supabase
       .from("classes")
-      .select("*")
+      .select("*, class_schedules(id, meeting_days, start_time, end_time, room)")
       .eq("faculty_id", user.id)
       .order("created_at", { ascending: true })
 
@@ -1727,22 +1686,7 @@ useEffect(() => {
       return
     }
 
-    const loadedClasses: ClassItem[] = (data ?? []).map((item) => ({
-      id: item.id,
-      subject: item.subject ?? "",
-      code: item.code ?? "",
-      time:
-        item.start_time && item.end_time
-          ? `${formatDatabaseTime(item.start_time)} - ${formatDatabaseTime(item.end_time)}`
-          : "",
-      room: item.room ?? "To be confirmed",
-      color: item.color ?? "#7a62d3",
-      status: item.status ?? "Scheduled",
-      attendance: item.capacity ?? 0,
-      semesterStart: item.semester_start ?? "",
-      semesterEnd: item.semester_end ?? "",
-      meetingDays: item.meeting_days ?? [],
-    }))
+    const loadedClasses: ClassItem[] = (data ?? []).map(mapDatabaseClass)
 
     setClassList(loadedClasses)
   }
