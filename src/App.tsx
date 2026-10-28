@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { QRCodeCanvas } from "qrcode.react"
 import { supabase } from './lib/supabase'
+import { useAttendanceQr } from "./useAttendanceQr"
 import {loginFaculty, registerFaculty,} from "./lib/auth"
 import citLogo from "./assets/cit.png"
 import citBuilding from "./assets/citbuild.jpg"
@@ -4998,27 +4999,6 @@ function ActiveClass({
   const [started, setStarted] = useState(initialStarted)
   const [startedAt, setStartedAt] = useState(initialStartedAt)
   const [sessionNow, setSessionNow] = useState(() => Date.now())
-  const [sessionToken, setSessionToken] = useState(() => crypto.randomUUID())
-  const [generatedAt, setGeneratedAt] = useState(() => Date.now())
-  const [countdown, setCountdown] = useState(60)
-
-  useEffect(() => {
-    if (!started || viewOnly) return
-    const qrTimer = window.setInterval(() => {
-      setSessionToken(crypto.randomUUID())
-      setGeneratedAt(Date.now())
-      setCountdown(60)
-    }, 60_000)
-    return () => window.clearInterval(qrTimer)
-  }, [started, viewOnly])
-
-  useEffect(() => {
-    if (!started || viewOnly) return
-    const countdownTimer = window.setInterval(() => {
-      setCountdown((value) => (value > 1 ? value - 1 : 60))
-    }, 1_000)
-    return () => window.clearInterval(countdownTimer)
-  }, [started, viewOnly])
   const [scannerMode, setScannerMode] = useState<"attendance" | "performance">(
     "attendance",
   )
@@ -5031,6 +5011,15 @@ function ActiveClass({
   const handsOnTotal = handsOnScores.accuracy + handsOnScores.technique + handsOnScores.completion + handsOnScores.safety
 
   const [attendanceSessionId, setAttendanceSessionId] = useState<string | null>(null)
+  const {
+    payload: attendanceQrPayload,
+    countdown: attendanceQrCountdown,
+    message: attendanceQrMessage,
+  } = useAttendanceQr(
+    attendanceSessionId,
+    String(item.id),
+    started && !viewOnly,
+  )
   const attendanceSessionIdRef = useRef<string | null>(null)
   const nfcReaderRef = useRef<any>(null)
   const [nfcSessionState, setNfcSessionState] = useState<
@@ -5724,20 +5713,26 @@ function ActiveClass({
                   <Icon name="scan" size={18} />
                 </div>
                 <div className="qr-pattern" aria-label="Attendance QR code">
-                  <QRCodeCanvas
-                    value={JSON.stringify({
-                      classId: item.id,
-                      sessionId: attendanceSessionId,
-                      token: sessionToken,
-                      generatedAt,
-                    })}
-                    size={140}
-                    level="H"
-                    includeMargin
-                  />
+                  {attendanceQrPayload ? (
+                    <QRCodeCanvas
+                      value={attendanceQrPayload}
+                      size={140}
+                      level="H"
+                      includeMargin
+                    />
+                  ) : (
+                    <div className="qr-loading-state" role="status" aria-live="polite">
+                      <Icon name="clock" size={22} />
+                      <span>Preparing secure QR…</span>
+                    </div>
+                  )}
                 </div>
-                <p>Students can scan this code to record attendance.</p>
-                <small className="qr-refresh-note">QR refreshes in {countdown}s</small>
+                <p>{attendanceQrMessage}</p>
+                <small className="qr-refresh-note">
+                  {attendanceQrPayload
+                    ? `QR refreshes in ${attendanceQrCountdown}s`
+                    : "Waiting for a server-issued attendance QR"}
+                </small>
                 <div className="progress-label">
                   <span>Attendance recorded</span>
                   <strong>{liveAttendance.length} of {item.attendance}</strong>
@@ -5901,9 +5896,6 @@ function ActiveClass({
               void startNfcScanner()
               void openMobileNfcSession().then((sessionId) => {
                 if (!sessionId) return
-                if (sessionId === "local-session" && !attendanceSessionIdRef.current) {
-                  setAttendanceSessionId(null)
-                }
                 setSessionNow(Date.now())
                 setScannerMode("attendance")
                 setStarted(true)
@@ -6581,11 +6573,18 @@ export default function App() {
   }
 
   const openClass = (item: ClassItem) => {
-    if (minimizedSession) {
+    const isOpeningMinimizedClass =
+      minimizedSession && String(minimizedSession.item.id) === String(item.id)
+
+    if (isOpeningMinimizedClass) {
       setActiveClass(minimizedSession.item)
+      setActiveSessionStartedAt(minimizedSession.startedAt)
       setMinimizedSession(null)
       return
     }
+
+    // Opening another class must not redirect to the minimized live class.
+    // The minimized session stays available in the tray after this class closes.
     setActiveSessionStartedAt(null)
     setActiveClass(item)
   }
