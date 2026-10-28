@@ -5023,6 +5023,8 @@ function ActiveClass({
     "attendance",
   )
   const [attendanceSessionId, setAttendanceSessionId] = useState<string | null>(null)
+  const attendanceSessionIdRef = useRef<string | null>(null)
+  const nfcReaderRef = useRef<any>(null)
   const [nfcSessionState, setNfcSessionState] = useState<
     "idle" | "opening" | "active" | "closing" | "error"
   >("idle")
@@ -5034,6 +5036,18 @@ function ActiveClass({
   >("idle")
   const [lastCard, setLastCard] = useState("")
   const [liveAttendance, setLiveAttendance] = useState<any[]>([])
+
+  useEffect(() => {
+    attendanceSessionIdRef.current = attendanceSessionId
+  }, [attendanceSessionId])
+
+  const waitForAttendanceSession = async () => {
+    const deadline = Date.now() + 12000
+    while (!attendanceSessionIdRef.current && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 150))
+    }
+    return attendanceSessionIdRef.current
+  }
 
   const invokeFacultyNfc = async (body: Record<string, unknown>) => {
     const { data, error } = await supabase.functions.invoke(
@@ -5066,6 +5080,7 @@ function ActiveClass({
         throw new Error("The database did not return an attendance session.")
       }
 
+      attendanceSessionIdRef.current = sessionId
       setAttendanceSessionId(sessionId)
       const synchronizedSession = await syncActiveAttendanceSession()
       if (!synchronizedSession) {
@@ -5159,15 +5174,6 @@ function ActiveClass({
   }
 
   const startNfcScanner = async () => {
-    if (!attendanceSessionId) {
-      showMessage(
-        "Start the class attendance session before scanning a student card.",
-        "error",
-        "Scanner is not ready",
-      )
-      return
-    }
-
     if (!("NDEFReader" in window)) {
       setNfcScannerStatus("unsupported")
       setNfcSessionMessage(
@@ -5177,17 +5183,25 @@ function ActiveClass({
     }
 
     try {
+      if (nfcReaderRef.current) {
+        setNfcScannerStatus("scanning")
+        setNfcSessionMessage("Scanner active. Hold a registered student NFC card near the phone.")
+        return
+      }
+
       setNfcScannerStatus("starting")
       setNfcSessionMessage("Allow NFC access, then hold a registered student card near the phone.")
 
       const Reader = (window as any).NDEFReader
       const reader = new Reader()
+      nfcReaderRef.current = reader
       await reader.scan()
 
       setNfcScannerStatus("scanning")
       setNfcSessionMessage("Scanner active. Hold a registered student NFC card near the phone.")
 
       reader.addEventListener("readingerror", () => {
+        nfcReaderRef.current = null
         setNfcScannerStatus("error")
         setNfcSessionMessage("The card was detected but could not be read. Try again.")
       }, { once: true })
@@ -5204,7 +5218,12 @@ function ActiveClass({
           return
         }
 
-        setLastCard(cardUid)
+        setLastCard(cardUid || "UID unavailable")
+        setNfcSessionMessage(
+          cardUid
+            ? `Card detected. UID: ${cardUid}`
+            : "An NFC card was detected, but the browser did not expose its UID.",
+        )
 
         if (!cardToken) {
           setNfcScannerStatus("error")
@@ -5218,13 +5237,21 @@ function ActiveClass({
         setNfcSessionMessage("Card detected. Verifying the student and recording attendance...")
 
         try {
+          const activeSessionId = await waitForAttendanceSession()
+          if (!activeSessionId) {
+            throw new Error(
+              "The student card was detected, but the shared class session is not ready yet. Keep the class open and scan again.",
+            )
+          }
+
           const data = await invokeFacultyNfc({
             action: "scan",
-            sessionId: attendanceSessionId,
+            sessionId: activeSessionId,
             cardUid,
             cardToken,
           })
 
+          nfcReaderRef.current = null
           setNfcScannerStatus("success")
           setNfcSessionMessage(
             data?.already_recorded
@@ -5237,6 +5264,7 @@ function ActiveClass({
             setNfcSessionMessage("Ready to scan another registered student card.")
           }, 2500)
         } catch (error) {
+          nfcReaderRef.current = null
           setNfcScannerStatus("error")
           setNfcSessionMessage(
             error instanceof Error
@@ -5246,6 +5274,7 @@ function ActiveClass({
         }
       }, { once: true })
     } catch (error) {
+      nfcReaderRef.current = null
       const errorName = error instanceof DOMException ? error.name : ""
       setNfcScannerStatus(errorName === "NotSupportedError" ? "unsupported" : "error")
       setNfcSessionMessage(
@@ -5280,6 +5309,7 @@ function ActiveClass({
         ? synchronizedStartedAt
         : Date.now()
 
+      attendanceSessionIdRef.current = sessionId
       setAttendanceSessionId(sessionId)
       setStartedAt(timerStart)
       setStarted(true)
@@ -5318,6 +5348,10 @@ function ActiveClass({
     const timer = window.setInterval(() => setSessionNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [started, startedAt])
+
+  useEffect(() => () => {
+    nfcReaderRef.current = null
+  }, [])
 
   useEffect(() => {
     if (!attendanceSessionId) {
@@ -5542,7 +5576,6 @@ function ActiveClass({
                   className="secondary-button"
                   onClick={() => void startNfcScanner()}
                   disabled={
-                    !attendanceSessionId ||
                     nfcScannerStatus === "starting" ||
                     nfcScannerStatus === "scanning" ||
                     nfcScannerStatus === "verifying"
@@ -5680,9 +5713,11 @@ function ActiveClass({
                 if (closed) onEnd(attendanceSessionId)
               })
             } else {
+              // Start Web NFC from this user gesture. Session creation continues in parallel.
+              void startNfcScanner()
               void openMobileNfcSession().then((sessionId) => {
                 if (!sessionId) return
-                if (sessionId === "local-session") {
+                if (sessionId === "local-session" && !attendanceSessionIdRef.current) {
                   setAttendanceSessionId(null)
                 }
                 if (!startedAt) setStartedAt(Date.now())
