@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { QRCodeCanvas } from "qrcode.react"
-import { supabase } from './lib/supabase'
 import { useAttendanceQr } from "./useAttendanceQr"
+import { supabase } from './lib/supabase'
 import {loginFaculty, registerFaculty,} from "./lib/auth"
 import citLogo from "./assets/cit.png"
 import citBuilding from "./assets/citbuild.jpg"
@@ -5011,15 +5011,8 @@ function ActiveClass({
   const handsOnTotal = handsOnScores.accuracy + handsOnScores.technique + handsOnScores.completion + handsOnScores.safety
 
   const [attendanceSessionId, setAttendanceSessionId] = useState<string | null>(null)
-  const {
-    payload: attendanceQrPayload,
-    countdown: attendanceQrCountdown,
-    message: attendanceQrMessage,
-  } = useAttendanceQr(
-    attendanceSessionId,
-    String(item.id),
-    started && !viewOnly,
-  )
+  const { payload: attendanceQrPayload, countdown, message: attendanceQrMessage } =
+    useAttendanceQr(attendanceSessionId, String(item.id), started && !viewOnly)
   const attendanceSessionIdRef = useRef<string | null>(null)
   const nfcReaderRef = useRef<any>(null)
   const [nfcSessionState, setNfcSessionState] = useState<
@@ -5047,46 +5040,20 @@ function ActiveClass({
   }
 
   const invokeFacultyNfc = async (body: Record<string, unknown>) => {
-    // Session creation/context/closure use the same deployed endpoint as the
-    // working mobile NFC tester. Browser NFC hardware is not needed for a session.
-    const sharedSessionAction = ["session_open", "session_close", "scanner_context"].includes(String(body.action))
-    const payload = sharedSessionAction
-      ? body.action === "session_open"
-        ? { action: "session_open", class_id: body.classId }
-        : body.action === "session_close"
-          ? { action: "session_close", session_id: body.sessionId }
-          : { action: "scanner_context" }
-      : body
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 20_000)
-    try {
-      const { data, error } = await supabase.functions.invoke(
-        sharedSessionAction ? "nfc-attendance" : "faculty-nfc-attendance",
-        { body: payload, signal: controller.signal },
-      )
-      if (error) {
-        let detail = error.message
-        try {
-          const response = (error as { context?: Response }).context
-          if (response instanceof Response) {
-            const failure = await response.clone().json()
-            if (typeof failure?.error === "string") detail = failure.error
-          }
-        } catch { /* Keep the original transport error. */ }
-        throw new Error(detail)
-      }
-      if (!data || typeof data !== "object" || Array.isArray(data)) {
-        throw new Error("The attendance server returned an invalid response.")
-      }
-      if (sharedSessionAction) {
-        if (data.error) throw new Error(String(data.error))
-        return data
-      }
-      if (!data.success) throw new Error(data.error ?? "The NFC attendance request failed.")
-      return data.data ?? {}
-    } finally {
-      window.clearTimeout(timeout)
+    const { data, error } = await supabase.functions.invoke(
+      "faculty-nfc-attendance",
+      { body },
+    )
+
+    if (error) {
+      throw new Error(error.message)
     }
+
+    if (!data?.success) {
+      throw new Error(data?.error ?? "The NFC attendance request failed.")
+    }
+
+    return data.data ?? {}
   }
 
   const openMobileNfcSession = async () => {
@@ -5099,8 +5066,8 @@ function ActiveClass({
       })
 
       const sessionId = String(data?.session_id ?? "")
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(sessionId)) {
-        throw new Error("The database did not return a valid attendance session.")
+      if (!sessionId) {
+        throw new Error("The database did not return an attendance session.")
       }
 
       attendanceSessionIdRef.current = sessionId
@@ -5113,21 +5080,23 @@ function ActiveClass({
       }
       setNfcSessionState("active")
       setNfcSessionMessage(
-        "Attendance session ready. Students can scan the QR during grace. Card scanning is available on a compatible browser.",
+        "Attendance is ready. On an NFC-enabled Android phone, select Scan student card.",
       )
       return sessionId
     } catch (error) {
       const message = error instanceof Error
         ? error.message
         : "The attendance session could not be opened."
-      console.error("Unable to open shared attendance session:", error)
-      attendanceSessionIdRef.current = null
-      setAttendanceSessionId(null)
-      setStartedAt(undefined)
-      setStarted(false)
+      console.error("Unable to open synchronized attendance session:", error)
       setNfcSessionState("error")
-      setNfcSessionMessage(`Attendance session could not start: ${message}`)
-      showMessage(message, "error", "Attendance session could not start")
+      setNfcSessionMessage(
+        "The synchronized class session could not be started. Check the deployed faculty-nfc-attendance function and try again.",
+      )
+      showMessage(
+        message,
+        "error",
+        "Class session could not be synchronized",
+      )
       return null
     }
   }
@@ -5514,7 +5483,7 @@ function ActiveClass({
           : "Recorded"
       })(),
       status: String(row.status ?? "Present"),
-      method: String(row.method ?? "Mobile NFC"),
+      method: String(row.method ?? "Verified"),
     }))
   return (
     <div
@@ -5709,17 +5678,12 @@ function ActiveClass({
                       includeMargin
                     />
                   ) : (
-                    <div className="qr-loading-state" role="status" aria-live="polite">
-                      <Icon name="clock" size={22} />
-                      <span>Preparing secure QR…</span>
-                    </div>
+                    <p role="status">{attendanceQrMessage}</p>
                   )}
                 </div>
-                <p>{attendanceQrMessage}</p>
+                <p>Students can scan this code during the grace period.</p>
                 <small className="qr-refresh-note">
-                  {attendanceQrPayload
-                    ? `QR refreshes in ${attendanceQrCountdown}s`
-                    : "Waiting for a server-issued attendance QR"}
+                  {attendanceQrPayload ? `QR refreshes in ${countdown}s` : attendanceQrMessage}
                 </small>
                 <div className="progress-label">
                   <span>Attendance recorded</span>
@@ -5880,7 +5844,8 @@ function ActiveClass({
                 if (closed) onEnd(attendanceSessionId)
               })
             } else {
-              // Open the database session first. Scan student card is a separate action.
+              // Start Web NFC from this user gesture. Session creation continues in parallel.
+              void startNfcScanner()
               void openMobileNfcSession().then((sessionId) => {
                 if (!sessionId) return
                 setSessionNow(Date.now())
@@ -6329,6 +6294,113 @@ export default function App() {
   const [online, setOnline] = useState(true)
 
   useEffect(() => {
+    if (!signedIn) {
+      setMinimizedSession(null)
+      setActiveSessionStartedAt(null)
+      return
+    }
+
+    let mounted = true
+
+    const recoverSharedLiveSession = async () => {
+      const { data: sessionData, error: authError } = await supabase.auth.getSession()
+      const accessToken = sessionData.session?.access_token
+      if (authError || !accessToken || !mounted) return
+
+      const { data: response, error: recoveryError } = await supabase.functions.invoke(
+        "faculty-nfc-attendance",
+        {
+          body: { action: "live_session_list" },
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      )
+
+      if (recoveryError || response?.success === false || !mounted) {
+        console.error("Unable to recover shared live session:", recoveryError ?? response?.error)
+        return
+      }
+
+      const sessions = Array.isArray(response?.data?.sessions)
+        ? response.data.sessions
+        : []
+      const classes = Array.isArray(response?.data?.classes)
+        ? response.data.classes
+        : []
+      const liveSession = sessions
+        .filter((row: any) => row?.id && row?.class_id && !row?.ended_at)
+        .sort(
+          (a: any, b: any) =>
+            Date.parse(String(b.started_at ?? "")) -
+            Date.parse(String(a.started_at ?? "")),
+        )[0]
+
+      if (!liveSession) {
+        setMinimizedSession(null)
+        setActiveSessionStartedAt(null)
+        return
+      }
+
+      const classRow = classes.find(
+        (row: any) => String(row.id) === String(liveSession.class_id),
+      )
+      if (!classRow) {
+        console.error("The active session class could not be recovered.")
+        return
+      }
+
+      const parsedStartedAt = Date.parse(String(liveSession.started_at ?? ""))
+      const sharedStartedAt = Number.isFinite(parsedStartedAt)
+        ? parsedStartedAt
+        : Date.now()
+      const mappedClass = mapDatabaseClass(classRow)
+
+      setActiveSessionStartedAt(sharedStartedAt)
+      setMinimizedSession((current) => {
+        if (
+          current &&
+          String(current.item.id) === String(mappedClass.id) &&
+          current.startedAt === sharedStartedAt
+        ) {
+          return current
+        }
+        return { item: mappedClass, startedAt: sharedStartedAt }
+      })
+    }
+
+    void recoverSharedLiveSession()
+
+    const channel = supabase
+      .channel(`faculty-live-session-recovery-${Date.now()}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "attendance_sessions",
+        },
+        () => void recoverSharedLiveSession(),
+      )
+      .subscribe()
+
+    const refresh = () => {
+      if (document.visibilityState === "visible") {
+        void recoverSharedLiveSession()
+      }
+    }
+    window.addEventListener("focus", refresh)
+    document.addEventListener("visibilitychange", refresh)
+    const fallbackTimer = window.setInterval(() => void recoverSharedLiveSession(), 10_000)
+
+    return () => {
+      mounted = false
+      window.clearInterval(fallbackTimer)
+      window.removeEventListener("focus", refresh)
+      document.removeEventListener("visibilitychange", refresh)
+      void supabase.removeChannel(channel)
+    }
+  }, [signedIn])
+
+  useEffect(() => {
     let active = true
 
     const loadEndedClasses = async () => {
@@ -6560,24 +6632,22 @@ export default function App() {
   }
 
   const openClass = (item: ClassItem) => {
-    const isOpeningMinimizedClass =
-      minimizedSession && String(minimizedSession.item.id) === String(item.id)
-
-    if (isOpeningMinimizedClass) {
-      setActiveClass(minimizedSession.item)
+    if (
+      minimizedSession &&
+      String(minimizedSession.item.id) === String(item.id)
+    ) {
       setActiveSessionStartedAt(minimizedSession.startedAt)
+      setActiveClass(minimizedSession.item)
       setMinimizedSession(null)
       return
     }
-
-    // Opening another class must not redirect to the minimized live class.
-    // The minimized session stays available in the tray after this class closes.
     setActiveSessionStartedAt(null)
     setActiveClass(item)
   }
 
   const restoreMinimizedSession = () => {
     if (!minimizedSession) return
+    setActiveSessionStartedAt(minimizedSession.startedAt)
     setActiveClass(minimizedSession.item)
     setMinimizedSession(null)
   }
@@ -6712,4 +6782,3 @@ export default function App() {
     </div>
   )
 }
-
