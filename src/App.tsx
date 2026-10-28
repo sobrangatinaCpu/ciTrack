@@ -5169,14 +5169,15 @@ function ActiveClass({
       record.data.byteOffset,
       record.data.byteLength,
     )
-
-    // NDEF text records start with a status byte followed by a language code.
-    if (record.recordType === "text" && bytes.length > 1) {
-      const languageLength = bytes[0] & 0x3f
-      return new TextDecoder().decode(bytes.slice(1 + languageLength)).trim()
-    }
-
-    return new TextDecoder().decode(bytes).replace(/\0/g, "").trim()
+    // Web NFC already separates NDEF text language/status metadata.
+    // Its record.data contains text bytes, so do not strip the first characters.
+    const encoding = record.recordType === "text"
+      ? String(record.encoding || "utf-8")
+      : "utf-8"
+    return new TextDecoder(encoding)
+      .decode(bytes)
+      .replace(/\0/g, "")
+      .trim()
   }
 
   const extractCardToken = (message: any) => {
