@@ -2267,3 +2267,23 @@ a {
   cursor: not-allowed;
   opacity: 0.62;
 }
+
+
+/* Request-only enrollment operations. NFC is available only inside Start Class. */
+.access-panel-tabs,
+.nfc-registration-card,
+.nfc-card-panel,
+.nfc-panel-heading,
+.nfc-student-list,
+.nfc-student-row,
+.nfc-student-select,
+.nfc-registration-details,
+.nfc-scan-button,
+.nfc-register-button,
+.nfc-detected-status,
+.nfc-save-notice,
+.nfc-no-students {
+  display: none !important;
+}
+.enrollment-operations-heading { margin-bottom: 16px; }
+.join-request-panel { width: 100%; }

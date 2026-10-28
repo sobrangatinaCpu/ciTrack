@@ -4073,7 +4073,6 @@ function ActivitiesPage({
   )
   const [sentReviewNotice, setSentReviewNotice] = useState("")
   const [currentTime, setCurrentTime] = useState(() => Date.now())
-  const [accessPanel, setAccessPanel] = useState<"request" | "nfc">("request")
   const [joinRequests, setJoinRequests] = useState<any[]>([])
   const [joinRequestsLoading, setJoinRequestsLoading] = useState(true)
   const loadJoinRequests = async () => {
@@ -4104,167 +4103,6 @@ function ActivitiesPage({
       .update({ status, reviewed_at: new Date().toISOString() })
       .eq("id", request.id)
     if (!error) await loadJoinRequests()
-  }
-
-  const [nfcScanStatus, setNfcScanStatus] = useState<
-    "idle" | "waiting" | "detected"
-  >("idle")
-  const [detectedNfcCode, setDetectedNfcCode] = useState("")
-  const [nfcStudents, setNfcStudents] = useState<
-    Array<{ id: string; studentNumber: string; name: string }>
-  >([])
-  const [nfcStudentsLoading, setNfcStudentsLoading] = useState(true)
-  const [selectedNfcStudentId, setSelectedNfcStudentId] = useState("")
-
-  const loadNfcStudents = async () => {
-    setNfcStudentsLoading(true)
-    const { data, error } = await supabase
-      .from("class_students")
-      .select("*")
-      .order("joined_at", { ascending: false })
-
-    if (error) {
-      setNfcNotice(`Unable to load students: ${error.message}`)
-      setNfcStudents([])
-      setSelectedNfcStudentId("")
-      setNfcStudentsLoading(false)
-      return
-    }
-
-    const mappedStudents = (data ?? [])
-      .map((row: any) => ({
-        id: String(row.student_id ?? row.id ?? ""),
-        studentNumber: String(row.student_number ?? row.student_no ?? ""),
-        name: String(
-          row.student_name ??
-            row.full_name ??
-            [row.last_name, row.first_name].filter(Boolean).join(", ") ??
-            "",
-        ),
-      }))
-      .filter((student) => student.id && student.name)
-
-    setNfcStudents(mappedStudents)
-    setSelectedNfcStudentId((current) =>
-      mappedStudents.some((student) => student.id === current)
-        ? current
-        : mappedStudents[0]?.id ?? "",
-    )
-    setNfcStudentsLoading(false)
-  }
-
-  useEffect(() => {
-    void loadNfcStudents()
-  }, [])
-  const [nfcCards, setNfcCards] = useState<Record<string, string>>({})
-  const [nfcSaving, setNfcSaving] = useState(false)
-  const [nfcNotice, setNfcNotice] = useState("")
-
-  const loadNfcCards = async () => {
-    const { data, error } = await supabase
-      .from("student_nfc_cards")
-      .select("student_id, card_uid")
-      .eq("status", "active")
-
-    if (error) {
-      setNfcNotice(`Unable to load NFC cards: ${error.message}`)
-      return
-    }
-
-    setNfcCards(
-      Object.fromEntries(
-        (data ?? []).map((card: any) => [String(card.student_id), card.card_uid]),
-      ),
-    )
-  }
-
-  useEffect(() => {
-    void loadNfcCards()
-  }, [])
-  const scanNfcCard = async () => {
-    setDetectedNfcCode("")
-
-    if (!("NDEFReader" in window)) {
-      setNfcScanStatus("idle")
-      showMessage(
-        "NFC scanning is not supported here. Open the deployed HTTPS website in Chrome on an NFC-enabled Android phone.",
-      )
-      return
-    }
-
-    try {
-      setNfcScanStatus("waiting")
-      const NDEFReaderConstructor = (window as any).NDEFReader
-      const reader = new NDEFReaderConstructor()
-      await reader.scan()
-
-      reader.addEventListener(
-        "reading",
-        (event: any) => {
-          const serialNumber = String(event.serialNumber ?? "").trim()
-          if (!serialNumber) {
-            setNfcScanStatus("idle")
-            showMessage("The NFC card was detected, but no card identifier was available.")
-            return
-          }
-          setDetectedNfcCode(serialNumber)
-          setNfcScanStatus("detected")
-        },
-        { once: true },
-      )
-
-      reader.addEventListener(
-        "readingerror",
-        () => {
-          setNfcScanStatus("idle")
-          setDetectedNfcCode("")
-          showMessage("The NFC card could not be read. Keep the card near the phone and try again.")
-        },
-        { once: true },
-      )
-    } catch (error) {
-      setNfcScanStatus("idle")
-      setDetectedNfcCode("")
-      const errorName = error instanceof DOMException ? error.name : "UnknownError"
-      if (errorName === "NotAllowedError") {
-        showMessage("NFC permission was denied. Allow NFC access in Chrome and try again.")
-      } else {
-        showMessage("NFC scanning could not start. Keep Chrome open in the foreground and try again.")
-      }
-    }
-  }
-  const registerDetectedNfcCard = async () => {
-    if (!selectedNfcStudentId || !detectedNfcCode || nfcSaving) return
-
-    setNfcSaving(true)
-    setNfcNotice("")
-
-    const { error } = await supabase
-      .from("student_nfc_cards")
-      .upsert(
-        {
-          student_id: selectedNfcStudentId,
-          card_uid: detectedNfcCode,
-          status: "active",
-          registered_at: new Date().toISOString(),
-        },
-        { onConflict: "student_id" },
-      )
-
-    setNfcSaving(false)
-
-    if (error) {
-      setNfcNotice(`Unable to register NFC card: ${error.message}`)
-      return
-    }
-
-    setNfcCards((cards) => ({
-      ...cards,
-      [selectedNfcStudentId]: detectedNfcCode,
-    }))
-    setNfcScanStatus("idle")
-    setDetectedNfcCode("")
-    setNfcNotice("NFC card registered and saved to the database.")
   }
 
   useEffect(() => {
@@ -4454,85 +4292,35 @@ const reminderFormValid = Boolean(
         <div className="enrollment-operations-heading">
           <div>
             <p className="eyebrow">Enrollment operations</p>
-            <h2 id="enrollment-title">Student access &amp; NFC cards</h2>
+            <h2 id="enrollment-title">Student access requests</h2>
           </div>
         </div>
-        <div className="access-panel-tabs" role="tablist" aria-label="Student access tools">
-          <button type="button" role="tab" aria-selected={accessPanel === "request"} className={accessPanel === "request" ? "active" : ""} onClick={() => setAccessPanel("request")}>Request</button>
-          <button type="button" role="tab" aria-selected={accessPanel === "nfc"} className={accessPanel === "nfc" ? "active" : ""} onClick={() => setAccessPanel("nfc")}>NFC cards</button>
-        </div>
-        {accessPanel === "request" && (
-          <div className="join-request-panel">
-            {joinRequestsLoading ? <p>Loading requests...</p> : joinRequests.length === 0 ? <div className="enrollment-empty-state"><Icon name="users" size={24}/><strong>No pending requests</strong><p>Requests appear here when students join with a class access code.</p></div> : joinRequests.map((request) => <article className="join-request-card" key={request.id}>
-              <div><p className="eyebrow">Student join request</p><h3>{request.student_name}</h3><p>{request.student_number}</p><p>{request.classes?.subject ?? "Class"} · {request.classes?.code ?? request.class_id}</p></div>
-              <div className="join-request-actions"><button type="button" className="secondary-button" onClick={() => void reviewJoinRequest(request, "declined")}>Decline</button><button type="button" className="primary-button" onClick={() => void reviewJoinRequest(request, "accepted")}>Accept</button></div>
-            </article>)}
-          </div>
-        )}
-        {accessPanel === "nfc" && (
-        <article className="nfc-registration-card">
-          <p className="eyebrow">Faculty-only registration</p>
-          <h3>Register NFC card</h3>
-          <label className="nfc-student-select">
-            Student
-            <select
-              value={selectedNfcStudentId}
-              onChange={(event) => {
-                setSelectedNfcStudentId(event.target.value)
-                setNfcScanStatus("idle")
-                setDetectedNfcCode("")
-              }}
-            >
-              <option value="">
-                {nfcStudentsLoading ? "Loading students..." : "Select a registered student"}
-              </option>
-              {nfcStudents.map((student) => (
-                <option key={student.id} value={student.id}>
-                  {student.name} · {student.studentNumber || "No student number"}
-                </option>
-              ))}
-            </select>
-          </label>
-          {!nfcStudentsLoading && nfcStudents.length === 0 && (
-            <p className="nfc-no-students" role="status">
-              No registered students found. Accept a student request first.
-            </p>
+        <div className="join-request-panel">
+          {joinRequestsLoading ? (
+            <p>Loading requests...</p>
+          ) : joinRequests.length === 0 ? (
+            <div className="enrollment-empty-state">
+              <Icon name="users" size={24} />
+              <strong>No pending requests</strong>
+              <p>Requests appear here when students join with a class access code.</p>
+            </div>
+          ) : (
+            joinRequests.map((request) => (
+              <article className="join-request-card" key={request.id}>
+                <div>
+                  <p className="eyebrow">Student join request</p>
+                  <h3>{request.student_name}</h3>
+                  <p>{request.student_number}</p>
+                  <p>{request.classes?.subject ?? "Class"} · {request.classes?.code ?? request.class_id}</p>
+                </div>
+                <div className="join-request-actions">
+                  <button type="button" className="secondary-button" onClick={() => void reviewJoinRequest(request, "declined")}>Decline</button>
+                  <button type="button" className="primary-button" onClick={() => void reviewJoinRequest(request, "accepted")}>Accept</button>
+                </div>
+              </article>
+            ))
           )}
-          {(() => {
-            const student =
-              nfcStudents.find((item) => item.id === selectedNfcStudentId)
-            const registeredCode = student ? nfcCards[student.id] : ""
-            return (
-              <>
-                <dl className="nfc-registration-details">
-                  <div><dt>Student</dt><dd>{student?.name ?? "No student selected"}</dd></div>
-                  <div><dt>Student number</dt><dd>{student?.studentNumber ?? "—"}</dd></div>
-                  <div><dt>Card status</dt><dd>{registeredCode ? `Registered · ${registeredCode}` : "Not registered"}</dd></div>
-                </dl>
-                <button type="button" className="nfc-scan-button" onClick={scanNfcCard} disabled={!student}>
-                  <Icon name="scan" size={17} />
-                  {nfcScanStatus === "waiting" ? "Waiting for scan..." : "Scan Card"}
-                </button>
-                <p className="nfc-detected-status" aria-live="polite">
-                  Detected: {nfcScanStatus === "detected" ? detectedNfcCode : nfcScanStatus === "waiting" ? "Waiting for scan" : "No card detected"}
-                </p>
-                <button
-                  type="button"
-                  className="primary-button nfc-register-button"
-                  onClick={registerDetectedNfcCard}
-                  disabled={nfcScanStatus !== "detected" || nfcSaving}
-                >
-                  {nfcSaving ? "Saving..." : "Register Card"}
-                </button>
-                {nfcNotice && (
-                  <p className="nfc-save-notice" role="status">{nfcNotice}</p>
-                )}
-                <small>Only faculty can register NFC cards.</small>
-              </>
-            )
-          })()}
-        </article>
-        )}
+        </div>
       </section>
       <div className="activities-workspace">
         <section className="concerns-section" aria-labelledby="concerns-title">
@@ -5233,6 +5021,35 @@ function ActiveClass({
   const [scannerMode, setScannerMode] = useState<"attendance" | "performance">(
     "attendance",
   )
+  const [lastCard, setLastCard] = useState("")
+  const [nfcScannerStatus, setNfcScannerStatus] = useState<"idle" | "starting" | "active" | "unsupported" | "error">("idle")
+
+  const startNfcScanner = async () => {
+    if (!("NDEFReader" in window)) {
+      setNfcScannerStatus("unsupported")
+      return
+    }
+    try {
+      setNfcScannerStatus("starting")
+      const Reader = (window as any).NDEFReader
+      const reader = new Reader()
+      await reader.scan()
+      setNfcScannerStatus("active")
+      reader.addEventListener("reading", (event: any) => {
+        setLastCard(String(event.serialNumber || "Unknown Card"))
+      })
+      reader.addEventListener("readingerror", () => {
+        setNfcScannerStatus("error")
+      })
+    } catch (error) {
+      console.error("Unable to start Web NFC scanner:", error)
+      setNfcScannerStatus("error")
+    }
+  }
+
+  useEffect(() => {
+    if (started) void startNfcScanner()
+  }, [started])
   const [manualAttendanceOpen, setManualAttendanceOpen] = useState(false)
   const [manualAttendance, setManualAttendance] = useState<Record<string, boolean>>(
     {},
@@ -5336,9 +5153,9 @@ function ActiveClass({
                 <div>
                   <span className="nfc-scanner-label">NFC scanner</span>
                   <strong id="nfc-scanner-title">
-                    Active <i aria-hidden="true" />
+                    {nfcScannerStatus === "active" ? "Active" : nfcScannerStatus === "starting" ? "Starting" : nfcScannerStatus === "unsupported" ? "Unsupported" : nfcScannerStatus === "error" ? "Scanner error" : "Ready"} <i aria-hidden="true" />
                   </strong>
-                  <small>Ready for a student card tap</small>
+                  <small>{lastCard ? `Card detected: ${lastCard}` : nfcScannerStatus === "unsupported" ? "Web NFC is unavailable in this browser." : nfcScannerStatus === "error" ? "Keep the browser in the foreground and try Start Class again." : "Ready for a student card tap"}</small>
                 </div>
                 <span className="session-online-status">
                   <i aria-hidden="true" /> Online
@@ -6233,7 +6050,7 @@ export default function App() {
               setActiveClass(null)
               setActiveSessionStartedAt(null)
               setMinimizedSession(null)
-              showToast("Class ended.")
+              showToast("Class ended and synchronized across devices.")
             })
           }}
           onMinimize={(startedAt) => {
