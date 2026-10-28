@@ -5021,40 +5021,120 @@ function ActiveClass({
   const [scannerMode, setScannerMode] = useState<"attendance" | "performance">(
     "attendance",
   )
-  const [lastCard, setLastCard] = useState("")
-  const [nfcScannerStatus, setNfcScannerStatus] = useState<"idle" | "starting" | "active" | "unsupported" | "error">("idle")
+  const [attendanceSessionId, setAttendanceSessionId] = useState<string | null>(null)
+  const [nfcSessionState, setNfcSessionState] = useState<
+    "idle" | "opening" | "active" | "closing" | "error"
+  >("idle")
+  const [nfcSessionMessage, setNfcSessionMessage] = useState(
+    "Students use the registered credential in the mobile application.",
+  )
+  const [liveAttendance, setLiveAttendance] = useState<any[]>([])
 
-  const startNfcScanner = async () => {
-    if (!("NDEFReader" in window)) {
-      setNfcScannerStatus("unsupported")
-      return
+  const openMobileNfcSession = async () => {
+    setNfcSessionState("opening")
+    const { data, error } = await supabase.rpc("nfc_attendance_faculty_api", {
+      p_action: "session_open",
+      p_body: { class_id: String(item.id) },
+    })
+    if (error || !data?.session_id) {
+      setNfcSessionState("error")
+      setNfcSessionMessage(
+        error?.message ?? "The attendance session could not be opened.",
+      )
+      showMessage(
+        error?.message ?? "The attendance session could not be opened.",
+        "error",
+        "NFC attendance unavailable",
+      )
+      return null
     }
-    try {
-      setNfcScannerStatus("starting")
-      const Reader = (window as any).NDEFReader
-      const reader = new Reader()
-      await reader.scan()
-      setNfcScannerStatus("active")
-      reader.addEventListener("reading", (event: any) => {
-        setLastCard(String(event.serialNumber || "Unknown Card"))
-      })
-      reader.addEventListener("readingerror", () => {
-        setNfcScannerStatus("error")
-      })
-    } catch (error) {
-      console.error("Unable to start Web NFC scanner:", error)
-      setNfcScannerStatus("error")
+    const sessionId = String(data.session_id)
+    setAttendanceSessionId(sessionId)
+    setNfcSessionState("active")
+    setNfcSessionMessage(
+      "Waiting for verified student check-ins from the mobile application.",
+    )
+    return sessionId
+  }
+
+  const closeMobileNfcSession = async () => {
+    if (!attendanceSessionId) return true
+    setNfcSessionState("closing")
+    const { data, error } = await supabase.rpc("nfc_attendance_faculty_api", {
+      p_action: "session_close",
+      p_body: { session_id: attendanceSessionId },
+    })
+    if (error || data?.closed !== true) {
+      setNfcSessionState("error")
+      setNfcSessionMessage(
+        error?.message ?? "The attendance session could not be closed.",
+      )
+      showMessage(
+        error?.message ?? "The attendance session could not be closed.",
+        "error",
+        "Unable to end class",
+      )
+      return false
     }
+    setNfcSessionState("idle")
+    return true
   }
 
   useEffect(() => {
-    if (started) void startNfcScanner()
-  }, [started])
+    if (!attendanceSessionId) {
+      setLiveAttendance([])
+      return
+    }
+    let active = true
+    const loadAttendance = async () => {
+      const { data, error } = await supabase
+        .from("attendance")
+        .select("*")
+        .eq("session_id", attendanceSessionId)
+        .order("created_at", { ascending: true })
+      if (!active) return
+      if (error) {
+        console.error("Unable to load live attendance:", error)
+        return
+      }
+      setLiveAttendance(data ?? [])
+    }
+    void loadAttendance()
+    const channel = supabase
+      .channel(`live-attendance-${attendanceSessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "attendance",
+          filter: `session_id=eq.${attendanceSessionId}`,
+        },
+        () => void loadAttendance(),
+      )
+      .subscribe()
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
+  }, [attendanceSessionId])
   const [manualAttendanceOpen, setManualAttendanceOpen] = useState(false)
   const [manualAttendance, setManualAttendance] = useState<Record<string, boolean>>(
     {},
   )
-  const liveRoster: Array<{ name: string; id: string; time: string; status: string; method: string }> = []
+  const liveRoster: Array<{ name: string; id: string; time: string; status: string; method: string }> =
+    liveAttendance.map((row: any) => ({
+      name: String(row.student_name ?? row.full_name ?? "Verified student"),
+      id: String(row.student_number ?? row.student_id ?? ""),
+      time: row.created_at
+        ? new Date(row.created_at).toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit",
+          })
+        : "Recorded",
+      status: String(row.status ?? "Present"),
+      method: String(row.method ?? "Mobile NFC"),
+    }))
   return (
     <div
       className="modal-backdrop"
@@ -5095,15 +5175,15 @@ function ActiveClass({
         {started && (
           <div className="session-attendance-stats" aria-label="Session attendance summary">
             <div>
-              <strong>24</strong>
+              <strong>{liveAttendance.filter((row: any) => String(row.status ?? "present").toLowerCase() === "present").length}</strong>
               <small>Present</small>
             </div>
             <div>
-              <strong>3</strong>
+              <strong>{liveAttendance.filter((row: any) => String(row.status ?? "").toLowerCase() === "late").length}</strong>
               <small>Late</small>
             </div>
             <div>
-              <strong>5</strong>
+              <strong>{Math.max(0, item.attendance - liveAttendance.length)}</strong>
               <small>Not recorded</small>
             </div>
             <div>
@@ -5151,11 +5231,17 @@ function ActiveClass({
                   <Icon name="scan" size={20} />
                 </span>
                 <div>
-                  <span className="nfc-scanner-label">NFC scanner</span>
+                  <span className="nfc-scanner-label">Mobile NFC attendance</span>
                   <strong id="nfc-scanner-title">
-                    {nfcScannerStatus === "active" ? "Active" : nfcScannerStatus === "starting" ? "Starting" : nfcScannerStatus === "unsupported" ? "Unsupported" : nfcScannerStatus === "error" ? "Scanner error" : "Ready"} <i aria-hidden="true" />
+                    {nfcSessionState === "opening"
+                      ? "Opening session"
+                      : nfcSessionState === "closing"
+                        ? "Closing session"
+                        : nfcSessionState === "error"
+                          ? "Session error"
+                          : "Attendance session active"} <i aria-hidden="true" />
                   </strong>
-                  <small>{lastCard ? `Card detected: ${lastCard}` : nfcScannerStatus === "unsupported" ? "Web NFC is unavailable in this browser." : nfcScannerStatus === "error" ? "Keep the browser in the foreground and try Start Class again." : "Ready for a student card tap"}</small>
+                  <small>{nfcSessionMessage}</small>
                 </div>
                 <span className="session-online-status">
                   <i aria-hidden="true" /> Online
@@ -5186,11 +5272,9 @@ function ActiveClass({
                   <Icon name="scan" size={22} />
                 </span>
                 <div>
-                  <strong>Tap a card to record {scannerMode}</strong>
+                  <strong>{liveAttendance.length} verified check-in{liveAttendance.length === 1 ? "" : "s"}</strong>
                   <small>
-                    {scannerMode === "attendance"
-                      ? "Each tap marks the student present."
-                      : "Each tap opens the student performance record."}
+                    The student mobile app verifies the registered credential and submits attendance securely.
                   </small>
                 </div>
               </div>
@@ -5208,6 +5292,7 @@ function ActiveClass({
                   <QRCodeCanvas
                     value={JSON.stringify({
                       classId: item.id,
+                      sessionId: attendanceSessionId,
                       token: sessionToken,
                       generatedAt,
                     })}
@@ -5220,10 +5305,10 @@ function ActiveClass({
                 <small className="qr-refresh-note">QR refreshes in {countdown}s</small>
                 <div className="progress-label">
                   <span>Attendance recorded</span>
-                  <strong>24 of {item.attendance}</strong>
+                  <strong>{liveAttendance.length} of {item.attendance}</strong>
                 </div>
                 <div className="progress">
-                  <span style={{ width: "75%" }} />
+                  <span style={{ width: `${Math.min(100, item.attendance ? (liveAttendance.length / item.attendance) * 100 : 0)}%` }} />
                 </div>
               </section>
             ) : (
@@ -5311,16 +5396,27 @@ function ActiveClass({
           }
           onClick={() => {
             if (viewOnly) onClose()
-            else if (started) onEnd()
-            else {
-              setStartedAt(Date.now())
-              setScannerMode("attendance")
-              setStarted(true)
+            else if (started) {
+              void closeMobileNfcSession().then((closed) => {
+                if (closed) onEnd()
+              })
+            } else {
+              void openMobileNfcSession().then((sessionId) => {
+                if (!sessionId) return
+                setStartedAt(Date.now())
+                setScannerMode("attendance")
+                setStarted(true)
+              })
             }
           }}
+          disabled={nfcSessionState === "opening" || nfcSessionState === "closing"}
         >
           {viewOnly ? (
             "Close overview"
+          ) : nfcSessionState === "opening" ? (
+            "Opening attendance..."
+          ) : nfcSessionState === "closing" ? (
+            "Closing attendance..."
           ) : started ? (
             "End class"
           ) : (
