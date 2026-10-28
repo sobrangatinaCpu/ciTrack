@@ -4989,7 +4989,7 @@ function ActiveClass({
 }: {
   item: ClassItem
   onClose: () => void
-  onEnd: () => void
+  onEnd: (attendanceSessionId: string | null) => void
   onMinimize: (startedAt: number) => void
   initialStarted?: boolean
   initialStartedAt?: number
@@ -5037,16 +5037,12 @@ function ActiveClass({
       p_body: { class_id: String(item.id) },
     })
     if (error || !data?.session_id) {
+      console.error("Unable to open mobile NFC attendance session:", error)
       setNfcSessionState("error")
       setNfcSessionMessage(
-        error?.message ?? "The attendance session could not be opened.",
+        "NFC scanning is not supported in the web portal. Students must use the registered mobile application for NFC attendance.",
       )
-      showMessage(
-        error?.message ?? "The attendance session could not be opened.",
-        "error",
-        "NFC attendance unavailable",
-      )
-      return null
+      return "web-only"
     }
     const sessionId = String(data.session_id)
     setAttendanceSessionId(sessionId)
@@ -5091,7 +5087,6 @@ function ActiveClass({
         .from("attendance")
         .select("*")
         .eq("session_id", attendanceSessionId)
-        .order("created_at", { ascending: true })
       if (!active) return
       if (error) {
         console.error("Unable to load live attendance:", error)
@@ -5126,12 +5121,21 @@ function ActiveClass({
     liveAttendance.map((row: any) => ({
       name: String(row.student_name ?? row.full_name ?? "Verified student"),
       id: String(row.student_number ?? row.student_id ?? ""),
-      time: row.created_at
-        ? new Date(row.created_at).toLocaleTimeString([], {
-            hour: "numeric",
-            minute: "2-digit",
-          })
-        : "Recorded",
+      time: (() => {
+        const recordedAt =
+          row.checked_in_at ??
+          row.recorded_at ??
+          row.scanned_at ??
+          row.check_in_time ??
+          row.created_at ??
+          null
+        return recordedAt
+          ? new Date(recordedAt).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })
+          : "Recorded"
+      })(),
       status: String(row.status ?? "Present"),
       method: String(row.method ?? "Mobile NFC"),
     }))
@@ -5238,7 +5242,7 @@ function ActiveClass({
                       : nfcSessionState === "closing"
                         ? "Closing session"
                         : nfcSessionState === "error"
-                          ? "Session error"
+                          ? "Web scanning unavailable"
                           : "Attendance session active"} <i aria-hidden="true" />
                   </strong>
                   <small>{nfcSessionMessage}</small>
@@ -5398,11 +5402,14 @@ function ActiveClass({
             if (viewOnly) onClose()
             else if (started) {
               void closeMobileNfcSession().then((closed) => {
-                if (closed) onEnd()
+                if (closed) onEnd(attendanceSessionId)
               })
             } else {
               void openMobileNfcSession().then((sessionId) => {
                 if (!sessionId) return
+                if (sessionId === "web-only") {
+                  setAttendanceSessionId(null)
+                }
                 setStartedAt(Date.now())
                 setScannerMode("attendance")
                 setStarted(true)
@@ -5888,28 +5895,90 @@ export default function App() {
     }
   }, [signedIn])
 
-  const endClassAcrossDevices = async (classId: string) => {
+  const endClassAcrossDevices = async (
+    displayedClassId: string,
+    attendanceSessionId?: string | null,
+  ) => {
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) {
-      showMessage("Your session expired. Please sign in again.", "error", "Class could not be ended")
+      showMessage(
+        "Your session expired. Please sign in again.",
+        "error",
+        "Class could not be ended",
+      )
       return false
     }
+
+    // The attendance-session UUID and class UUID are different values.
+    // When a mobile NFC attendance session exists, use its class_id as the
+    // authoritative class UUID before writing class_session_status.
+    let realClassId = displayedClassId
+
+    if (attendanceSessionId) {
+      const { data: sessionRow, error: sessionLookupError } = await supabase
+        .from("attendance_sessions")
+        .select("id, class_id")
+        .eq("id", attendanceSessionId)
+        .maybeSingle()
+
+      if (sessionLookupError || !sessionRow?.class_id) {
+        showMessage(
+          sessionLookupError?.message ??
+            "The active attendance session could not be found.",
+          "error",
+          "Class could not be ended",
+        )
+        return false
+      }
+
+      realClassId = String(sessionRow.class_id)
+    }
+
+    // Guard against stale UI data or an accidental attendance-session UUID.
+    const { data: classRow, error: classLookupError } = await supabase
+      .from("classes")
+      .select("id")
+      .eq("id", realClassId)
+      .eq("faculty_id", user.id)
+      .maybeSingle()
+
+    if (classLookupError || !classRow) {
+      showMessage(
+        classLookupError?.message ??
+          "The selected class no longer exists. Refresh the page and open the class again.",
+        "error",
+        "Class could not be ended",
+      )
+      return false
+    }
+
     const timestamp = new Date().toISOString()
     const { error } = await supabase
       .from("class_session_status")
-      .upsert({
-        class_id: classId,
-        faculty_id: user.id,
-        session_date: localDateKey(),
-        status: "ended",
-        ended_at: timestamp,
-        updated_at: timestamp,
-      }, { onConflict: "class_id,session_date" })
+      .upsert(
+        {
+          class_id: realClassId,
+          faculty_id: user.id,
+          session_date: localDateKey(),
+          status: "ended",
+          ended_at: timestamp,
+          updated_at: timestamp,
+        },
+        { onConflict: "class_id,session_date" },
+      )
+
     if (error) {
-      showMessage(`Unable to end class: ${error.message}`, "error", "Class could not be ended")
+      showMessage(
+        `Unable to end class: ${error.message}`,
+        "error",
+        "Class could not be ended",
+      )
       return false
     }
-    setEndedClassIds((ids) => ids.includes(classId) ? ids : [...ids, classId])
+
+    setEndedClassIds((ids) =>
+      ids.includes(realClassId) ? ids : [...ids, realClassId],
+    )
     return true
   }
 
@@ -6139,9 +6208,12 @@ export default function App() {
             setActiveClass(null)
             setActiveSessionStartedAt(null)
           }}
-          onEnd={() => {
-            const classId = String(activeClass.id)
-            void endClassAcrossDevices(classId).then((saved) => {
+          onEnd={(attendanceSessionId) => {
+            const displayedClassId = String(activeClass.id)
+            void endClassAcrossDevices(
+              displayedClassId,
+              attendanceSessionId,
+            ).then((saved) => {
               if (!saved) return
               setActiveClass(null)
               setActiveSessionStartedAt(null)
