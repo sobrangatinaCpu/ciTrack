@@ -6233,7 +6233,7 @@ export default function App() {
               setActiveClass(null)
               setActiveSessionStartedAt(null)
               setMinimizedSession(null)
-              showToast("Class ended and synchronized across devices.")
+              showToast("Class ended.")
             })
           }}
           onMinimize={(startedAt) => {
