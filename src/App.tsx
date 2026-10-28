@@ -5022,6 +5022,14 @@ function ActiveClass({
   const [scannerMode, setScannerMode] = useState<"attendance" | "performance">(
     "attendance",
   )
+  const [activityType, setActivityType] = useState<"recitation" | "handson">("recitation")
+  const [selectedPerformanceStudent, setSelectedPerformanceStudent] = useState<any>(null)
+  const [recitationScore, setRecitationScore] = useState(0)
+  const [handsOnScores, setHandsOnScores] = useState({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
+  const [performanceDrafts, setPerformanceDrafts] = useState<any[]>([])
+  const [performanceMessage, setPerformanceMessage] = useState("")
+  const handsOnTotal = handsOnScores.accuracy + handsOnScores.technique + handsOnScores.completion + handsOnScores.safety
+
   const [attendanceSessionId, setAttendanceSessionId] = useState<string | null>(null)
   const attendanceSessionIdRef = useRef<string | null>(null)
   const nfcReaderRef = useRef<any>(null)
@@ -5251,6 +5259,14 @@ function ActiveClass({
             cardToken,
           })
 
+          if (scannerMode === "performance") {
+            const attendance = data?.attendance ?? null
+            setSelectedPerformanceStudent({
+              id: String(attendance?.student_id ?? ""),
+              name: String(attendance?.student_name ?? attendance?.full_name ?? "Scanned student"),
+              studentNo: String(attendance?.student_number ?? attendance?.student_no ?? cardUid),
+            })
+          }
           nfcReaderRef.current = null
           setNfcScannerStatus("success")
           setNfcSessionMessage(
@@ -5394,6 +5410,12 @@ function ActiveClass({
   const [manualAttendance, setManualAttendance] = useState<Record<string, boolean>>(
     {},
   )
+  useEffect(() => {
+    if (!performanceMessage) return
+    const timer = window.setTimeout(() => setPerformanceMessage(""), 3000)
+    return () => window.clearTimeout(timer)
+  }, [performanceMessage])
+
   const liveRoster: Array<{ name: string; id: string; time: string; status: string; method: string }> =
     liveAttendance.map((row: any) => ({
       name: String(row.student_name ?? row.full_name ?? "Verified student"),
@@ -5626,10 +5648,71 @@ function ActiveClass({
             ) : (
               <section className="performance-mode-card" aria-label="Performance mode">
                 <span><Icon name="chart" size={20} /></span>
-                <div>
+                <div className="performance-mode-content">
                   <small>Performance mode</small>
                   <strong>Ready to log performance</strong>
-                  <p>Tap a student NFC card to open their performance record.</p>
+                  <p>Scan a registered student NFC card to open the performance record.</p>
+
+                  <div className="activity-type-picker" role="group" aria-label="Performance activity type">
+                    <button type="button" className={activityType === "recitation" ? "active" : ""} onClick={() => setActivityType("recitation")}>Recitation</button>
+                    <button type="button" className={activityType === "handson" ? "active" : ""} onClick={() => setActivityType("handson")}>Hands-On</button>
+                  </div>
+
+                  {!selectedPerformanceStudent ? (
+                    <p className="performance-awaiting-card">Tap a student NFC card to open the student performance record.</p>
+                  ) : (
+                    <div className="performance-record">
+                      <div className="performance-student-heading">
+                        <div>
+                          <strong>{selectedPerformanceStudent.name}</strong>
+                          <small>{selectedPerformanceStudent.studentNo}</small>
+                        </div>
+                        <button type="button" className="secondary-button compact" onClick={() => setSelectedPerformanceStudent(null)}>Clear</button>
+                      </div>
+
+                      {activityType === "recitation" ? (
+                        <div className="recitation-performance-panel">
+                          <h5>Recitation</h5>
+                          <label className="performance-score-field">
+                            <span>Score</span>
+                            <input type="number" min="0" max="10" value={recitationScore} onChange={(event) => setRecitationScore(Math.min(10, Math.max(0, Number(event.target.value))))} />
+                            <small>Maximum score: 10</small>
+                          </label>
+                        </div>
+                      ) : (
+                        <div className="performance-rubric">
+                          <h5>Hands-On Activity</h5>
+                          {(["accuracy", "technique", "completion", "safety"] as const).map((criterion) => (
+                            <label key={criterion}>
+                              <span>{criterion[0].toUpperCase() + criterion.slice(1)}: {handsOnScores[criterion]}</span>
+                              <output>{handsOnScores[criterion]} / 5</output>
+                              <input type="range" min="0" max="5" value={handsOnScores[criterion]} onChange={(event) => setHandsOnScores((scores) => ({ ...scores, [criterion]: Number(event.target.value) }))} />
+                            </label>
+                          ))}
+                          <strong className="performance-total">Total score: {handsOnTotal} / 20</strong>
+                        </div>
+                      )}
+
+                      {performanceMessage && <p className="performance-save-message" role="status">{performanceMessage}</p>}
+                      <button type="button" className="primary-button performance-save-button" onClick={() => {
+                        setPerformanceDrafts((records) => [...records, {
+                          student: selectedPerformanceStudent,
+                          activityType,
+                          score: activityType === "recitation" ? recitationScore : handsOnTotal,
+                          handsOnScores: activityType === "handson" ? handsOnScores : undefined,
+                          status: "Draft",
+                          createdAt: new Date().toISOString(),
+                        }])
+                        setPerformanceMessage("Draft saved")
+                        setRecitationScore(0)
+                        setHandsOnScores({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
+                      }}>Save draft</button>
+                    </div>
+                  )}
+
+                  {performanceDrafts.length > 0 && (
+                    <small className="performance-draft-count">{performanceDrafts.length} performance draft{performanceDrafts.length === 1 ? "" : "s"} in this session</small>
+                  )}
                 </div>
               </section>
             )}

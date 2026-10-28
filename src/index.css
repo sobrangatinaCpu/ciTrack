@@ -56,7 +56,7 @@
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 238px; color: #d8e9fa; padding: 28px 18px 22px; display: flex; flex-direction: column; background: linear-gradient(180deg, #082f58 0%, #062746 100%); z-index: 20; }
 .brand { display: flex; align-items: center; gap: 11px; color: white; font-size: 19px; font-weight: 800; padding: 0 9px 29px; }
 .brand > span > span { color: #5fc5ab; }
-.brand-mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 0px; color: white; background: ; box-shadow: 0 0px 0px #001b323b; }
+.brand-mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 0px; color: white; background: transparent; box-shadow: 0 0px 0px #001b323b; }
 .side-nav { display: grid; gap: 6px; }
 .side-nav button { position: relative; border: 0; border-radius: 12px; background: transparent; color: #a9bfd4; display: flex; align-items: center; gap: 13px; padding: 12px 14px; font-weight: 600; text-align: left; transition: .2s ease; }
 .side-nav button:hover { color: white; background: #ffffff0b; }
@@ -2287,3 +2287,266 @@ a {
 }
 .enrollment-operations-heading { margin-bottom: 16px; }
 .join-request-panel { width: 100%; }
+
+/* =========================================================
+   NFC PERFORMANCE, RECITATION, AND HANDS-ON
+   Merged into the uploaded stylesheet without replacing the
+   existing class-session, attendance, QR, or responsive UI.
+   ========================================================= */
+.performance-mode-card {
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.performance-mode-content {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  font-family: "DM Sans", sans-serif;
+}
+
+.performance-mode-content > small {
+  color: #60788b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+
+.performance-mode-content > strong {
+  color: #193f5c;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.performance-mode-content > p {
+  margin: 0;
+  color: #6d8293;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.activity-type-picker {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 5px;
+  padding: 5px;
+  border: 1px solid #d7e3ec;
+  border-radius: 12px;
+  background: #eef4f8;
+}
+
+.activity-type-picker button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #587084;
+  background: transparent;
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.activity-type-picker button:hover,
+.activity-type-picker button:focus-visible {
+  color: #1268b6;
+  background: #fff;
+}
+
+.activity-type-picker button.active {
+  border-color: #8bd5bf;
+  color: #08775b;
+  background: #fff;
+  box-shadow: 0 5px 14px rgba(31, 80, 110, .1);
+}
+
+.performance-awaiting-card {
+  margin: 2px 0 0;
+  padding: 14px;
+  border: 1px dashed #b8cfdf;
+  border-radius: 12px;
+  color: #60788b;
+  background: rgba(255, 255, 255, .78);
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.performance-record {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid #d5e3ed;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(32, 76, 105, .07);
+}
+
+.performance-student-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid #e7eef3;
+}
+
+.performance-student-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.performance-student-heading strong {
+  overflow: hidden;
+  color: #193f5c;
+  font-size: 15px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.performance-student-heading small {
+  color: #73889a;
+  font-size: 12px;
+}
+
+.secondary-button.compact {
+  min-height: 32px;
+  padding: 6px 10px;
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.recitation-performance-panel,
+.performance-rubric {
+  display: grid;
+  gap: 12px;
+}
+
+.recitation-performance-panel h5,
+.performance-rubric h5 {
+  margin: 0;
+  color: #244761;
+  font-family: "DM Sans", sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.performance-score-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  align-items: center;
+  gap: 7px 12px;
+  color: #496478;
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.performance-score-field input {
+  width: 92px;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid #c8d9e5;
+  border-radius: 9px;
+  outline-color: #1672e8;
+  color: #244761;
+  background: #fff;
+  font-family: "DM Sans", sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.performance-score-field small {
+  grid-column: 1 / -1;
+  color: #7a8e9e;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.performance-rubric label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 12px;
+  color: #496478;
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.performance-rubric output {
+  color: #1769ad;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.performance-rubric input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  accent-color: #1672e8;
+  cursor: pointer;
+}
+
+.performance-total {
+  padding-top: 11px;
+  border-top: 1px solid #e6edf3;
+  color: #173f5c;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.performance-save-button {
+  width: 100%;
+  min-height: 42px;
+}
+
+.performance-save-message {
+  margin: 0;
+  color: #08775b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.performance-draft-count {
+  display: block;
+  color: #5d7487;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+@media (max-width: 680px) {
+  .performance-mode-card {
+    align-items: flex-start;
+  }
+
+  .activity-type-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .performance-student-heading {
+    align-items: flex-start;
+  }
+
+  .performance-score-field {
+    grid-template-columns: 1fr;
+  }
+
+  .performance-score-field input {
+    width: 100%;
+  }
+}
+
