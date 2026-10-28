@@ -5359,6 +5359,69 @@ function ActiveClass({
   }, [item.id, viewOnly])
 
   useEffect(() => {
+    if (viewOnly) return
+
+    const applySharedSession = (row: any) => {
+      if (!row || String(row.class_id ?? "") !== String(item.id)) return
+
+      const status = String(row.status ?? "active").toLowerCase()
+      if (status === "ended" || row.ended_at) {
+        attendanceSessionIdRef.current = null
+        setAttendanceSessionId(null)
+        setStarted(false)
+        setStartedAt(undefined)
+        setNfcSessionState("idle")
+        setNfcScannerStatus("idle")
+        setNfcSessionMessage("This class session was ended from another device.")
+        return
+      }
+
+      const synchronizedStartedAt = Date.parse(String(row.started_at ?? ""))
+      const timerStart = Number.isFinite(synchronizedStartedAt)
+        ? synchronizedStartedAt
+        : Date.now()
+
+      attendanceSessionIdRef.current = String(row.id)
+      setAttendanceSessionId(String(row.id))
+      setStartedAt(timerStart)
+      setSessionNow(Date.now())
+      setStarted(true)
+      setNfcSessionState("active")
+      setNfcSessionMessage("This live class session and timer are synchronized across all faculty devices.")
+    }
+
+    const channel = supabase
+      .channel(`class-session-timer-${item.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "attendance_sessions",
+          filter: `class_id=eq.${item.id}`,
+        },
+        (payload: any) => {
+          if (payload.eventType === "DELETE") {
+            void syncActiveAttendanceSession()
+            return
+          }
+          applySharedSession(payload.new)
+        },
+      )
+      .subscribe()
+
+    // Fallback for browsers that pause Realtime while they are in the background.
+    const refreshTimer = window.setInterval(() => {
+      void syncActiveAttendanceSession()
+    }, 10_000)
+
+    return () => {
+      window.clearInterval(refreshTimer)
+      void supabase.removeChannel(channel)
+    }
+  }, [item.id, viewOnly])
+
+  useEffect(() => {
     if (!started || !startedAt) return
     setSessionNow(Date.now())
     const timer = window.setInterval(() => setSessionNow(Date.now()), 1000)
@@ -5803,7 +5866,7 @@ function ActiveClass({
                 if (sessionId === "local-session" && !attendanceSessionIdRef.current) {
                   setAttendanceSessionId(null)
                 }
-                if (!startedAt) setStartedAt(Date.now())
+                setSessionNow(Date.now())
                 setScannerMode("attendance")
                 setStarted(true)
               })
