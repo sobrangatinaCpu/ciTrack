@@ -5047,119 +5047,117 @@ function ActiveClass({
   }
 
   const invokeFacultyNfc = async (body: Record<string, unknown>) => {
-    const { data, error } = await supabase.functions.invoke(
-      "faculty-nfc-attendance",
-      { body },
-    )
-
-    if (error) {
-      throw new Error(error.message)
+    // Session creation/context/closure use the same deployed endpoint as the
+    // working mobile NFC tester. Browser NFC hardware is not needed for a session.
+    const sharedSessionAction = ["session_open", "session_close", "scanner_context"].includes(String(body.action))
+    const payload = sharedSessionAction
+      ? body.action === "session_open"
+        ? { action: "session_open", class_id: body.classId }
+        : body.action === "session_close"
+          ? { action: "session_close", session_id: body.sessionId }
+          : { action: "scanner_context" }
+      : body
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 20_000)
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        sharedSessionAction ? "nfc-attendance" : "faculty-nfc-attendance",
+        { body: payload, signal: controller.signal },
+      )
+      if (error) {
+        let detail = error.message
+        try {
+          const response = (error as { context?: Response }).context
+          if (response instanceof Response) {
+            const failure = await response.clone().json()
+            if (typeof failure?.error === "string") detail = failure.error
+          }
+        } catch { /* Keep the original transport error. */ }
+        throw new Error(detail)
+      }
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("The attendance server returned an invalid response.")
+      }
+      if (sharedSessionAction) {
+        if (data.error) throw new Error(String(data.error))
+        return data
+      }
+      if (!data.success) throw new Error(data.error ?? "The NFC attendance request failed.")
+      return data.data ?? {}
+    } finally {
+      window.clearTimeout(timeout)
     }
-
-    if (!data?.success) {
-      throw new Error(data?.error ?? "The NFC attendance request failed.")
-    }
-
-    return data.data ?? {}
   }
 
   const openMobileNfcSession = async () => {
     setNfcSessionState("opening")
 
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser()
+      const data = await invokeFacultyNfc({
+        action: "session_open",
+        classId: String(item.id),
+      })
 
-      if (userError || !user) {
-        throw new Error("Your session expired. Please sign in again.")
+      const sessionId = String(data?.session_id ?? "")
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(sessionId)) {
+        throw new Error("The database did not return a valid attendance session.")
       }
-
-      const { data: existingSession, error: existingError } = await supabase
-        .from("attendance_sessions")
-        .select("id, class_id, started_by, started_at, ended_at, status")
-        .eq("class_id", String(item.id))
-        .eq("started_by", user.id)
-        .is("ended_at", null)
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (existingError) throw new Error(existingError.message)
-
-      let session = existingSession
-
-      if (!session) {
-        const { data: createdSession, error: createError } = await supabase
-          .from("attendance_sessions")
-          .insert({
-            class_id: String(item.id),
-            started_by: user.id,
-            started_at: new Date().toISOString(),
-            ended_at: null,
-            status: "active",
-          })
-          .select("id, class_id, started_by, started_at, ended_at, status")
-          .single()
-
-        if (createError || !createdSession) {
-          throw new Error(createError?.message ?? "The database did not return an attendance session.")
-        }
-
-        session = createdSession
-      }
-
-      const sessionId = String(session.id)
-      const parsedStartedAt = Date.parse(String(session.started_at ?? ""))
-      const sessionStartedAt = Number.isFinite(parsedStartedAt) ? parsedStartedAt : Date.now()
 
       attendanceSessionIdRef.current = sessionId
       setAttendanceSessionId(sessionId)
-      setStartedAt(sessionStartedAt)
-      setSessionNow(Date.now())
-      setStarted(true)
+      const synchronizedSession = await syncActiveAttendanceSession()
+      if (!synchronizedSession) {
+        const localStartedAt = Date.now()
+        setStartedAt(localStartedAt)
+        setStarted(true)
+      }
       setNfcSessionState("active")
       setNfcSessionMessage(
-        "Attendance is ready. On an NFC-enabled Android phone, select Scan student card.",
+        "Attendance session ready. Students can scan the QR during grace. Card scanning is available on a compatible browser.",
       )
       return sessionId
     } catch (error) {
-      console.error("Unable to open attendance session:", error)
+      const message = error instanceof Error
+        ? error.message
+        : "The attendance session could not be opened."
+      console.error("Unable to open shared attendance session:", error)
+      attendanceSessionIdRef.current = null
+      setAttendanceSessionId(null)
+      setStartedAt(undefined)
+      setStarted(false)
       setNfcSessionState("error")
-      setNfcSessionMessage(
-        error instanceof Error ? error.message : "The attendance session could not be opened.",
-      )
+      setNfcSessionMessage(`Attendance session could not start: ${message}`)
+      showMessage(message, "error", "Attendance session could not start")
       return null
     }
   }
 
   const closeMobileNfcSession = async () => {
-    const sessionId = attendanceSessionIdRef.current
-    if (!sessionId) return true
-
+    if (!attendanceSessionId) return true
     setNfcSessionState("closing")
 
-    const { error } = await supabase
-      .from("attendance_sessions")
-      .update({
-        status: "ended",
-        ended_at: new Date().toISOString(),
+    try {
+      const data = await invokeFacultyNfc({
+        action: "session_close",
+        sessionId: attendanceSessionId,
       })
-      .eq("id", sessionId)
 
-    if (error) {
-      console.error("Unable to close attendance session:", error)
+      if (data?.closed !== true) {
+        throw new Error("The attendance session could not be closed.")
+      }
+
+      setNfcSessionState("idle")
+      setNfcScannerStatus("idle")
+      return true
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "The attendance session could not be closed."
       setNfcSessionState("error")
-      setNfcSessionMessage(error.message)
+      setNfcSessionMessage(message)
+      showMessage(message, "error", "Unable to end class")
       return false
     }
-
-    attendanceSessionIdRef.current = null
-    setAttendanceSessionId(null)
-    setNfcSessionState("idle")
-    setNfcScannerStatus("idle")
-    return true
   }
 
   const decodeNdefRecord = (record: any) => {
@@ -5169,15 +5167,14 @@ function ActiveClass({
       record.data.byteOffset,
       record.data.byteLength,
     )
-    // Web NFC already separates NDEF text language/status metadata.
-    // Its record.data contains text bytes, so do not strip the first characters.
-    const encoding = record.recordType === "text"
-      ? String(record.encoding || "utf-8")
-      : "utf-8"
-    return new TextDecoder(encoding)
-      .decode(bytes)
-      .replace(/\0/g, "")
-      .trim()
+
+    // NDEF text records start with a status byte followed by a language code.
+    if (record.recordType === "text" && bytes.length > 1) {
+      const languageLength = bytes[0] & 0x3f
+      return new TextDecoder().decode(bytes.slice(1 + languageLength)).trim()
+    }
+
+    return new TextDecoder().decode(bytes).replace(/\0/g, "").trim()
   }
 
   const extractCardToken = (message: any) => {
@@ -5323,30 +5320,21 @@ function ActiveClass({
 
   const syncActiveAttendanceSession = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
+      const data = await invokeFacultyNfc({ action: "scanner_context" })
+      const classes = Array.isArray(data?.classes) ? data.classes : []
+      const classContext = classes.find(
+        (entry: any) => String(entry.class_id) === String(item.id),
+      )
+      const sessions = Array.isArray(classContext?.sessions)
+        ? classContext.sessions
+        : []
+      const activeSession = sessions[0]
 
-      if (!user) return null
-
-      const { data: activeSession, error } = await supabase
-        .from("attendance_sessions")
-        .select("id, class_id, started_by, started_at, ended_at, status")
-        .eq("class_id", String(item.id))
-        .eq("started_by", user.id)
-        .is("ended_at", null)
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (error) {
-        console.error("Unable to synchronize the active attendance session:", error)
+      if (!activeSession?.session_id) {
         return null
       }
 
-      if (!activeSession?.id) return null
-
-      const sessionId = String(activeSession.id)
+      const sessionId = String(activeSession.session_id)
       const synchronizedStartedAt = Date.parse(String(activeSession.started_at ?? ""))
       const timerStart = Number.isFinite(synchronizedStartedAt)
         ? synchronizedStartedAt
@@ -5355,11 +5343,10 @@ function ActiveClass({
       attendanceSessionIdRef.current = sessionId
       setAttendanceSessionId(sessionId)
       setStartedAt(timerStart)
-      setSessionNow(Date.now())
       setStarted(true)
       setNfcSessionState("active")
       setNfcSessionMessage(
-        "This live class session and timer are synchronized across all faculty devices.",
+        "This live class session is synchronized across your web, tablet, and mobile devices.",
       )
       return sessionId
     } catch (error) {
@@ -5893,8 +5880,7 @@ function ActiveClass({
                 if (closed) onEnd(attendanceSessionId)
               })
             } else {
-              // Start Web NFC from this user gesture. Session creation continues in parallel.
-              void startNfcScanner()
+              // Open the database session first. Scan student card is a separate action.
               void openMobileNfcSession().then((sessionId) => {
                 if (!sessionId) return
                 setSessionNow(Date.now())
