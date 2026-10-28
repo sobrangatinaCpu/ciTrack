@@ -4997,6 +4997,7 @@ function ActiveClass({
 }) {
   const [started, setStarted] = useState(initialStarted)
   const [startedAt, setStartedAt] = useState(initialStartedAt)
+  const [sessionNow, setSessionNow] = useState(() => Date.now())
   const [sessionToken, setSessionToken] = useState(() => crypto.randomUUID())
   const [generatedAt, setGeneratedAt] = useState(() => Date.now())
   const [countdown, setCountdown] = useState(60)
@@ -5026,55 +5027,297 @@ function ActiveClass({
     "idle" | "opening" | "active" | "closing" | "error"
   >("idle")
   const [nfcSessionMessage, setNfcSessionMessage] = useState(
-    "Students use the registered credential in the mobile application.",
+    "Start the class, then use an NFC-enabled Android phone to scan registered student cards.",
   )
+  const [nfcScannerStatus, setNfcScannerStatus] = useState<
+    "idle" | "starting" | "scanning" | "verifying" | "success" | "unsupported" | "error"
+  >("idle")
+  const [lastCard, setLastCard] = useState("")
   const [liveAttendance, setLiveAttendance] = useState<any[]>([])
+
+  const invokeFacultyNfc = async (body: Record<string, unknown>) => {
+    const { data, error } = await supabase.functions.invoke(
+      "faculty-nfc-attendance",
+      { body },
+    )
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    if (!data?.success) {
+      throw new Error(data?.error ?? "The NFC attendance request failed.")
+    }
+
+    return data.data ?? {}
+  }
 
   const openMobileNfcSession = async () => {
     setNfcSessionState("opening")
-    const { data, error } = await supabase.rpc("nfc_attendance_faculty_api", {
-      p_action: "session_open",
-      p_body: { class_id: String(item.id) },
-    })
-    if (error || !data?.session_id) {
-      console.error("Unable to open mobile NFC attendance session:", error)
+
+    try {
+      const data = await invokeFacultyNfc({
+        action: "session_open",
+        classId: String(item.id),
+      })
+
+      const sessionId = String(data?.session_id ?? "")
+      if (!sessionId) {
+        throw new Error("The database did not return an attendance session.")
+      }
+
+      setAttendanceSessionId(sessionId)
+      const synchronizedSession = await syncActiveAttendanceSession()
+      if (!synchronizedSession) {
+        const localStartedAt = Date.now()
+        setStartedAt(localStartedAt)
+        setStarted(true)
+      }
+      setNfcSessionState("active")
+      setNfcSessionMessage(
+        "Attendance is ready. On an NFC-enabled Android phone, select Scan student card.",
+      )
+      return sessionId
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "The attendance session could not be opened."
+      console.error("Unable to open NFC attendance session:", error)
+      const localStartedAt = Date.now()
+      setStartedAt(localStartedAt)
+      setStarted(true)
       setNfcSessionState("error")
       setNfcSessionMessage(
-        "NFC scanning is not supported in the web portal. Students must use the registered mobile application for NFC attendance.",
+        "NFC scanning is unavailable in this browser. The class session remains accessible; open the same faculty dashboard on an NFC-enabled Android phone to scan cards.",
       )
-      return "web-only"
+      return "local-session"
     }
-    const sessionId = String(data.session_id)
-    setAttendanceSessionId(sessionId)
-    setNfcSessionState("active")
-    setNfcSessionMessage(
-      "Waiting for verified student check-ins from the mobile application.",
-    )
-    return sessionId
   }
 
   const closeMobileNfcSession = async () => {
     if (!attendanceSessionId) return true
     setNfcSessionState("closing")
-    const { data, error } = await supabase.rpc("nfc_attendance_faculty_api", {
-      p_action: "session_close",
-      p_body: { session_id: attendanceSessionId },
-    })
-    if (error || data?.closed !== true) {
+
+    try {
+      const data = await invokeFacultyNfc({
+        action: "session_close",
+        sessionId: attendanceSessionId,
+      })
+
+      if (data?.closed !== true) {
+        throw new Error("The attendance session could not be closed.")
+      }
+
+      setNfcSessionState("idle")
+      setNfcScannerStatus("idle")
+      return true
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "The attendance session could not be closed."
       setNfcSessionState("error")
-      setNfcSessionMessage(
-        error?.message ?? "The attendance session could not be closed.",
-      )
-      showMessage(
-        error?.message ?? "The attendance session could not be closed.",
-        "error",
-        "Unable to end class",
-      )
+      setNfcSessionMessage(message)
+      showMessage(message, "error", "Unable to end class")
       return false
     }
-    setNfcSessionState("idle")
-    return true
   }
+
+  const decodeNdefRecord = (record: any) => {
+    if (!record?.data) return ""
+    const bytes = new Uint8Array(
+      record.data.buffer,
+      record.data.byteOffset,
+      record.data.byteLength,
+    )
+
+    // NDEF text records start with a status byte followed by a language code.
+    if (record.recordType === "text" && bytes.length > 1) {
+      const languageLength = bytes[0] & 0x3f
+      return new TextDecoder().decode(bytes.slice(1 + languageLength)).trim()
+    }
+
+    return new TextDecoder().decode(bytes).replace(/\0/g, "").trim()
+  }
+
+  const extractCardToken = (message: any) => {
+    for (const record of Array.from(message?.records ?? []) as any[]) {
+      const value = decodeNdefRecord(record)
+      if (!value) continue
+
+      try {
+        const parsed = JSON.parse(value)
+        const token = parsed.card_token ?? parsed.cardToken ?? parsed.nfc_token ?? parsed.token
+        if (typeof token === "string" && token.trim()) return token.trim()
+      } catch {
+        // A plain-text NDEF record is also accepted as the registration token.
+      }
+
+      if (value.length >= 8) return value
+    }
+
+    return ""
+  }
+
+  const startNfcScanner = async () => {
+    if (!attendanceSessionId) {
+      showMessage(
+        "Start the class attendance session before scanning a student card.",
+        "error",
+        "Scanner is not ready",
+      )
+      return
+    }
+
+    if (!("NDEFReader" in window)) {
+      setNfcScannerStatus("unsupported")
+      setNfcSessionMessage(
+        "NFC scanning is unavailable on this device. Open the faculty dashboard in Chrome on an NFC-enabled Android phone.",
+      )
+      return
+    }
+
+    try {
+      setNfcScannerStatus("starting")
+      setNfcSessionMessage("Allow NFC access, then hold a registered student card near the phone.")
+
+      const Reader = (window as any).NDEFReader
+      const reader = new Reader()
+      await reader.scan()
+
+      setNfcScannerStatus("scanning")
+      setNfcSessionMessage("Scanner active. Hold a registered student NFC card near the phone.")
+
+      reader.addEventListener("readingerror", () => {
+        setNfcScannerStatus("error")
+        setNfcSessionMessage("The card was detected but could not be read. Try again.")
+      }, { once: true })
+
+      reader.addEventListener("reading", async (event: any) => {
+        const cardUid = String(event.serialNumber ?? "")
+          .replace(/[^0-9a-f]/gi, "")
+          .toLowerCase()
+        const cardToken = extractCardToken(event.message)
+
+        if (!cardUid) {
+          setNfcScannerStatus("error")
+          setNfcSessionMessage("The NFC card identifier could not be read.")
+          return
+        }
+
+        setLastCard(cardUid)
+
+        if (!cardToken) {
+          setNfcScannerStatus("error")
+          setNfcSessionMessage(
+            "The card was detected, but no CIT Portal registration token was found. Register the card in the student mobile app first.",
+          )
+          return
+        }
+
+        setNfcScannerStatus("verifying")
+        setNfcSessionMessage("Card detected. Verifying the student and recording attendance...")
+
+        try {
+          const data = await invokeFacultyNfc({
+            action: "scan",
+            sessionId: attendanceSessionId,
+            cardUid,
+            cardToken,
+          })
+
+          setNfcScannerStatus("success")
+          setNfcSessionMessage(
+            data?.already_recorded
+              ? "This student was already recorded for the active class session."
+              : "Attendance recorded successfully.",
+          )
+
+          window.setTimeout(() => {
+            setNfcScannerStatus("idle")
+            setNfcSessionMessage("Ready to scan another registered student card.")
+          }, 2500)
+        } catch (error) {
+          setNfcScannerStatus("error")
+          setNfcSessionMessage(
+            error instanceof Error
+              ? error.message
+              : "The scanned card could not be verified.",
+          )
+        }
+      }, { once: true })
+    } catch (error) {
+      const errorName = error instanceof DOMException ? error.name : ""
+      setNfcScannerStatus(errorName === "NotSupportedError" ? "unsupported" : "error")
+      setNfcSessionMessage(
+        errorName === "NotAllowedError"
+          ? "NFC permission was denied. Allow NFC access in Chrome and try again."
+          : errorName === "NotSupportedError"
+            ? "NFC scanning is unavailable on this device. Use Chrome on an NFC-enabled Android phone."
+            : "NFC scanning could not start. Keep Chrome open in the foreground and try again.",
+      )
+    }
+  }
+
+  const syncActiveAttendanceSession = async () => {
+    try {
+      const data = await invokeFacultyNfc({ action: "scanner_context" })
+      const classes = Array.isArray(data?.classes) ? data.classes : []
+      const classContext = classes.find(
+        (entry: any) => String(entry.class_id) === String(item.id),
+      )
+      const sessions = Array.isArray(classContext?.sessions)
+        ? classContext.sessions
+        : []
+      const activeSession = sessions[0]
+
+      if (!activeSession?.session_id) {
+        return null
+      }
+
+      const sessionId = String(activeSession.session_id)
+      const synchronizedStartedAt = Date.parse(String(activeSession.started_at ?? ""))
+      const timerStart = Number.isFinite(synchronizedStartedAt)
+        ? synchronizedStartedAt
+        : Date.now()
+
+      setAttendanceSessionId(sessionId)
+      setStartedAt(timerStart)
+      setStarted(true)
+      setNfcSessionState("active")
+      setNfcSessionMessage(
+        "This live class session is synchronized across your web, tablet, and mobile devices.",
+      )
+      return sessionId
+    } catch (error) {
+      console.error("Unable to synchronize the active attendance session:", error)
+      return null
+    }
+  }
+
+  useEffect(() => {
+    if (viewOnly) return
+    void syncActiveAttendanceSession()
+
+    const refresh = () => {
+      if (document.visibilityState === "visible") {
+        void syncActiveAttendanceSession()
+      }
+    }
+
+    window.addEventListener("focus", refresh)
+    document.addEventListener("visibilitychange", refresh)
+    return () => {
+      window.removeEventListener("focus", refresh)
+      document.removeEventListener("visibilitychange", refresh)
+    }
+  }, [item.id, viewOnly])
+
+  useEffect(() => {
+    if (!started || !startedAt) return
+    setSessionNow(Date.now())
+    const timer = window.setInterval(() => setSessionNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [started, startedAt])
 
   useEffect(() => {
     if (!attendanceSessionId) {
@@ -5168,7 +5411,7 @@ function ActiveClass({
           {viewOnly
             ? "Class ended"
             : started
-              ? "Live session"
+              ? `Live session · ${startedAt ? formatSessionDuration(startedAt, sessionNow) : "00:00"}`
               : "Ready to begin"}
         </div>
         <p className="eyebrow">Today · {item.time}</p>
@@ -5276,11 +5519,43 @@ function ActiveClass({
                   <Icon name="scan" size={22} />
                 </span>
                 <div>
-                  <strong>{liveAttendance.length} verified check-in{liveAttendance.length === 1 ? "" : "s"}</strong>
-                  <small>
-                    The student mobile app verifies the registered credential and submits attendance securely.
-                  </small>
+                  <strong>
+                    {nfcScannerStatus === "starting"
+                      ? "Starting NFC scanner"
+                      : nfcScannerStatus === "scanning"
+                        ? "Ready for a student card"
+                        : nfcScannerStatus === "verifying"
+                          ? "Verifying student"
+                          : nfcScannerStatus === "success"
+                            ? "Attendance recorded"
+                            : nfcScannerStatus === "unsupported"
+                              ? "NFC scanning unavailable"
+                              : nfcScannerStatus === "error"
+                                ? "Card could not be verified"
+                                : "Scan a registered student card"}
+                  </strong>
+                  <small>{nfcSessionMessage}</small>
+                  {lastCard && <small>Last card: {lastCard}</small>}
                 </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void startNfcScanner()}
+                  disabled={
+                    !attendanceSessionId ||
+                    nfcScannerStatus === "starting" ||
+                    nfcScannerStatus === "scanning" ||
+                    nfcScannerStatus === "verifying"
+                  }
+                >
+                  {nfcScannerStatus === "starting"
+                    ? "Starting..."
+                    : nfcScannerStatus === "scanning"
+                      ? "Waiting for card..."
+                      : nfcScannerStatus === "verifying"
+                        ? "Verifying..."
+                        : "Scan student card"}
+                </button>
               </div>
             </section>
             {scannerMode === "attendance" ? (
@@ -5407,10 +5682,10 @@ function ActiveClass({
             } else {
               void openMobileNfcSession().then((sessionId) => {
                 if (!sessionId) return
-                if (sessionId === "web-only") {
+                if (sessionId === "local-session") {
                   setAttendanceSessionId(null)
                 }
-                setStartedAt(Date.now())
+                if (!startedAt) setStartedAt(Date.now())
                 setScannerMode("attendance")
                 setStarted(true)
               })
