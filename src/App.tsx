@@ -153,34 +153,6 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   )
 }
 
-const classes = [
-  {
-    id: 1,
-    subject: "Computer Systems Servicing",
-    code: "BIT-CT 3A",
-    time: "8:00 – 10:00 AM",
-    room: "Lab 2",
-    color: "#10a37f",
-    status: "Next class",
-    attendance: 32,
-    semesterStart: "2026-06-06",
-    semesterEnd: "2026-11-07",
-    meetingDays: ["MON", "SAT"],
-  },
-  {
-    id: 2,
-    subject: "Networking Fundamentals",
-    code: "BIT-CT 2B",
-    time: "1:00 – 3:00 PM",
-    room: "Lab 1",
-    color: "#3677f5",
-    status: "Later today",
-    attendance: 28,
-    semesterStart: "2026-06-06",
-    semesterEnd: "2026-11-07",
-    meetingDays: ["MON", "SAT"],
-  },
-]
 type ClassSchedule = {
   id: string
   meetingDays: string[]
@@ -330,23 +302,14 @@ const formatActivityTime = (value: string) => {
   return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")} ${meridiem}`
 }
 
-const students = [
-  {
-    name: "Dela Cruz, Juan",
-    id: "2026-0025",
-    score: 88,
-    attendance: "Present",
-  },
-  { name: "Reyes, Ana", id: "2026-0026", score: 91, attendance: "Present" },
-  { name: "Santos, Mark", id: "2026-0027", score: 76, attendance: "Late" },
-  {
-    name: "Villanueva, Bea",
-    id: "2026-0028",
-    score: 94,
-    attendance: "Present",
-  },
-  { name: "Garcia, Luis", id: "2026-0029", score: 84, attendance: "Pending" },
-]
+type RecordStudent = {
+  name: string
+  id: string
+  score: number
+  attendance: string
+}
+
+const students: RecordStudent[] = []
 
 type StudentConcern = {
   id: string
@@ -363,32 +326,17 @@ type StudentConcern = {
 
 const initialStudentConcerns: StudentConcern[] = []
 
-const recordSections = [
-  {
-    id: "css-3a",
-    subject: "Computer Systems Servicing",
-    code: "BIT-CT 3A",
-    schedule: "Mon & Sat · 8:00 – 10:00 AM",
-    students: 32,
-    assessmentCount: 6,
-  },
-  {
-    id: "css-3b",
-    subject: "Computer Systems Servicing",
-    code: "BIT-CT 3B",
-    schedule: "Tue & Thu · 10:00 AM – 12:00 PM",
-    students: 30,
-    assessmentCount: 5,
-  },
-  {
-    id: "networking-2b",
-    subject: "Networking Fundamentals",
-    code: "BIT-CT 2B",
-    schedule: "Mon & Sat · 1:00 – 3:00 PM",
-    students: 28,
-    assessmentCount: 4,
-  },
-]
+type RecordSectionOption = {
+  id: string
+  subject: string
+  code: string
+  schedule: string
+  students: number
+  assessmentCount: number
+  academicYear: string
+}
+
+const recordSections: RecordSectionOption[] = []
 
 type RecordAssessmentColumn = {
   id: string
@@ -2493,6 +2441,8 @@ function RecordsPage({
   omrDraftScores: Record<string, number>
 }) {
   const [query, setQuery] = useState("")
+  const [recordStudents, setRecordStudents] = useState<typeof students>(students)
+  const csvInputRef = useRef<HTMLInputElement | null>(null)
   const [recordDate, setRecordDate] = useState("2026-10-23")
   const [datePickerOpen, setDatePickerOpen] = useState(false)
   const [calendarMonth, setCalendarMonth] = useState(
@@ -2520,9 +2470,103 @@ function RecordsPage({
   const [studentStatuses, setStudentStatuses] =
     useState<Record<string, string>>({})
   const [selectedSectionId, setSelectedSectionId] = useState(
-    recordSections[0].id,
+    "",
   )
+  const [recordSectionOptions, setRecordSectionOptions] = useState<RecordSectionOption[]>([])
+  const [sectionsLoading, setSectionsLoading] = useState(true)
   const [sectionMenuOpen, setSectionMenuOpen] = useState(false)
+
+  useEffect(() => {
+    let active = true
+
+    const loadRecordSections = async () => {
+      setSectionsLoading(true)
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError || !user) {
+        if (active) {
+          setRecordSectionOptions([])
+          setSectionsLoading(false)
+        }
+        return
+      }
+
+      const { data: classRows, error: classError } = await supabase
+        .from("classes")
+        .select("id, subject, code, semester_start, semester_end, class_schedules(meeting_days, start_time, end_time, room)")
+        .eq("faculty_id", user.id)
+        .order("created_at", { ascending: true })
+
+      if (!active) return
+      if (classError) {
+        console.error("Unable to load gradebook sections:", classError)
+        setRecordSectionOptions([])
+        setSectionsLoading(false)
+        return
+      }
+
+      const classIds = (classRows ?? []).map((item: any) => String(item.id))
+      let enrollmentCounts: Record<string, number> = {}
+      if (classIds.length > 0) {
+        const { data: enrollmentRows, error: enrollmentError } = await supabase
+          .from("class_students")
+          .select("class_id")
+          .in("class_id", classIds)
+        if (!enrollmentError) {
+          enrollmentCounts = (enrollmentRows ?? []).reduce((counts: Record<string, number>, row: any) => {
+            const classId = String(row.class_id ?? "")
+            if (classId) counts[classId] = (counts[classId] ?? 0) + 1
+            return counts
+          }, {})
+        }
+      }
+
+      const sections = (classRows ?? []).map((item: any) => {
+        const schedule = Array.isArray(item.class_schedules) ? item.class_schedules[0] : null
+        const days = normalizedMeetingDays(schedule?.meeting_days)
+          .map((day) => meetingDayOptions.find((option) => option.value === day)?.label ?? day)
+          .join(" & ")
+        const start = schedule?.start_time ? formatDatabaseTime(schedule.start_time) : ""
+        const end = schedule?.end_time ? formatDatabaseTime(schedule.end_time) : ""
+        return {
+          id: String(item.id),
+          subject: String(item.subject ?? "Untitled class"),
+          code: String(item.code ?? "No code"),
+          schedule: [days, start && end ? `${start} – ${end}` : ""].filter(Boolean).join(" · ") || "Schedule not set",
+          students: enrollmentCounts[String(item.id)] ?? 0,
+          assessmentCount: assessmentColumns.length,
+          academicYear: (() => {
+            const startYear = String(item.semester_start ?? "").slice(0, 4)
+            const endYear = String(item.semester_end ?? "").slice(0, 4)
+            if (startYear && endYear) return `AY ${startYear}–${endYear}`
+            if (startYear) return `AY ${startYear}`
+            return "Academic year"
+          })(),
+        }
+      })
+
+      setRecordSectionOptions(sections)
+      setSelectedSectionId((current) =>
+        sections.some((section) => section.id === current) ? current : sections[0]?.id ?? "",
+      )
+      setSectionsLoading(false)
+    }
+
+    void loadRecordSections()
+    const channel = supabase
+      .channel("records-sections-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "classes" }, () => void loadRecordSections())
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_schedules" }, () => void loadRecordSections())
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_students" }, () => void loadRecordSections())
+      .subscribe()
+
+    const reloadOnFocus = () => void loadRecordSections()
+    window.addEventListener("focus", reloadOnFocus)
+    return () => {
+      active = false
+      window.removeEventListener("focus", reloadOnFocus)
+      void supabase.removeChannel(channel)
+    }
+  }, [assessmentColumns.length])
 
   useEffect(() => {
     if (dailySessions[recordDate]) return
@@ -2558,9 +2602,148 @@ function RecordsPage({
     })
   }, [dailySessions, recordDate])
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("cit-portal:gradebook")
+      if (!saved) return
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed.students) && parsed.students.length > 0) setRecordStudents(parsed.students)
+      if (parsed.values && typeof parsed.values === "object") setRecordValues(parsed.values)
+      if (parsed.statuses && typeof parsed.statuses === "object") setStudentStatuses(parsed.statuses)
+      if (Array.isArray(parsed.columns) && parsed.columns.length > 0) setAssessmentColumns(parsed.columns)
+      if (parsed.remarks && typeof parsed.remarks === "object") setDailyRemarks(parsed.remarks)
+    } catch (error) {
+      console.error("Unable to restore gradebook data:", error)
+    }
+  }, [])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      localStorage.setItem("cit-portal:gradebook", JSON.stringify({
+        students: recordStudents,
+        values: recordValues,
+        statuses: studentStatuses,
+        columns: assessmentColumns,
+        remarks: dailyRemarks,
+      }))
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [recordStudents, recordValues, studentStatuses, assessmentColumns, dailyRemarks])
+
+  const normalizeCsvHeader = (value: string) =>
+    value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")
+
+  const parseCsv = (text: string) => {
+    const rows: string[][] = []
+    let row: string[] = []
+    let field = ""
+    let quoted = false
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index]
+      const nextCharacter = text[index + 1]
+      if (character === '"' && quoted && nextCharacter === '"') {
+        field += '"'
+        index += 1
+      } else if (character === '"') {
+        quoted = !quoted
+      } else if (character === "," && !quoted) {
+        row.push(field.trim())
+        field = ""
+      } else if ((character === "\n" || character === "\r") && !quoted) {
+        if (character === "\r" && nextCharacter === "\n") index += 1
+        row.push(field.trim())
+        if (row.some((cell) => cell !== "")) rows.push(row)
+        row = []
+        field = ""
+      } else {
+        field += character
+      }
+    }
+    row.push(field.trim())
+    if (row.some((cell) => cell !== "")) rows.push(row)
+    return rows
+  }
+
+  const importGradebookCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    try {
+      const rows = parseCsv((await file.text()).replace(/^\uFEFF/, ""))
+      if (rows.length < 2) {
+        showMessage("The CSV must contain a header row and at least one student row.", "error", "CSV could not be imported")
+        return
+      }
+      const headers = rows[0].map(normalizeCsvHeader)
+      const findHeader = (...names: string[]) => headers.findIndex((header) => names.includes(header))
+      const idIndex = findHeader("student_id", "student_number", "id", "student_no")
+      const nameIndex = findHeader("student_name", "name", "full_name")
+      const statusIndex = findHeader("status", "attendance_status", "attendance")
+      if (idIndex < 0 || nameIndex < 0) {
+        showMessage("The CSV needs Student ID and Student Name columns.", "error", "CSV columns are missing")
+        return
+      }
+
+      const importedStudents: typeof students = []
+      const importedValues: Record<string, Record<string, number | "">> = {}
+      const importedStatuses: Record<string, string> = {}
+      const normalizedColumns = new Map<string, string>()
+      assessmentColumns.forEach((column) => {
+        normalizedColumns.set(normalizeCsvHeader(column.label), column.id)
+        normalizedColumns.set(normalizeCsvHeader(column.id), column.id)
+      })
+      const fixedScoreHeaders: Record<string, string> = {
+        midterm_written: "midterm-written",
+        midterm_actual: "midterm-actual",
+        final_written: "final-written",
+        final_actual: "final-actual",
+      }
+
+      rows.slice(1).forEach((cells) => {
+        const id = String(cells[idIndex] ?? "").trim()
+        const name = String(cells[nameIndex] ?? "").trim()
+        if (!id || !name) return
+        const status = String(statusIndex >= 0 ? cells[statusIndex] ?? "Present" : "Present").trim() || "Present"
+        importedStudents.push({ name, id, score: 0, attendance: status })
+        importedStatuses[id] = status
+        const values: Record<string, number | ""> = {}
+        headers.forEach((header, headerIndex) => {
+          const columnId = fixedScoreHeaders[header] ?? normalizedColumns.get(header)
+          if (!columnId) return
+          const rawValue = String(cells[headerIndex] ?? "").trim()
+          if (rawValue === "") values[columnId] = ""
+          else {
+            const numericValue = Number(rawValue)
+            if (Number.isFinite(numericValue)) values[columnId] = Math.max(0, numericValue)
+          }
+        })
+        importedValues[id] = values
+      })
+
+      if (importedStudents.length === 0) {
+        showMessage("No valid student rows were found in the CSV.", "error", "CSV could not be imported")
+        return
+      }
+      setRecordStudents(importedStudents)
+      setRecordValues(importedValues)
+      setStudentStatuses(importedStatuses)
+      showToast(`${importedStudents.length} students imported successfully.`)
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "Unable to read the CSV file.", "error", "CSV import failed")
+    }
+  }
+
   const selectedSection =
-    recordSections.find((section) => section.id === selectedSectionId) ??
-    recordSections[0]
+    recordSectionOptions.find((section) => section.id === selectedSectionId) ??
+    recordSectionOptions[0] ?? {
+      id: "",
+      subject: sectionsLoading ? "Loading classes..." : "No classes available",
+      code: sectionsLoading ? "Loading" : "No class",
+      schedule: sectionsLoading ? "Loading schedule..." : "Create a class to begin using Records",
+      students: 0,
+      assessmentCount: assessmentColumns.length,
+      academicYear: "Academic year",
+    }
   const dailySession = dailySessions[recordDate]
   const dailySessionTerm = recordDate <= "2026-10-31" ? "Midterm" : "Final"
   const dailySessionNumber = Math.max(
@@ -2585,10 +2768,10 @@ function RecordsPage({
 
   const filtered = useMemo(
     () =>
-      students.filter((s) =>
+      recordStudents.filter((s) =>
         s.name.toLowerCase().includes(query.toLowerCase()),
       ),
-    [query],
+    [query, recordStudents],
   )
   const selectedRecordDate = new Date(`${recordDate}T12:00:00`)
   const calendarDays = Array.from(
@@ -2753,7 +2936,9 @@ function RecordsPage({
       : 0
 
   const percentageFromScores = (scores: number[]) =>
-    scores.reduce((total, score) => total + score, 0) / scores.length
+    scores.length
+      ? Math.min(100, Math.max(0, scores.reduce((total, score) => total + score, 0) / scores.length))
+      : 0
 
   const examSubtotal = (
     student: typeof students[number],
@@ -2761,7 +2946,7 @@ function RecordsPage({
   ) => {
     const written = Number(recordValue(student, `${term}-written`, 0))
     const actual = Number(recordValue(student, `${term}-actual`, 0))
-    return written ? (actual / written) * 100 : 0
+    return written > 0 ? Math.min(100, Math.max(0, (actual / written) * 100)) : 0
   }
 
   const finalGrade = (student: typeof students[number]) => {
@@ -2777,17 +2962,16 @@ function RecordsPage({
       ...midtermAttendanceColumns,
       ...finalAttendanceColumns,
     ])
-    return (
+    return Math.min(100, Math.max(0,
       examPercentage * 0.25 +
       percentageFromColumns(student, quizColumns) * 0.2 +
       percentageFromColumns(student, [
         ...midtermProjectColumns,
         ...finalProjectColumns,
-      ]) *
-        0.25 +
+      ]) * 0.25 +
       recitationPercentage * 0.2 +
-      attendancePercentage * 0.1
-    )
+      attendancePercentage * 0.1,
+    ))
   }
 
   const renderAssessmentScore = (
@@ -2860,20 +3044,21 @@ function RecordsPage({
           </span>
           <div>
             <p className="eyebrow">Teaching load</p>
-            <strong>{recordSections.length} active sections</strong>
+            <strong>{sectionsLoading ? "Loading sections..." : `${recordSectionOptions.length} active section${recordSectionOptions.length === 1 ? "" : "s"}`}</strong>
             <small>Switch subjects without leaving your gradebook.</small>
           </div>
         </div>
         <div className="section-switcher">
           <button
             className="section-switcher-trigger"
-            onClick={() => setSectionMenuOpen((open) => !open)}
+            onClick={() => !sectionsLoading && setSectionMenuOpen((open) => !open)}
             aria-expanded={sectionMenuOpen}
+            disabled={sectionsLoading || recordSectionOptions.length === 0}
             aria-controls="records-section-menu"
           >
             <span>
               <small>Currently managing</small>
-              <strong>{selectedSection.code}</strong>
+              <strong>{sectionsLoading ? "Loading…" : selectedSection.code}</strong>
             </span>
             <Icon name="chevron" size={17} />
           </button>
@@ -2885,9 +3070,9 @@ function RecordsPage({
             >
               <div className="section-switcher-menu-heading">
                 <span>Choose a section</span>
-                <small>{recordSections.length} active this term</small>
+                <small>{sectionsLoading ? "Loading" : `${recordSectionOptions.length} active this term`}</small>
               </div>
-              {recordSections.map((section) => (
+              {recordSectionOptions.map((section) => (
                 <button
                   key={section.id}
                   className={section.id === selectedSection.id ? "active" : ""}
@@ -2912,18 +3097,38 @@ function RecordsPage({
           )}
         </div>
       </section>
-      <div className="page-intro records-course-identity">
+      <div className={`page-intro records-course-identity${sectionsLoading ? " records-course-loading" : ""}`}>
         <div>
-          <p className="eyebrow">AY 2026–2027</p>
-          <h2>
-            {selectedSection.code}: {selectedSection.subject}
-          </h2>
-          <p>
-            BSCS 1st Year · Section A-1 · {selectedSection.students} students
-          </p>
+          {sectionsLoading ? (
+            <div className="records-course-skeleton" aria-label="Loading class information">
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : recordSectionOptions.length === 0 ? (
+            <>
+              <p className="eyebrow">Class records</p>
+              <h2>No classes created yet</h2>
+              <p>Create a class first. Only real classes from the database will appear here.</p>
+            </>
+          ) : (
+            <>
+              <p className="eyebrow">{selectedSection.academicYear}</p>
+              <h2>{selectedSection.code}: {selectedSection.subject}</h2>
+              <p>
+                {selectedSection.code} · {selectedSection.schedule} · {selectedSection.students === 0 ? "No enrolled students yet" : `${selectedSection.students} student${selectedSection.students === 1 ? "" : "s"}`}
+              </p>
+            </>
+          )}
         </div>
-        <label className="records-file-import">
-          <input type="file" accept=".csv,text/csv" />
+        <label className="records-file-import" title="Import students and gradebook scores from CSV" aria-disabled={sectionsLoading || recordSectionOptions.length === 0}>
+          <input
+            ref={csvInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(event) => void importGradebookCsv(event)}
+            disabled={sectionsLoading || recordSectionOptions.length === 0}
+          />
           <Icon name="clipboard" size={15} /> Import CSV
         </label>
       </div>
@@ -3077,7 +3282,20 @@ function RecordsPage({
                 role="menu"
                 aria-label="Add assessment column"
               >
-                <p>Add a record column</p>
+                <div className="add-assessment-menu-header">
+                  <div>
+                    <p>Add a record column</p>
+                    <small>Choose the term and assessment type.</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="add-assessment-menu-close"
+                    onClick={() => setAssessmentMenuOpen(false)}
+                    aria-label="Close add assessment menu"
+                  >
+                    ×
+                  </button>
+                </div>
                 <p className="quiz-limit-title">Quizzes · maximum 8 per term</p>
                 {([
                   {
@@ -5019,13 +5237,7 @@ function ActiveClass({
   const [manualAttendance, setManualAttendance] = useState<Record<string, boolean>>(
     {},
   )
-  const liveRoster = [
-    { name: "Dela Cruz, Juan", id: "2026-0025", time: "8:01 AM", status: "Present", method: "NFC card" },
-    { name: "Reyes, Ana", id: "2026-0026", time: "8:03 AM", status: "Present", method: "NFC card" },
-    { name: "Santos, Mark", id: "2026-0027", time: "8:05 AM", status: "Present", method: "QR code" },
-    { name: "Villanueva, Bea", id: "2026-0028", time: "8:12 AM", status: "Late", method: "NFC card" },
-    { name: "Garcia, Luis", id: "2026-0029", time: "—", status: "Not recorded", method: "—" },
-  ]
+  const liveRoster: Array<{ name: string; id: string; time: string; status: string; method: string }> = []
   return (
     <div
       className="modal-backdrop"
@@ -5712,7 +5924,6 @@ export default function App() {
   const [omrDraftScores, setOmrDraftScores] = useState<Record<string, number>>(
     {},
   )
-  const endedClassesStorageKey = "ci-track-ended-classes"
   const localDateKey = () => {
     const date = new Date()
     return [
@@ -5721,50 +5932,73 @@ export default function App() {
       String(date.getDate()).padStart(2, "0"),
     ].join("-")
   }
-  const [endedClassIds, setEndedClassIds] = useState<string[]>(() => {
-    try {
-      const storedValue = window.localStorage.getItem(endedClassesStorageKey)
-      if (!storedValue) return []
-      const stored = JSON.parse(storedValue) as { date?: string; classIds?: string[] }
-      if (stored.date !== localDateKey()) {
-        window.localStorage.removeItem(endedClassesStorageKey)
-        return []
-      }
-      return Array.isArray(stored.classIds) ? stored.classIds.map(String) : []
-    } catch {
-      return []
-    }
-  })
+  const [endedClassIds, setEndedClassIds] = useState<string[]>([])
   const [online, setOnline] = useState(true)
 
   useEffect(() => {
-    window.localStorage.setItem(
-      endedClassesStorageKey,
-      JSON.stringify({ date: localDateKey(), classIds: endedClassIds }),
-    )
-  }, [endedClassIds])
+    let active = true
 
-  useEffect(() => {
-    let midnightTimer: number | undefined
-
-    const resetEndedClassesAtMidnight = () => {
-      const current = new Date()
-      const nextMidnight = new Date(current)
-      nextMidnight.setHours(24, 0, 0, 0)
-      const delay = nextMidnight.getTime() - current.getTime() + 250
-
-      midnightTimer = window.setTimeout(() => {
-        setEndedClassIds([])
-        window.localStorage.removeItem(endedClassesStorageKey)
-        resetEndedClassesAtMidnight()
-      }, delay)
+    const loadEndedClasses = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        if (active) setEndedClassIds([])
+        return
+      }
+      const { data, error } = await supabase
+        .from("class_session_status")
+        .select("class_id")
+        .eq("faculty_id", user.id)
+        .eq("session_date", localDateKey())
+        .eq("status", "ended")
+      if (!active) return
+      if (error) {
+        console.error("Unable to synchronize ended classes:", error)
+        return
+      }
+      setEndedClassIds([...(new Set((data ?? []).map((row: any) => String(row.class_id))))])
     }
 
-    resetEndedClassesAtMidnight()
+    void loadEndedClasses()
+    const channel = supabase
+      .channel("class-session-status-cross-device")
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_session_status" }, () => void loadEndedClasses())
+      .subscribe()
+
+    const refreshSessionState = () => void loadEndedClasses()
+    window.addEventListener("focus", refreshSessionState)
+    document.addEventListener("visibilitychange", refreshSessionState)
     return () => {
-      if (midnightTimer !== undefined) window.clearTimeout(midnightTimer)
+      active = false
+      window.removeEventListener("focus", refreshSessionState)
+      document.removeEventListener("visibilitychange", refreshSessionState)
+      void supabase.removeChannel(channel)
     }
-  }, [])
+  }, [signedIn])
+
+  const endClassAcrossDevices = async (classId: string) => {
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    if (userError || !user) {
+      showMessage("Your session expired. Please sign in again.", "error", "Class could not be ended")
+      return false
+    }
+    const timestamp = new Date().toISOString()
+    const { error } = await supabase
+      .from("class_session_status")
+      .upsert({
+        class_id: classId,
+        faculty_id: user.id,
+        session_date: localDateKey(),
+        status: "ended",
+        ended_at: timestamp,
+        updated_at: timestamp,
+      }, { onConflict: "class_id,session_date" })
+    if (error) {
+      showMessage(`Unable to end class: ${error.message}`, "error", "Class could not be ended")
+      return false
+    }
+    setEndedClassIds((ids) => ids.includes(classId) ? ids : [...ids, classId])
+    return true
+  }
 
   const resetSignedInState = () => {
     setSignedIn(false)
@@ -5993,13 +6227,14 @@ export default function App() {
             setActiveSessionStartedAt(null)
           }}
           onEnd={() => {
-            setActiveClass(null)
-            setActiveSessionStartedAt(null)
-            setEndedClassIds((ids) =>
-              ids.includes(String(activeClass.id))
-                ? ids
-                : [...ids, String(activeClass.id)],
-            )
+            const classId = String(activeClass.id)
+            void endClassAcrossDevices(classId).then((saved) => {
+              if (!saved) return
+              setActiveClass(null)
+              setActiveSessionStartedAt(null)
+              setMinimizedSession(null)
+              showToast("Class ended and synchronized across devices.")
+            })
           }}
           onMinimize={(startedAt) => {
             setMinimizedSession({ item: activeClass, startedAt })
