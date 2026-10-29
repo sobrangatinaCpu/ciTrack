@@ -4074,106 +4074,6 @@ function ActivitiesPage({
   )
   const [sentReviewNotice, setSentReviewNotice] = useState("")
   const [currentTime, setCurrentTime] = useState(() => Date.now())
-  const [joinRequests, setJoinRequests] = useState<any[]>([])
-  const [joinRequestsLoading, setJoinRequestsLoading] = useState(true)
-  const loadJoinRequests = async () => {
-    setJoinRequestsLoading(true)
-    const { data, error } = await supabase
-      .from("class_join_requests")
-      .select("id, class_id, student_id, student_number, student_name, status, created_at, classes(subject, code)")
-      .eq("status", "pending")
-      .order("created_at", { ascending: false })
-    if (!error) setJoinRequests(data ?? [])
-    setJoinRequestsLoading(false)
-  }
-  useEffect(() => {
-    void loadJoinRequests()
-    const channel = supabase
-      .channel("faculty-class-join-requests")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "class_join_requests" },
-        () => void loadJoinRequests(),
-      )
-      .subscribe()
-    return () => { void supabase.removeChannel(channel) }
-  }, [])
-  const reviewJoinRequest = async (request: any, status: "accepted" | "declined") => {
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-
-    if (userError || !user) {
-      showToast("Your session expired. Please sign in again.", "error")
-      return
-    }
-
-    // Confirm this request belongs to a class owned by the signed-in faculty member.
-    const { data: ownedClass, error: classError } = await supabase
-      .from("classes")
-      .select("id")
-      .eq("id", request.class_id)
-      .eq("faculty_id", user.id)
-      .maybeSingle()
-
-    if (classError || !ownedClass) {
-      showToast(
-        classError?.message ?? "This class request is not available for your account.",
-        "error",
-      )
-      return
-    }
-
-    if (status === "accepted") {
-      // A student becomes an enrolled class member only after faculty approval.
-      const { data: existingEnrollment, error: enrollmentLookupError } = await supabase
-        .from("class_students")
-        .select("class_id, student_id")
-        .eq("class_id", request.class_id)
-        .eq("student_id", request.student_id)
-        .maybeSingle()
-
-      if (enrollmentLookupError) {
-        showToast(`Unable to check enrollment: ${enrollmentLookupError.message}`, "error")
-        return
-      }
-
-      if (!existingEnrollment) {
-        const { error: enrollmentError } = await supabase
-          .from("class_students")
-          .insert({
-            class_id: request.class_id,
-            student_id: request.student_id,
-          })
-
-        if (enrollmentError) {
-          showToast(`Unable to enroll student: ${enrollmentError.message}`, "error")
-          return
-        }
-      }
-    }
-
-    const { error: requestError } = await supabase
-      .from("class_join_requests")
-      .update({
-        status,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq("id", request.id)
-      .eq("status", "pending")
-
-    if (requestError) {
-      showToast(`Unable to review request: ${requestError.message}`, "error")
-      return
-    }
-
-    showToast(
-      status === "accepted"
-        ? `${request.student_name || "Student"} can now join the class and use attendance check-in.`
-        : `${request.student_name || "Student"}'s class access request was declined.`,
-    )
-
-    await loadJoinRequests()
-  }
-
   useEffect(() => {
     if (!sentReviewNotice) return
     const timeout = window.setTimeout(() => setSentReviewNotice(""), 4000)
@@ -4357,40 +4257,6 @@ const reminderFormValid = Boolean(
           <Icon name="plus" /> {reminderClasses.length === 0 ? "Create a class first" : "Add reminder"}
         </button>
       </div>
-      <section className="enrollment-operations" aria-labelledby="enrollment-title">
-        <div className="enrollment-operations-heading">
-          <div>
-            <p className="eyebrow">Enrollment operations</p>
-            <h2 id="enrollment-title">Student access requests</h2>
-          </div>
-        </div>
-        <div className="join-request-panel">
-          {joinRequestsLoading ? (
-            <p>Loading requests...</p>
-          ) : joinRequests.length === 0 ? (
-            <div className="enrollment-empty-state">
-              <Icon name="users" size={24} />
-              <strong>No pending requests</strong>
-              <p>Requests appear here when students join with a class access code.</p>
-            </div>
-          ) : (
-            joinRequests.map((request) => (
-              <article className="join-request-card" key={request.id}>
-                <div>
-                  <p className="eyebrow">Student join request</p>
-                  <h3>{request.student_name}</h3>
-                  <p>{request.student_number}</p>
-                  <p>{request.classes?.subject ?? "Class"} · {request.classes?.code ?? request.class_id}</p>
-                </div>
-                <div className="join-request-actions">
-                  <button type="button" className="secondary-button" onClick={() => void reviewJoinRequest(request, "declined")}>Decline</button>
-                  <button type="button" className="primary-button" onClick={() => void reviewJoinRequest(request, "accepted")}>Accept</button>
-                </div>
-              </article>
-            ))
-          )}
-        </div>
-      </section>
       <div className="activities-workspace">
         <section className="concerns-section" aria-labelledby="concerns-title">
           <div className="concerns-heading">
@@ -5116,46 +4982,16 @@ function ActiveClass({
 
   const invokeFacultyNfc = async (body: Record<string, unknown>) => {
     const { data, error } = await supabase.functions.invoke(
-      "nfc-attendance",
+      "faculty-nfc-attendance",
       { body },
     )
 
     if (error) {
-      let backendCode = ""
-      let backendMessage = ""
-
-      try {
-        const response = (error as { context?: Response }).context
-        if (response instanceof Response) {
-          const responseBody = await response.clone().json()
-          backendCode = String(responseBody?.error ?? responseBody?.code ?? "")
-          backendMessage = String(
-            responseBody?.message ??
-              responseBody?.details ??
-              "",
-          )
-        }
-      } catch {
-        // Fall back to the Supabase client error below.
-      }
-
-      throw new Error(
-        backendMessage ||
-          backendCode ||
-          error.message ||
-          "The NFC attendance request failed.",
-      )
+      throw new Error(error.message)
     }
 
     if (!data?.success) {
-      throw new Error(
-        String(
-          data?.message ??
-            data?.details ??
-            data?.error ??
-            "The NFC attendance request failed.",
-        ),
-      )
+      throw new Error(data?.error ?? "The NFC attendance request failed.")
     }
 
     return data.data ?? {}

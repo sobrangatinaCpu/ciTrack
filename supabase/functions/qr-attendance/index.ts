@@ -346,13 +346,13 @@ Deno.serve(async (request: Request): Promise<Response> => {
       }
 
       /* Expected closed state: HTTP 200, not 409. */
-    return json({
-  success: false,
-  error: "GRACE_PERIOD_ENDED",
-  message:
-    "The 15-minute QR attendance period has ended.",
-})
-
+      return json({
+        success: false,
+        error: "GRACE_PERIOD_ENDED",
+        message: "Grace period ended. QR check-in is closed.",
+        server_now: serverNow.toISOString(),
+        grace_ends_at: graceEndsAt.toISOString(),
+      })
     }
 
     const { error: revokeError } = await adminClient
