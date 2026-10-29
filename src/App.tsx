@@ -5116,16 +5116,46 @@ function ActiveClass({
 
   const invokeFacultyNfc = async (body: Record<string, unknown>) => {
     const { data, error } = await supabase.functions.invoke(
-      "faculty-nfc-attendance",
+      "nfc-attendance",
       { body },
     )
 
     if (error) {
-      throw new Error(error.message)
+      let backendCode = ""
+      let backendMessage = ""
+
+      try {
+        const response = (error as { context?: Response }).context
+        if (response instanceof Response) {
+          const responseBody = await response.clone().json()
+          backendCode = String(responseBody?.error ?? responseBody?.code ?? "")
+          backendMessage = String(
+            responseBody?.message ??
+              responseBody?.details ??
+              "",
+          )
+        }
+      } catch {
+        // Fall back to the Supabase client error below.
+      }
+
+      throw new Error(
+        backendMessage ||
+          backendCode ||
+          error.message ||
+          "The NFC attendance request failed.",
+      )
     }
 
     if (!data?.success) {
-      throw new Error(data?.error ?? "The NFC attendance request failed.")
+      throw new Error(
+        String(
+          data?.message ??
+            data?.details ??
+            data?.error ??
+            "The NFC attendance request failed.",
+        ),
+      )
     }
 
     return data.data ?? {}
