@@ -6118,8 +6118,10 @@ function LandingPage({
       setShowConfirmation(false)
 
       showMessage(
-        "Faculty account created. Please sign in using the account you just created."
-      )
+  "Faculty account created. Please sign in using the account you just created.",
+  "success",
+  "Account Created"
+)
     } else {
       await loginFaculty(email, password)
       onSignIn()
