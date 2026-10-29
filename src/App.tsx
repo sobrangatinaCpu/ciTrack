@@ -3,8 +3,9 @@ import { QRCodeCanvas } from "qrcode.react"
 import { supabase } from './lib/supabase'
 import { useAttendanceQr } from "./useAttendanceQr"
 import {loginFaculty, registerFaculty,} from "./lib/auth"
-import citLogo from "./assets/cit.png"
-import citBuilding from "./assets/citbuild.jpg"
+const citLogo = "/cit.png"
+const citBuilding = "/citbuild.jpg"
+
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
 const formatDatabaseTime = (value: string) => {
   const [hoursValue, minutesValue] = value.split(":")
@@ -5997,13 +5998,12 @@ function LandingPage({
       {/* Left Intro Panel with Background Image & Bleeding Vignette Effect */}
       <section
         className="landing-intro"
-        style={{ backgroundImage: `url(${citBuilding})` }}
+        style={{ backgroundImage: `url("${citBuilding}")` }}
       >
         <div className="landing-background-overlay" aria-hidden="true" />
         <div className="landing-brand">
           <span
             className="landing-logo-placeholder"
-            aria-hidden="true"
             style={{ width: "100px", height: "100px", display: "flex" }}
           >
             <img

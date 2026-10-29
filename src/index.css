@@ -2780,23 +2780,91 @@ a {
 }
 
 
-/* Definitive production hero fix: use the Vite-bundled URL as the section
-   background instead of a negatively stacked <img>. */
+/* =========================================================
+   PRODUCTION-SAFE LANDING ASSETS
+   The image URLs come from public/citbuild.jpg and public/cit.png.
+   ========================================================= */
+.landing-page {
+  position: relative;
+  isolation: isolate;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: #071747;
+}
+
 .landing-intro {
-  isolation: isolate !important;
+  position: absolute;
+  inset: 0;
+  isolation: isolate;
+  min-height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  color: #fff;
   background-color: #071747 !important;
   background-repeat: no-repeat !important;
   background-position: center center !important;
   background-size: cover !important;
 }
 
+/* The old image element is no longer used, but hide it if stale markup is cached. */
+.landing-building-image {
+  display: none !important;
+}
+
 .landing-intro::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   z-index: 1 !important;
+  width: auto !important;
+  height: auto !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(5, 18, 60, 0.84) 0%,
+      rgba(7, 24, 66, 0.18) 21%,
+      rgba(7, 24, 66, 0.04) 52%,
+      rgba(6, 20, 61, 0.58) 79%,
+      rgba(4, 15, 55, 0.98) 100%
+    ),
+    linear-gradient(
+      90deg,
+      rgba(3, 15, 48, 0.35) 0%,
+      transparent 30%,
+      transparent 72%,
+      rgba(3, 15, 48, 0.16) 100%
+    ) !important;
+  pointer-events: none;
 }
 
 .landing-intro::after,
 .landing-background-overlay {
+  position: absolute;
+  inset: 0;
   z-index: 2 !important;
+  width: auto !important;
+  height: auto !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  pointer-events: none;
+}
+
+.landing-intro::after {
+  content: "";
+  background: none !important;
+}
+
+.landing-background-overlay {
+  background: radial-gradient(
+    circle at 50% 38%,
+    transparent 34%,
+    rgba(2, 12, 43, 0.22) 100%
+  ) !important;
 }
 
 .landing-brand,
@@ -2807,8 +2875,21 @@ a {
   z-index: 3 !important;
 }
 
+.landing-cit-logo {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+}
+
 @media (max-width: 680px) {
+  .landing-page {
+    overflow-y: auto;
+  }
+
   .landing-intro {
+    position: relative;
+    min-height: 42dvh;
     background-position: center top !important;
   }
 }
