@@ -2782,7 +2782,7 @@ a {
 
 /* =========================================================
    PRODUCTION-SAFE LANDING ASSETS
-   The image URLs come from public/citbuild.jpg and public/cit.png.
+   The image URLs come from public/citbuild.jpeg and public/cit.png.
    ========================================================= */
 .landing-page {
   position: relative;
@@ -2893,3 +2893,11 @@ a {
     background-position: center top !important;
   }
 }
+
+
+/* Public assets used by App.tsx:
+   /cit.png and /citbuild.jpeg */
+
+
+/* Exact public filenames: public/cit.png and public/citbuild.jpeg.
+   App.tsx supplies the final URL through import.meta.env.BASE_URL. */

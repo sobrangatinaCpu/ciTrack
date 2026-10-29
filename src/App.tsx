@@ -3,8 +3,8 @@ import { QRCodeCanvas } from "qrcode.react"
 import { supabase } from './lib/supabase'
 import { useAttendanceQr } from "./useAttendanceQr"
 import {loginFaculty, registerFaculty,} from "./lib/auth"
-const citLogo = "/cit.png"
-const citBuilding = "/citbuild.jpg"
+const citLogo = `${import.meta.env.BASE_URL}cit.png`
+const citBuilding = `${import.meta.env.BASE_URL}citbuild.jpeg`
 
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
 const formatDatabaseTime = (value: string) => {
