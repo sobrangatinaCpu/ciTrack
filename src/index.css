@@ -2778,3 +2778,30 @@ a {
     backdrop-filter: none;
   }
 }
+
+/* Production landing image stacking fix.
+   Keep the imported Vite image above the intro background and below overlays/content. */
+.landing-intro {
+  isolation: isolate;
+}
+
+.landing-building-image {
+  z-index: 0 !important;
+}
+
+.landing-intro::before {
+  z-index: 1 !important;
+}
+
+.landing-intro::after,
+.landing-background-overlay {
+  z-index: 2 !important;
+}
+
+.landing-brand,
+.landing-copy,
+.landing-highlights,
+.landing-footer {
+  position: relative;
+  z-index: 3 !important;
+}
