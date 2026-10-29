@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { QRCodeCanvas } from "qrcode.react"
-import { useAttendanceQr } from "./useAttendanceQr"
 import { supabase } from './lib/supabase'
+import { useAttendanceQr } from "./useAttendanceQr"
 import {loginFaculty, registerFaculty,} from "./lib/auth"
 import citLogo from "./assets/cit.png"
 import citBuilding from "./assets/citbuild.jpg"
@@ -4099,11 +4099,79 @@ function ActivitiesPage({
     return () => { void supabase.removeChannel(channel) }
   }, [])
   const reviewJoinRequest = async (request: any, status: "accepted" | "declined") => {
-    const { error } = await supabase
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+
+    if (userError || !user) {
+      showToast("Your session expired. Please sign in again.", "error")
+      return
+    }
+
+    // Confirm this request belongs to a class owned by the signed-in faculty member.
+    const { data: ownedClass, error: classError } = await supabase
+      .from("classes")
+      .select("id")
+      .eq("id", request.class_id)
+      .eq("faculty_id", user.id)
+      .maybeSingle()
+
+    if (classError || !ownedClass) {
+      showToast(
+        classError?.message ?? "This class request is not available for your account.",
+        "error",
+      )
+      return
+    }
+
+    if (status === "accepted") {
+      // A student becomes an enrolled class member only after faculty approval.
+      const { data: existingEnrollment, error: enrollmentLookupError } = await supabase
+        .from("class_students")
+        .select("class_id, student_id")
+        .eq("class_id", request.class_id)
+        .eq("student_id", request.student_id)
+        .maybeSingle()
+
+      if (enrollmentLookupError) {
+        showToast(`Unable to check enrollment: ${enrollmentLookupError.message}`, "error")
+        return
+      }
+
+      if (!existingEnrollment) {
+        const { error: enrollmentError } = await supabase
+          .from("class_students")
+          .insert({
+            class_id: request.class_id,
+            student_id: request.student_id,
+          })
+
+        if (enrollmentError) {
+          showToast(`Unable to enroll student: ${enrollmentError.message}`, "error")
+          return
+        }
+      }
+    }
+
+    const { error: requestError } = await supabase
       .from("class_join_requests")
-      .update({ status, reviewed_at: new Date().toISOString() })
+      .update({
+        status,
+        reviewed_at: new Date().toISOString(),
+      })
       .eq("id", request.id)
-    if (!error) await loadJoinRequests()
+      .eq("status", "pending")
+
+    if (requestError) {
+      showToast(`Unable to review request: ${requestError.message}`, "error")
+      return
+    }
+
+    showToast(
+      status === "accepted"
+        ? `${request.student_name || "Student"} can now join the class and use attendance check-in.`
+        : `${request.student_name || "Student"}'s class access request was declined.`,
+    )
+
+    await loadJoinRequests()
   }
 
   useEffect(() => {
@@ -5011,8 +5079,15 @@ function ActiveClass({
   const handsOnTotal = handsOnScores.accuracy + handsOnScores.technique + handsOnScores.completion + handsOnScores.safety
 
   const [attendanceSessionId, setAttendanceSessionId] = useState<string | null>(null)
-  const { payload: attendanceQrPayload, countdown, message: attendanceQrMessage } =
-    useAttendanceQr(attendanceSessionId, String(item.id), started && !viewOnly)
+  const {
+    payload: attendanceQrPayload,
+    countdown: attendanceQrCountdown,
+    message: attendanceQrMessage,
+  } = useAttendanceQr(
+    attendanceSessionId,
+    String(item.id),
+    started && !viewOnly,
+  )
   const attendanceSessionIdRef = useRef<string | null>(null)
   const nfcReaderRef = useRef<any>(null)
   const [nfcSessionState, setNfcSessionState] = useState<
@@ -5060,73 +5135,99 @@ function ActiveClass({
     setNfcSessionState("opening")
 
     try {
-      const data = await invokeFacultyNfc({
-        action: "session_open",
-        classId: String(item.id),
-      })
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser()
 
-      const sessionId = String(data?.session_id ?? "")
-      if (!sessionId) {
-        throw new Error("The database did not return an attendance session.")
+      if (userError || !user) {
+        throw new Error("Your session expired. Please sign in again.")
       }
+
+      const { data: existingSession, error: existingError } = await supabase
+        .from("attendance_sessions")
+        .select("id, class_id, started_by, started_at, ended_at, status")
+        .eq("class_id", String(item.id))
+        .eq("started_by", user.id)
+        .is("ended_at", null)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (existingError) throw new Error(existingError.message)
+
+      let session = existingSession
+
+      if (!session) {
+        const { data: createdSession, error: createError } = await supabase
+          .from("attendance_sessions")
+          .insert({
+            class_id: String(item.id),
+            started_by: user.id,
+            started_at: new Date().toISOString(),
+            ended_at: null,
+            status: "active",
+          })
+          .select("id, class_id, started_by, started_at, ended_at, status")
+          .single()
+
+        if (createError || !createdSession) {
+          throw new Error(createError?.message ?? "The database did not return an attendance session.")
+        }
+
+        session = createdSession
+      }
+
+      const sessionId = String(session.id)
+      const parsedStartedAt = Date.parse(String(session.started_at ?? ""))
+      const sessionStartedAt = Number.isFinite(parsedStartedAt) ? parsedStartedAt : Date.now()
 
       attendanceSessionIdRef.current = sessionId
       setAttendanceSessionId(sessionId)
-      const synchronizedSession = await syncActiveAttendanceSession()
-      if (!synchronizedSession) {
-        const localStartedAt = Date.now()
-        setStartedAt(localStartedAt)
-        setStarted(true)
-      }
+      setStartedAt(sessionStartedAt)
+      setSessionNow(Date.now())
+      setStarted(true)
       setNfcSessionState("active")
       setNfcSessionMessage(
         "Attendance is ready. On an NFC-enabled Android phone, select Scan student card.",
       )
       return sessionId
     } catch (error) {
-      const message = error instanceof Error
-        ? error.message
-        : "The attendance session could not be opened."
-      console.error("Unable to open synchronized attendance session:", error)
+      console.error("Unable to open attendance session:", error)
       setNfcSessionState("error")
       setNfcSessionMessage(
-        "The synchronized class session could not be started. Check the deployed faculty-nfc-attendance function and try again.",
-      )
-      showMessage(
-        message,
-        "error",
-        "Class session could not be synchronized",
+        error instanceof Error ? error.message : "The attendance session could not be opened.",
       )
       return null
     }
   }
 
   const closeMobileNfcSession = async () => {
-    if (!attendanceSessionId) return true
+    const sessionId = attendanceSessionIdRef.current
+    if (!sessionId) return true
+
     setNfcSessionState("closing")
 
-    try {
-      const data = await invokeFacultyNfc({
-        action: "session_close",
-        sessionId: attendanceSessionId,
+    const { error } = await supabase
+      .from("attendance_sessions")
+      .update({
+        status: "ended",
+        ended_at: new Date().toISOString(),
       })
+      .eq("id", sessionId)
 
-      if (data?.closed !== true) {
-        throw new Error("The attendance session could not be closed.")
-      }
-
-      setNfcSessionState("idle")
-      setNfcScannerStatus("idle")
-      return true
-    } catch (error) {
-      const message = error instanceof Error
-        ? error.message
-        : "The attendance session could not be closed."
+    if (error) {
+      console.error("Unable to close attendance session:", error)
       setNfcSessionState("error")
-      setNfcSessionMessage(message)
-      showMessage(message, "error", "Unable to end class")
+      setNfcSessionMessage(error.message)
       return false
     }
+
+    attendanceSessionIdRef.current = null
+    setAttendanceSessionId(null)
+    setNfcSessionState("idle")
+    setNfcScannerStatus("idle")
+    return true
   }
 
   const decodeNdefRecord = (record: any) => {
@@ -5136,14 +5237,15 @@ function ActiveClass({
       record.data.byteOffset,
       record.data.byteLength,
     )
-
-    // NDEF text records start with a status byte followed by a language code.
-    if (record.recordType === "text" && bytes.length > 1) {
-      const languageLength = bytes[0] & 0x3f
-      return new TextDecoder().decode(bytes.slice(1 + languageLength)).trim()
-    }
-
-    return new TextDecoder().decode(bytes).replace(/\0/g, "").trim()
+    // Web NFC already separates NDEF text language/status metadata.
+    // Its record.data contains text bytes, so do not strip the first characters.
+    const encoding = record.recordType === "text"
+      ? String(record.encoding || "utf-8")
+      : "utf-8"
+    return new TextDecoder(encoding)
+      .decode(bytes)
+      .replace(/\0/g, "")
+      .trim()
   }
 
   const extractCardToken = (message: any) => {
@@ -5289,21 +5391,30 @@ function ActiveClass({
 
   const syncActiveAttendanceSession = async () => {
     try {
-      const data = await invokeFacultyNfc({ action: "scanner_context" })
-      const classes = Array.isArray(data?.classes) ? data.classes : []
-      const classContext = classes.find(
-        (entry: any) => String(entry.class_id) === String(item.id),
-      )
-      const sessions = Array.isArray(classContext?.sessions)
-        ? classContext.sessions
-        : []
-      const activeSession = sessions[0]
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
 
-      if (!activeSession?.session_id) {
+      if (!user) return null
+
+      const { data: activeSession, error } = await supabase
+        .from("attendance_sessions")
+        .select("id, class_id, started_by, started_at, ended_at, status")
+        .eq("class_id", String(item.id))
+        .eq("started_by", user.id)
+        .is("ended_at", null)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (error) {
+        console.error("Unable to synchronize the active attendance session:", error)
         return null
       }
 
-      const sessionId = String(activeSession.session_id)
+      if (!activeSession?.id) return null
+
+      const sessionId = String(activeSession.id)
       const synchronizedStartedAt = Date.parse(String(activeSession.started_at ?? ""))
       const timerStart = Number.isFinite(synchronizedStartedAt)
         ? synchronizedStartedAt
@@ -5312,10 +5423,11 @@ function ActiveClass({
       attendanceSessionIdRef.current = sessionId
       setAttendanceSessionId(sessionId)
       setStartedAt(timerStart)
+      setSessionNow(Date.now())
       setStarted(true)
       setNfcSessionState("active")
       setNfcSessionMessage(
-        "This live class session is synchronized across your web, tablet, and mobile devices.",
+        "This live class session and timer are synchronized across all faculty devices.",
       )
       return sessionId
     } catch (error) {
@@ -5483,7 +5595,7 @@ function ActiveClass({
           : "Recorded"
       })(),
       status: String(row.status ?? "Present"),
-      method: String(row.method ?? "Verified"),
+      method: String(row.method ?? "Mobile NFC"),
     }))
   return (
     <div
@@ -5678,12 +5790,17 @@ function ActiveClass({
                       includeMargin
                     />
                   ) : (
-                    <p role="status">{attendanceQrMessage}</p>
+                    <div className="qr-loading-state" role="status" aria-live="polite">
+                      <Icon name="clock" size={22} />
+                      <span>Preparing secure QR…</span>
+                    </div>
                   )}
                 </div>
-                <p>Students can scan this code during the grace period.</p>
+                <p>{attendanceQrMessage}</p>
                 <small className="qr-refresh-note">
-                  {attendanceQrPayload ? `QR refreshes in ${countdown}s` : attendanceQrMessage}
+                  {attendanceQrPayload
+                    ? `QR refreshes in ${attendanceQrCountdown}s`
+                    : "Waiting for a server-issued attendance QR"}
                 </small>
                 <div className="progress-label">
                   <span>Attendance recorded</span>
@@ -6294,113 +6411,6 @@ export default function App() {
   const [online, setOnline] = useState(true)
 
   useEffect(() => {
-    if (!signedIn) {
-      setMinimizedSession(null)
-      setActiveSessionStartedAt(null)
-      return
-    }
-
-    let mounted = true
-
-    const recoverSharedLiveSession = async () => {
-      const { data: sessionData, error: authError } = await supabase.auth.getSession()
-      const accessToken = sessionData.session?.access_token
-      if (authError || !accessToken || !mounted) return
-
-      const { data: response, error: recoveryError } = await supabase.functions.invoke(
-        "faculty-nfc-attendance",
-        {
-          body: { action: "live_session_list" },
-          headers: { Authorization: `Bearer ${accessToken}` },
-        },
-      )
-
-      if (recoveryError || response?.success === false || !mounted) {
-        console.error("Unable to recover shared live session:", recoveryError ?? response?.error)
-        return
-      }
-
-      const sessions = Array.isArray(response?.data?.sessions)
-        ? response.data.sessions
-        : []
-      const classes = Array.isArray(response?.data?.classes)
-        ? response.data.classes
-        : []
-      const liveSession = sessions
-        .filter((row: any) => row?.id && row?.class_id && !row?.ended_at)
-        .sort(
-          (a: any, b: any) =>
-            Date.parse(String(b.started_at ?? "")) -
-            Date.parse(String(a.started_at ?? "")),
-        )[0]
-
-      if (!liveSession) {
-        setMinimizedSession(null)
-        setActiveSessionStartedAt(null)
-        return
-      }
-
-      const classRow = classes.find(
-        (row: any) => String(row.id) === String(liveSession.class_id),
-      )
-      if (!classRow) {
-        console.error("The active session class could not be recovered.")
-        return
-      }
-
-      const parsedStartedAt = Date.parse(String(liveSession.started_at ?? ""))
-      const sharedStartedAt = Number.isFinite(parsedStartedAt)
-        ? parsedStartedAt
-        : Date.now()
-      const mappedClass = mapDatabaseClass(classRow)
-
-      setActiveSessionStartedAt(sharedStartedAt)
-      setMinimizedSession((current) => {
-        if (
-          current &&
-          String(current.item.id) === String(mappedClass.id) &&
-          current.startedAt === sharedStartedAt
-        ) {
-          return current
-        }
-        return { item: mappedClass, startedAt: sharedStartedAt }
-      })
-    }
-
-    void recoverSharedLiveSession()
-
-    const channel = supabase
-      .channel(`faculty-live-session-recovery-${Date.now()}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "attendance_sessions",
-        },
-        () => void recoverSharedLiveSession(),
-      )
-      .subscribe()
-
-    const refresh = () => {
-      if (document.visibilityState === "visible") {
-        void recoverSharedLiveSession()
-      }
-    }
-    window.addEventListener("focus", refresh)
-    document.addEventListener("visibilitychange", refresh)
-    const fallbackTimer = window.setInterval(() => void recoverSharedLiveSession(), 10_000)
-
-    return () => {
-      mounted = false
-      window.clearInterval(fallbackTimer)
-      window.removeEventListener("focus", refresh)
-      document.removeEventListener("visibilitychange", refresh)
-      void supabase.removeChannel(channel)
-    }
-  }, [signedIn])
-
-  useEffect(() => {
     let active = true
 
     const loadEndedClasses = async () => {
@@ -6632,22 +6642,24 @@ export default function App() {
   }
 
   const openClass = (item: ClassItem) => {
-    if (
-      minimizedSession &&
-      String(minimizedSession.item.id) === String(item.id)
-    ) {
-      setActiveSessionStartedAt(minimizedSession.startedAt)
+    const isOpeningMinimizedClass =
+      minimizedSession && String(minimizedSession.item.id) === String(item.id)
+
+    if (isOpeningMinimizedClass) {
       setActiveClass(minimizedSession.item)
+      setActiveSessionStartedAt(minimizedSession.startedAt)
       setMinimizedSession(null)
       return
     }
+
+    // Opening another class must not redirect to the minimized live class.
+    // The minimized session stays available in the tray after this class closes.
     setActiveSessionStartedAt(null)
     setActiveClass(item)
   }
 
   const restoreMinimizedSession = () => {
     if (!minimizedSession) return
-    setActiveSessionStartedAt(minimizedSession.startedAt)
     setActiveClass(minimizedSession.item)
     setMinimizedSession(null)
   }
@@ -6782,3 +6794,4 @@ export default function App() {
     </div>
   )
 }
+
