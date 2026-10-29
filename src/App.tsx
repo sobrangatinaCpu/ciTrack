@@ -5995,12 +5995,10 @@ function LandingPage({
     <main className="landing-page">
       <MessageDialogHost />
       {/* Left Intro Panel with Background Image & Bleeding Vignette Effect */}
-      <section className="landing-intro">
-        <img
-          src={citBuilding}
-          alt="College of Industrial Technology building"
-          className="landing-building-image"
-        />
+      <section
+        className="landing-intro"
+        style={{ backgroundImage: `url(${citBuilding})` }}
+      >
         <div className="landing-background-overlay" aria-hidden="true" />
         <div className="landing-brand">
           <span

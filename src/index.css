@@ -2779,14 +2779,15 @@ a {
   }
 }
 
-/* Production landing image stacking fix.
-   Keep the imported Vite image above the intro background and below overlays/content. */
-.landing-intro {
-  isolation: isolate;
-}
 
-.landing-building-image {
-  z-index: 0 !important;
+/* Definitive production hero fix: use the Vite-bundled URL as the section
+   background instead of a negatively stacked <img>. */
+.landing-intro {
+  isolation: isolate !important;
+  background-color: #071747 !important;
+  background-repeat: no-repeat !important;
+  background-position: center center !important;
+  background-size: cover !important;
 }
 
 .landing-intro::before {
@@ -2804,4 +2805,10 @@ a {
 .landing-footer {
   position: relative;
   z-index: 3 !important;
+}
+
+@media (max-width: 680px) {
+  .landing-intro {
+    background-position: center top !important;
+  }
 }
