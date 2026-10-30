@@ -3,6 +3,7 @@ import { QRCodeCanvas } from "qrcode.react"
 import { supabase } from './lib/supabase'
 import { useAttendanceQr } from "./useAttendanceQr"
 import {loginFaculty, registerFaculty,} from "./lib/auth"
+import OmrManager from "./OmrManager"
 
 const citLogo = `${import.meta.env.BASE_URL}cit.png`
 const citBuilding = `${import.meta.env.BASE_URL}citbuild.jpg` 
@@ -5919,7 +5920,7 @@ function ActiveClass({
             <div className="qr-display-heading">
               <span>Live attendance</span>
               <h2 id="qr-display-title">Scan to check in</h2>
-              <p>{item.subject} · {item.section}</p>
+              <p>{item.subject} · {item. section}</p>
             </div>
             <div className="qr-display-code">
               {attendanceQrPayload ? (
@@ -6687,15 +6688,7 @@ export default function App() {
         onScanAnswer={() => setOmrScannerOpen(true)}
       />
       {omrScannerOpen && (
-        <OmrScannerModal
-          onClose={() => setOmrScannerOpen(false)}
-          onSaveDraft={(studentId, assessmentId, score) =>
-            setOmrDraftScores((scores) => ({
-              ...scores,
-              [`${studentId}:${assessmentId}`]: score,
-            }))
-          }
-        />
+        <OmrManager onClose={() => setOmrScannerOpen(false)} />
       )}
       {minimizedSession && !activeClass && (
         <MinimizedSession

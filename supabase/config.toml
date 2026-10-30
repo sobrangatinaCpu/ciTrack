@@ -1,4 +1,5 @@
 
+
 [functions.faculty-nfc-attendance]
 enabled = true
 verify_jwt = false
