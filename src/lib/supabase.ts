@@ -1,17 +1,12 @@
-import { createClient } from "@supabase/supabase-js"
-if (import.meta.env.DEV) {
-  console.log(
-    "Connected Supabase project:",
-    import.meta.env.VITE_SUPABASE_URL,
-  )
-}
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+import { createClient } from '@supabase/supabase-js';
 
-if (!supabaseKey) {
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
   throw new Error(
-    "VITE_SUPABASE_PUBLISHABLE_KEY is missing from the environment variables."
-  )
+    'Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY'
+  );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey)
+export const supabase = createClient(supabaseUrl, supabaseKey);
