@@ -3,8 +3,9 @@ import { QRCodeCanvas } from "qrcode.react"
 import { supabase } from './lib/supabase'
 import { useAttendanceQr } from "./useAttendanceQr"
 import {loginFaculty, registerFaculty,} from "./lib/auth"
+
 const citLogo = `${import.meta.env.BASE_URL}cit.png`
-const citBuilding = `${import.meta.env.BASE_URL}citbuild.jpeg`
+const citBuilding = `${import.meta.env.BASE_URL}citbuild.jpg` 
 
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
 const formatDatabaseTime = (value: string) => {
@@ -4763,6 +4764,7 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
   const [draftProfile, setDraftProfile] = useState<FacultyProfile>(emptyFacultyProfile)
   const [editingProfile, setEditingProfile] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [activePanel, setActivePanel] = useState<ProfilePanel>(null)
   const [notifications, setNotifications] = useState({ classStarts: true, studentRequests: true, attendance: true, reminders: true })
   const [attendanceSettings, setAttendanceSettings] = useState({ lateMinutes: 15, closeMinutes: 30, allowExcused: true })
@@ -4775,6 +4777,55 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
     setDraftProfile(loaded)
   }
   useEffect(() => { void loadProfile() }, [])
+
+  const uploadProfilePhoto = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      showMessage("Please choose a JPG, PNG, or WebP image.", "error", "Invalid profile picture")
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showMessage("Profile pictures must be 5 MB or smaller.", "error", "Image is too large")
+      return
+    }
+
+    setUploadingPhoto(true)
+    const temporaryUrl = URL.createObjectURL(file)
+    setDraftProfile((current) => ({ ...current, photoUrl: temporaryUrl }))
+
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError || !user) throw new Error("Your session expired. Please sign in again.")
+      const extension = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "")
+      const filePath = `${user.id}/profile-${Date.now()}.${extension || "jpg"}`
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(filePath, file, { cacheControl: "3600", upsert: true, contentType: file.type })
+      if (uploadError) throw uploadError
+      const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(filePath)
+      const photoUrl = publicData.publicUrl
+      setDraftProfile((current) => ({ ...current, photoUrl }))
+      showMessage("Profile picture uploaded. Select Save changes to publish it.", "success", "Photo ready")
+    } catch (error) {
+      setDraftProfile((current) => ({ ...current, photoUrl: profile.photoUrl }))
+      const uploadMessage = error instanceof Error
+        ? error.message
+        : "The profile picture could not be uploaded."
+      const bucketMissing = /bucket\s+not\s+found/i.test(uploadMessage)
+      showMessage(
+        bucketMissing
+          ? "The avatars bucket is missing from the Supabase project currently used by this app. Confirm that VITE_SUPABASE_URL points to the same project where you created the public avatars bucket, then restart the app."
+          : uploadMessage,
+        "error",
+        bucketMissing ? "Avatar storage is not connected" : "Upload failed",
+      )
+    } finally {
+      URL.revokeObjectURL(temporaryUrl)
+      setUploadingPhoto(false)
+    }
+  }
 
   const saveProfile = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -4812,14 +4863,19 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
 
     const { error: profileError } = await supabase
       .from("faculty_profiles")
-      .update({
-        email: stableEmail,
-        full_name: updated.name,
-        department: updated.department,
-        faculty_number: updated.facultyNumber,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", user.id)
+      .upsert(
+        {
+          id: user.id,
+          email: stableEmail,
+          full_name: updated.name,
+          department: updated.department,
+          faculty_number: updated.facultyNumber,
+          avatar_url: updated.photoUrl,
+          role: "faculty",
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" },
+      )
 
     setSavingProfile(false)
     if (profileError) {
@@ -4891,7 +4947,7 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
       {activePanel === "attendance" && <div className="settings-form-list"><label>Late after (minutes)<input type="number" min="0" max="180" value={attendanceSettings.lateMinutes} onChange={e => setAttendanceSettings({...attendanceSettings,lateMinutes:Number(e.target.value)})}/></label><label>Close attendance after (minutes)<input type="number" min="1" max="240" value={attendanceSettings.closeMinutes} onChange={e => setAttendanceSettings({...attendanceSettings,closeMinutes:Number(e.target.value)})}/></label><label className="settings-checkbox"><input type="checkbox" checked={attendanceSettings.allowExcused} onChange={e => setAttendanceSettings({...attendanceSettings,allowExcused:e.target.checked})}/>Allow excused absences</label><button className="primary-button" onClick={savePreferencePanel}>Save settings</button></div>}
     </section></div>}
 
-    {editingProfile && <div className="modal-backdrop"><section className="profile-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title"><button type="button" className="profile-modal-close" onClick={() => setEditingProfile(false)} aria-label="Close edit profile" title="Close">×</button><p className="eyebrow">Faculty profile</p><h2 id="edit-profile-title">Edit profile</h2><p>Changes synchronize with the header profile card.</p><form onSubmit={saveProfile}><div className="profile-photo-summary"><img src={profile.photoUrl} alt=""/><div><strong>{profile.name}</strong><small>This information comes from the signed-in faculty account.</small></div></div><div className="profile-form-fields"><label><span className="profile-field-heading">Full name <em>Required</em></span><input value={draftProfile.name} onChange={e => setDraftProfile({...draftProfile,name:e.target.value})} required/></label><label><span className="profile-field-heading">University email <em>Required</em></span><input type="email" value={draftProfile.email} readOnly aria-readonly="true" required/><small className="profile-readonly-note">University email is managed by the signed-in account.</small></label><label><span className="profile-field-heading">College or department <em>Required</em></span><input value={draftProfile.department} onChange={e => setDraftProfile({...draftProfile,department:e.target.value})} required/></label><label><span className="profile-field-heading">Faculty number <em>Required</em></span><input value={draftProfile.facultyNumber} onChange={e => setDraftProfile({...draftProfile,facultyNumber:e.target.value})} required/></label></div><div className="profile-form-actions"><button type="button" className="secondary-button" onClick={() => setEditingProfile(false)}>Cancel</button><button className="primary-button" disabled={savingProfile}>{savingProfile ? "Saving..." : "Save changes"}</button></div></form></section></div>}
+    {editingProfile && <div className="modal-backdrop"><section className="profile-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title"><button type="button" className="profile-modal-close" onClick={() => setEditingProfile(false)} aria-label="Close edit profile" title="Close">×</button><p className="eyebrow">Faculty profile</p><h2 id="edit-profile-title">Edit profile</h2><p>Changes synchronize with the header profile card.</p><form onSubmit={saveProfile}><div className="profile-photo-summary profile-photo-uploader"><div className="profile-photo-preview"><img src={draftProfile.photoUrl || profile.photoUrl} alt="Faculty profile preview"/><label className="profile-photo-edit-button" title="Upload profile picture"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadProfilePhoto} disabled={uploadingPhoto}/><Icon name="edit" size={16}/><span>{uploadingPhoto ? "Uploading..." : "Change photo"}</span></label></div><div><strong>{draftProfile.name || profile.name}</strong><small>Upload a JPG, PNG, or WebP image up to 5 MB.</small></div></div><div className="profile-form-fields"><label><span className="profile-field-heading">Full name <em>Required</em></span><input value={draftProfile.name} onChange={e => setDraftProfile({...draftProfile,name:e.target.value})} required/></label><label><span className="profile-field-heading">University email <em>Required</em></span><input type="email" value={draftProfile.email} readOnly aria-readonly="true" required/><small className="profile-readonly-note">University email is managed by the signed-in account.</small></label><label><span className="profile-field-heading">College or department <em>Required</em></span><input value={draftProfile.department} onChange={e => setDraftProfile({...draftProfile,department:e.target.value})} required/></label><label><span className="profile-field-heading">Faculty number <em>Required</em></span><input value={draftProfile.facultyNumber} onChange={e => setDraftProfile({...draftProfile,facultyNumber:e.target.value})} required/></label></div><div className="profile-form-actions"><button type="button" className="secondary-button" onClick={() => setEditingProfile(false)}>Cancel</button><button className="primary-button" disabled={savingProfile || uploadingPhoto}>{uploadingPhoto ? "Uploading photo..." : savingProfile ? "Saving..." : "Save changes"}</button></div></form></section></div>}
   </>)
 }
 
@@ -4968,6 +5024,7 @@ function ActiveClass({
   >("idle")
   const [lastCard, setLastCard] = useState("")
   const [liveAttendance, setLiveAttendance] = useState<any[]>([])
+  const [qrExpanded, setQrExpanded] = useState(false)
 
   useEffect(() => {
     attendanceSessionIdRef.current = attendanceSessionId
@@ -5646,7 +5703,7 @@ function ActiveClass({
                     <span>Alternative check-in</span>
                     <strong id="qr-check-in-title">Attendance QR</strong>
                   </div>
-                  <Icon name="scan" size={18} />
+                  <button type="button" className="qr-expand-button" onClick={() => setQrExpanded(true)} disabled={!attendanceQrPayload} aria-label="Expand attendance QR code for classroom display" title="Show QR on TV or projector"><Icon name="scan" size={18} /><span>Expand</span></button>
                 </div>
                 <div className="qr-pattern" aria-label="Attendance QR code">
                   {attendanceQrPayload ? (
@@ -5855,6 +5912,29 @@ function ActiveClass({
           )}
         </button>
       </section>
+      {qrExpanded && (
+        <div className="qr-display-backdrop" role="dialog" aria-modal="true" aria-labelledby="qr-display-title" onClick={() => setQrExpanded(false)}>
+          <section className="qr-display-panel" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="qr-display-close" onClick={() => setQrExpanded(false)} aria-label="Close expanded QR code">×</button>
+            <div className="qr-display-heading">
+              <span>Live attendance</span>
+              <h2 id="qr-display-title">Scan to check in</h2>
+              <p>{item.subject} · {item.section}</p>
+            </div>
+            <div className="qr-display-code">
+              {attendanceQrPayload ? (
+                <QRCodeCanvas value={attendanceQrPayload} size={420} level="H" includeMargin />
+              ) : (
+                <div className="qr-loading-state"><Icon name="clock" size={34}/><span>Preparing secure QR…</span></div>
+              )}
+            </div>
+            <div className="qr-display-footer">
+              <strong>{attendanceQrPayload ? `Refreshes in ${attendanceQrCountdown}s` : "Waiting for QR"}</strong>
+              <span>{liveAttendance.length} of {item.attendance} attendance recorded</span>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   )
 }
@@ -5996,14 +6076,17 @@ function LandingPage({
     <main className="landing-page">
       <MessageDialogHost />
       {/* Left Intro Panel with Background Image & Bleeding Vignette Effect */}
-      <section
-        className="landing-intro"
-        style={{ backgroundImage: `url("${citBuilding}")` }}
-      >
+      <section className="landing-intro">
+        <img
+          src={citBuilding}
+          alt="College of Industrial Technology building"
+          className="landing-building-image"
+        />
         <div className="landing-background-overlay" aria-hidden="true" />
         <div className="landing-brand">
           <span
             className="landing-logo-placeholder"
+            aria-hidden="true"
             style={{ width: "100px", height: "100px", display: "flex" }}
           >
             <img
@@ -6660,4 +6743,5 @@ export default function App() {
     </div>
   )
 }
+
 

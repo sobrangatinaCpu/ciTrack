@@ -2780,124 +2780,513 @@ a {
 }
 
 
-/* =========================================================
-   PRODUCTION-SAFE LANDING ASSETS
-   The image URLs come from public/citbuild.jpeg and public/cit.png.
-   ========================================================= */
-.landing-page {
+/* Profile photo layout correction: keep the image and text in separate columns. */
+.profile-edit-modal .profile-photo-summary.profile-photo-uploader {
+  display: grid !important;
+  grid-template-columns: 112px minmax(0, 1fr) !important;
+  align-items: center !important;
+  gap: 20px !important;
+  min-height: 148px;
+  padding: 18px 20px 22px !important;
+  overflow: visible !important;
+}
+
+.profile-edit-modal .profile-photo-preview {
   position: relative;
-  isolation: isolate;
-  min-height: 100dvh;
-  overflow: hidden;
-  background: #071747;
+  width: 112px;
+  min-width: 112px;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
 }
 
-.landing-intro {
-  position: absolute;
-  inset: 0;
-  isolation: isolate;
-  min-height: 100dvh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  color: #fff;
-  background-color: #071747 !important;
-  background-repeat: no-repeat !important;
-  background-position: center center !important;
-  background-size: cover !important;
-}
-
-/* The old image element is no longer used, but hide it if stale markup is cached. */
-.landing-building-image {
-  display: none !important;
-}
-
-.landing-intro::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1 !important;
-  width: auto !important;
-  height: auto !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  background:
-    linear-gradient(
-      180deg,
-      rgba(5, 18, 60, 0.84) 0%,
-      rgba(7, 24, 66, 0.18) 21%,
-      rgba(7, 24, 66, 0.04) 52%,
-      rgba(6, 20, 61, 0.58) 79%,
-      rgba(4, 15, 55, 0.98) 100%
-    ),
-    linear-gradient(
-      90deg,
-      rgba(3, 15, 48, 0.35) 0%,
-      transparent 30%,
-      transparent 72%,
-      rgba(3, 15, 48, 0.16) 100%
-    ) !important;
-  pointer-events: none;
-}
-
-.landing-intro::after,
-.landing-background-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2 !important;
-  width: auto !important;
-  height: auto !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  pointer-events: none;
-}
-
-.landing-intro::after {
-  content: "";
-  background: none !important;
-}
-
-.landing-background-overlay {
-  background: radial-gradient(
-    circle at 50% 38%,
-    transparent 34%,
-    rgba(2, 12, 43, 0.22) 100%
-  ) !important;
-}
-
-.landing-brand,
-.landing-copy,
-.landing-highlights,
-.landing-footer {
-  position: relative;
-  z-index: 3 !important;
-}
-
-.landing-cit-logo {
+.profile-edit-modal .profile-photo-preview > img {
   display: block;
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: contain;
+  width: 92px !important;
+  height: 92px !important;
+  max-width: 92px !important;
+  border-radius: 20px;
+  object-fit: cover;
+}
+
+.profile-edit-modal .profile-photo-edit-button {
+  position: static !important;
+  inset: auto !important;
+  transform: none !important;
+  width: max-content;
+  max-width: 112px;
+  min-height: 34px;
+  margin: 0;
+  justify-content: center;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child {
+  min-width: 0;
+  padding-left: 0 !important;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child strong,
+.profile-edit-modal .profile-photo-uploader > div:last-child small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child strong {
+  margin-bottom: 8px;
+  color: #203f5d;
+  font-size: 14px;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child small {
+  color: #6d8295;
+  line-height: 1.5;
+}
+
+@media (max-width: 520px) {
+  .profile-edit-modal .profile-photo-summary.profile-photo-uploader {
+    grid-template-columns: 1fr !important;
+    justify-items: center;
+    text-align: center;
+  }
+}
+
+/* Formal profile editor alignment */
+.profile-edit-modal.profile-form-modal,
+.profile-edit-modal {
+  width: min(680px, calc(100vw - 40px)) !important;
+  padding: 32px !important;
+  border: 1px solid #dbe5ee;
+  border-radius: 20px;
+}
+
+.profile-edit-modal .profile-photo-summary.profile-photo-uploader {
+  grid-template-columns: 116px minmax(0, 1fr) !important;
+  align-items: center !important;
+  gap: 24px !important;
+  min-height: 160px;
+  margin-top: 22px;
+  padding: 22px 24px !important;
+  border-color: #d7e3ed;
+  border-radius: 16px;
+  background: #f8fbfd;
+}
+
+.profile-edit-modal .profile-photo-preview {
+  width: 116px;
+  min-width: 116px;
+  justify-items: center;
+  align-content: center;
+  gap: 10px;
+}
+
+.profile-edit-modal .profile-photo-preview > img {
+  width: 96px !important;
+  height: 96px !important;
+  max-width: 96px !important;
+  border-radius: 50%;
+  border: 4px solid #fff;
+  box-shadow: 0 4px 14px rgba(24, 57, 84, .12);
+}
+
+/* The custom Change photo control replaces the browser's unaligned file input. */
+.profile-edit-modal input[type="file"] {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.profile-edit-modal .profile-photo-edit-button {
+  width: 116px;
+  max-width: 116px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #bfd0df;
+  border-radius: 9px;
+  color: #245d8c;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child {
+  display: grid;
+  align-content: center;
+  gap: 7px;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child strong {
+  margin: 0;
+  color: #183b59;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child small {
+  max-width: 390px;
+  color: #718599;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.profile-edit-modal .profile-form-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 20px;
+  row-gap: 4px;
+  margin-top: 14px;
+}
+
+.profile-edit-modal .profile-form-fields label {
+  min-width: 0;
+  margin-top: 16px;
+  color: #294b66;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-edit-modal .profile-form-fields label em {
+  float: right;
+  margin: 0 2px 0 10px;
+  color: #d84d58;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.profile-edit-modal .profile-form-fields input {
+  height: 46px;
+  margin-top: 8px;
+  padding: 0 13px;
+  border-color: #cad9e5;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.profile-edit-modal .profile-form-fields input:focus {
+  border-color: #438fd1;
+  box-shadow: 0 0 0 3px rgba(22, 114, 232, .12);
+}
+
+.profile-edit-modal .profile-form-fields label small {
+  display: block;
+  min-height: 34px;
+  margin-top: 7px;
+  color: #7e90a1;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.profile-edit-modal .profile-form-actions {
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid #e5ebf1;
+}
+
+.profile-edit-modal .profile-form-actions .secondary-button,
+.profile-edit-modal .profile-form-actions .primary-button {
+  min-width: 142px;
+  min-height: 44px;
+  border-radius: 10px;
+  font-size: 12px;
 }
 
 @media (max-width: 680px) {
-  .landing-page {
-    overflow-y: auto;
+  .profile-edit-modal.profile-form-modal,
+  .profile-edit-modal {
+    width: 100% !important;
+    padding: 26px 20px calc(22px + env(safe-area-inset-bottom)) !important;
   }
 
-  .landing-intro {
-    position: relative;
-    min-height: 42dvh;
-    background-position: center top !important;
+  .profile-edit-modal .profile-photo-summary.profile-photo-uploader {
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+    padding: 20px !important;
+    text-align: center;
+  }
+
+  .profile-edit-modal .profile-photo-uploader > div:last-child {
+    justify-items: center;
+  }
+
+  .profile-edit-modal .profile-form-fields {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .profile-edit-modal .profile-form-fields label em {
+    float: none;
+    margin-left: 6px;
+  }
+
+  .profile-edit-modal .profile-form-fields label small {
+    min-height: 0;
+  }
+
+  .profile-edit-modal .profile-form-actions {
+    position: static;
+    margin: 24px 0 0;
+    padding: 18px 0 0;
   }
 }
 
+/* Revised profile photo header: clean formal horizontal alignment */
+.profile-edit-modal .profile-photo-summary.profile-photo-uploader {
+  display: grid !important;
+  grid-template-columns: 145px minmax(0, 1fr) !important;
+  grid-template-rows: auto !important;
+  align-items: center !important;
+  gap: 30px !important;
+  min-height: 190px;
+  padding: 24px 20px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #f7fafc !important;
+  box-shadow: none !important;
+}
 
-/* Public assets used by App.tsx:
-   /cit.png and /citbuild.jpeg */
+.profile-edit-modal .profile-photo-preview {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 145px !important;
+  min-width: 145px !important;
+  gap: 12px !important;
+}
 
+.profile-edit-modal .profile-photo-preview > img {
+  display: block !important;
+  width: 112px !important;
+  height: 112px !important;
+  max-width: 112px !important;
+  margin: 0 !important;
+  border: 5px solid #fff !important;
+  border-radius: 50% !important;
+  object-fit: cover !important;
+  box-shadow: 0 6px 18px rgba(24, 58, 86, .16) !important;
+}
 
-/* Exact public filenames: public/cit.png and public/citbuild.jpeg.
-   App.tsx supplies the final URL through import.meta.env.BASE_URL. */
+.profile-edit-modal .profile-photo-edit-button {
+  position: static !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  width: 145px !important;
+  max-width: 145px !important;
+  min-height: 45px !important;
+  margin: 0 !important;
+  padding: 0 14px !important;
+  border: 1px solid #b9cfe1 !important;
+  border-radius: 11px !important;
+  color: #1f5f91 !important;
+  background: #fff !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  box-shadow: none !important;
+}
+
+.profile-edit-modal .profile-photo-edit-button:hover {
+  border-color: #3683bf !important;
+  background: #f2f8fc !important;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  align-self: center !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  text-align: left !important;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child strong {
+  margin: 0 0 14px !important;
+  color: #173f60 !important;
+  font-size: 21px !important;
+  font-weight: 700 !important;
+  line-height: 1.25 !important;
+  letter-spacing: -.2px;
+}
+
+.profile-edit-modal .profile-photo-uploader > div:last-child small {
+  display: block !important;
+  max-width: 430px !important;
+  margin: 0 !important;
+  color: #7189a1 !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  line-height: 1.5 !important;
+}
+
+@media (max-width: 600px) {
+  .profile-edit-modal .profile-photo-summary.profile-photo-uploader {
+    grid-template-columns: 120px minmax(0, 1fr) !important;
+    gap: 20px !important;
+    min-height: 170px;
+    padding: 20px 14px !important;
+    text-align: left !important;
+  }
+
+  .profile-edit-modal .profile-photo-preview {
+    width: 120px !important;
+    min-width: 120px !important;
+  }
+
+  .profile-edit-modal .profile-photo-preview > img {
+    width: 96px !important;
+    height: 96px !important;
+    max-width: 96px !important;
+  }
+
+  .profile-edit-modal .profile-photo-edit-button {
+    width: 120px !important;
+    max-width: 120px !important;
+    min-height: 40px !important;
+    padding: 0 8px !important;
+    font-size: 12px !important;
+  }
+
+  .profile-edit-modal .profile-photo-uploader > div:last-child {
+    align-items: flex-start !important;
+    text-align: left !important;
+  }
+
+  .profile-edit-modal .profile-photo-uploader > div:last-child strong {
+    margin-bottom: 9px !important;
+    font-size: 17px !important;
+  }
+
+  .profile-edit-modal .profile-photo-uploader > div:last-child small {
+    font-size: 12px !important;
+  }
+}
+
+@media (max-width: 410px) {
+  .profile-edit-modal .profile-photo-summary.profile-photo-uploader {
+    grid-template-columns: 1fr !important;
+    justify-items: center !important;
+    gap: 16px !important;
+    text-align: center !important;
+  }
+
+  .profile-edit-modal .profile-photo-uploader > div:last-child {
+    align-items: center !important;
+    text-align: center !important;
+  }
+}
+
+/* Final correction: align the four profile fields in a consistent 2 x 2 grid */
+.profile-edit-modal .profile-form-fields {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  column-gap: 18px !important;
+  row-gap: 26px !important;
+  align-items: start !important;
+  margin-top: 24px !important;
+}
+
+.profile-edit-modal .profile-form-fields > label {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  grid-template-rows: 22px 48px auto !important;
+  column-gap: 12px !important;
+  align-items: center !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  color: #173f60 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+}
+
+.profile-edit-modal .profile-form-fields > label > em {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  justify-self: end !important;
+  float: none !important;
+  margin: 0 !important;
+  color: #e33f49 !important;
+  font-size: 11px !important;
+  font-style: normal !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+}
+
+.profile-edit-modal .profile-form-fields > label > input,
+.profile-edit-modal .profile-form-fields > label > select,
+.profile-edit-modal .profile-form-fields > label > textarea {
+  grid-column: 1 / -1 !important;
+  grid-row: 2 !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 48px !important;
+  margin: 8px 0 0 !important;
+  padding: 0 14px !important;
+  border: 1px solid #c7d8e6 !important;
+  border-radius: 10px !important;
+  color: #183f60 !important;
+  background: #fff !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+}
+
+.profile-edit-modal .profile-form-fields > label > input:disabled,
+.profile-edit-modal .profile-form-fields > label > input[readonly] {
+  color: #53728d !important;
+  background: #f2f6f9 !important;
+  opacity: 1 !important;
+}
+
+.profile-edit-modal .profile-form-fields > label > small {
+  grid-column: 1 / -1 !important;
+  grid-row: 3 !important;
+  display: block !important;
+  min-height: 32px !important;
+  margin: 9px 0 0 !important;
+  color: #758ba0 !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  line-height: 1.45 !important;
+}
+
+/* Reserve the same helper-text space in every field so both rows line up. */
+.profile-edit-modal .profile-form-fields > label:not(:has(small))::after {
+  content: "";
+  grid-column: 1 / -1;
+  grid-row: 3;
+  display: block;
+  min-height: 32px;
+  margin-top: 9px;
+}
+
+@media (max-width: 680px) {
+  .profile-edit-modal .profile-form-fields {
+    grid-template-columns: 1fr !important;
+    row-gap: 20px !important;
+  }
+
+  .profile-edit-modal .profile-form-fields > label {
+    grid-template-rows: 22px 48px auto !important;
+  }
+
+  .profile-edit-modal .profile-form-fields > label > small,
+  .profile-edit-modal .profile-form-fields > label:not(:has(small))::after {
+    min-height: 0 !important;
+  }
+}
