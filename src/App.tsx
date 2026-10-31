@@ -4970,6 +4970,7 @@ function ActiveClass({
   >("idle")
   const [lastCard, setLastCard] = useState("")
   const [liveAttendance, setLiveAttendance] = useState<any[]>([])
+  const [actualEnrolledCount, setActualEnrolledCount] = useState(0)
   const [qrExpanded, setQrExpanded] = useState(false)
 
   useEffect(() => {
@@ -5399,6 +5400,47 @@ function ActiveClass({
   }, [])
 
   useEffect(() => {
+    let active = true
+
+    const loadActualEnrolledCount = async () => {
+      const { count, error } = await supabase
+        .from("class_students")
+        .select("*", { count: "exact", head: true })
+        .eq("class_id", String(item.id))
+
+      if (!active) return
+      if (error) {
+        console.error("Unable to load actual class enrollment:", error)
+        return
+      }
+      setActualEnrolledCount(count ?? 0)
+    }
+
+    void loadActualEnrolledCount()
+    const channel = supabase
+      .channel(`live-class-enrollment-${item.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "class_students",
+          filter: `class_id=eq.${item.id}`,
+        },
+        () => void loadActualEnrolledCount(),
+      )
+      .subscribe()
+
+    const reloadOnFocus = () => void loadActualEnrolledCount()
+    window.addEventListener("focus", reloadOnFocus)
+    return () => {
+      active = false
+      window.removeEventListener("focus", reloadOnFocus)
+      void supabase.removeChannel(channel)
+    }
+  }, [item.id])
+
+  useEffect(() => {
     if (!attendanceSessionId) {
       setLiveAttendance([])
       return
@@ -5521,11 +5563,11 @@ function ActiveClass({
               <small>Late</small>
             </div>
             <div>
-              <strong>{Math.max(0, item.attendance - liveAttendance.length)}</strong>
+              <strong>{Math.max(0, actualEnrolledCount - liveAttendance.length)}</strong>
               <small>Not recorded</small>
             </div>
             <div>
-              <strong>{item.attendance}</strong>
+              <strong>{actualEnrolledCount}</strong>
               <small>Enrolled</small>
             </div>
           </div>
@@ -5680,10 +5722,10 @@ function ActiveClass({
                 </small>
                 <div className="progress-label">
                   <span>Attendance recorded</span>
-                  <strong>{liveAttendance.length} of {item.attendance}</strong>
+                  <strong>{liveAttendance.length} of {actualEnrolledCount}</strong>
                 </div>
                 <div className="progress">
-                  <span style={{ width: `${Math.min(100, item.attendance ? (liveAttendance.length / item.attendance) * 100 : 0)}%` }} />
+                  <span style={{ width: `${Math.min(100, actualEnrolledCount ? (liveAttendance.length / actualEnrolledCount) * 100 : 0)}%` }} />
                 </div>
               </section>
             ) : (
@@ -5882,7 +5924,7 @@ function ActiveClass({
             </div>
             <div className="qr-display-footer">
               <strong>{attendanceQrPayload ? `Refreshes in ${attendanceQrCountdown}s` : "Waiting for QR"}</strong>
-              <span>{liveAttendance.length} of {item.attendance} attendance recorded</span>
+              <span>{liveAttendance.length} of {actualEnrolledCount} attendance recorded</span>
             </div>
           </section>
         </div>
