@@ -796,6 +796,35 @@ function ClassCard({
   activity?: ActivityItem
 }) {
   const [now, setNow] = useState(() => new Date())
+  const [accessCodeCopied, setAccessCodeCopied] = useState(false)
+
+  const copyAccessCode = async () => {
+    const value = item.accessCode?.trim()
+    if (!value) return
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value)
+      } else {
+        const textarea = document.createElement("textarea")
+        textarea.value = value
+        textarea.setAttribute("readonly", "")
+        textarea.style.position = "fixed"
+        textarea.style.opacity = "0"
+        document.body.appendChild(textarea)
+        textarea.select()
+        const copied = document.execCommand("copy")
+        document.body.removeChild(textarea)
+        if (!copied) throw new Error("Copy command was blocked.")
+      }
+
+      setAccessCodeCopied(true)
+      window.setTimeout(() => setAccessCodeCopied(false), 1800)
+    } catch (error) {
+      console.error("Unable to copy class access code:", error)
+      window.prompt("Copy this class access code:", value)
+    }
+  }
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000)
@@ -855,6 +884,25 @@ function ClassCard({
       </div>
       <h3>{item.subject}</h3>
       <p className="class-code">{item.code}</p>
+      {item.accessCode ? (
+        <div className="class-access-code" aria-label="Student class access code">
+          <div>
+            <span>Class code</span>
+            <strong>{item.accessCode}</strong>
+          </div>
+          <button
+            type="button"
+            className={accessCodeCopied ? "class-code-copy copied" : "class-code-copy"}
+            onClick={() => void copyAccessCode()}
+            aria-label={`Copy class code ${item.accessCode}`}
+          >
+            <Icon name="clipboard" size={15} />
+            {accessCodeCopied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      ) : (
+        <p className="class-access-code-missing">Class code unavailable. Edit and save this class to generate one.</p>
+      )}
       <div className="class-meta">
         <span>
           <Icon name="clock" size={16} />
@@ -1664,262 +1712,20 @@ function QuickActionsFab({
   )
 }
 
-function OmrScannerModal({
-  onClose,
-  onSaveDraft,
-}: {
-  onClose: () => void
-  onSaveDraft: (studentId: string, assessmentId: string, score: number) => void
-}) {
-  const assessmentOptions = initialRecordAssessmentColumns.filter(
-    (assessment) => assessment.type === "Quiz" || assessment.type === "Exam",
-  )
-  const answerKeyAssessmentIds = ["quiz-1", "quiz-2", "midterm-exam"]
-  const [step, setStep] = useState<"setup" | "scanner" | "review" | "saved">(
-    "setup",
-  )
-  const [sectionId, setSectionId] = useState(recordSections[0].id)
-  const [assessmentId, setAssessmentId] = useState(assessmentOptions[0].id)
-  const [scanIndex, setScanIndex] = useState(0)
-  const selectedSection =
-    recordSections.find((section) => section.id === sectionId) ??
-    recordSections[0]
-  const selectedAssessment =
-    assessmentOptions.find((assessment) => assessment.id === assessmentId) ??
-    assessmentOptions[0]
-  const answerKeyAvailable = answerKeyAssessmentIds.includes(assessmentId)
-  const scannedStudent = students[scanIndex % students.length]
-  const proposedScore = [92, 86, 78, 95, 84][scanIndex % students.length]
-  const saveDraft = () => {
-    onSaveDraft(scannedStudent.id, selectedAssessment.id, proposedScore)
-    setStep("saved")
-  }
-  const scanNextPaper = () => {
-    setScanIndex((index) => index + 1)
-    setStep("scanner")
+const createClientId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID()
   }
 
-  return (
-    <div
-      className="modal-backdrop omr-backdrop"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-    >
-      <section
-        className="omr-scanner-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="omr-scanner-title"
-      >
-        <button
-          className="modal-close"
-          onClick={onClose}
-          aria-label="Close scanner"
-        >
-          ×
-        </button>
-        <div className="omr-modal-heading">
-          <span className="omr-modal-icon">
-            <Icon name="scan" size={22} />
-          </span>
-          <div>
-            <p className="eyebrow">OMR grading</p>
-            <h2 id="omr-scanner-title">Scan answer sheet</h2>
-            <p>Capture, review, and save each result as a gradebook draft.</p>
-          </div>
-        </div>
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0"))
+    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`
+  }
 
-        <ol className="omr-steps" aria-label="Scanner progress">
-          {["Set up", "Scan", "Review"].map((label, index) => {
-            const activeStep =
-              step === "saved"
-                ? 2
-                : step === "review"
-                  ? 2
-                  : step === "scanner"
-                    ? 1
-                    : 0
-            return (
-              <li
-                key={label}
-                className={index <= activeStep ? "active" : ""}
-                aria-current={index === activeStep ? "step" : undefined}
-              >
-                <span>{index + 1}</span>
-                {label}
-              </li>
-            )
-          })}
-        </ol>
-
-        {step === "setup" && (
-          <div className="omr-step-content">
-            <div className="omr-setup-grid">
-              <label>
-                Class section
-                <select
-                  value={sectionId}
-                  onChange={(event) => setSectionId(event.target.value)}
-                >
-                  {recordSections.map((section) => (
-                    <option key={section.id} value={section.id}>
-                      {section.code} · {section.subject}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Quiz or examination
-                <select
-                  value={assessmentId}
-                  onChange={(event) => setAssessmentId(event.target.value)}
-                >
-                  {assessmentOptions.map((assessment) => (
-                    <option key={assessment.id} value={assessment.id}>
-                      {assessment.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div
-              className={`omr-answer-key ${
-                answerKeyAvailable ? "ready" : "missing"
-              }`}
-              role="status"
-            >
-              <span>
-                <Icon name={answerKeyAvailable ? "check" : "more"} size={18} />
-              </span>
-              <div>
-                <strong>
-                  {answerKeyAvailable
-                    ? "Answer key ready"
-                    : "Answer key needed"}
-                </strong>
-                <small>
-                  {answerKeyAvailable
-                    ? `${selectedAssessment.label} has a verified answer key for ${selectedSection.code}.`
-                    : `Add an answer key for ${selectedAssessment.label} before scanning.`}
-                </small>
-              </div>
-            </div>
-            <button
-              className="primary-button omr-primary-action"
-              type="button"
-              disabled={!answerKeyAvailable}
-              onClick={() => setStep("scanner")}
-            >
-              <Icon name="scan" size={17} /> Open OMR scanner
-            </button>
-          </div>
-        )}
-
-        {step === "scanner" && (
-          <div className="omr-step-content">
-            <div className="omr-scan-preview" aria-label="OMR scanner ready">
-              <span className="omr-scan-corner top-left" />
-              <span className="omr-scan-corner top-right" />
-              <span className="omr-scan-corner bottom-left" />
-              <span className="omr-scan-corner bottom-right" />
-              <div className="omr-paper">
-                <span className="omr-paper-id">Student number</span>
-                <strong>{scannedStudent.id}</strong>
-                <div className="omr-bubble-grid" aria-hidden="true">
-                  {Array.from({ length: 25 }, (_, index) => (
-                    <i
-                      key={index}
-                      className={index % 5 === 1 ? "filled" : ""}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="omr-scan-line" />
-            </div>
-            <div className="omr-scan-status">
-              <span>
-                <i /> Scanner ready
-              </span>
-              <small>Place the next answer sheet inside the scan frame.</small>
-            </div>
-            <button
-              className="primary-button omr-primary-action"
-              type="button"
-              onClick={() => setStep("review")}
-            >
-              <Icon name="scan" size={17} /> Scan answer sheet
-            </button>
-          </div>
-        )}
-
-        {step === "review" && (
-          <div className="omr-step-content">
-            <div className="omr-result-card">
-              <span className="omr-result-label">Proposed score</span>
-              <strong>
-                {proposedScore}
-                <small>/ 100</small>
-              </strong>
-              <span className="status-pill">Ready to review</span>
-            </div>
-            <div className="omr-review-row">
-              <span className="summary-icon blue">
-                <Icon name="user" size={19} />
-              </span>
-              <div>
-                <strong>{scannedStudent.name}</strong>
-                <small>
-                  {scannedStudent.id} · {selectedSection.code} ·{" "}
-                  {selectedAssessment.label}
-                </small>
-              </div>
-              <span className="omr-match">25 / 25 fields read</span>
-            </div>
-            <div className="omr-review-note">
-              <Icon name="check" size={16} />
-              Review the detected student number and score before confirming.
-            </div>
-            <div className="omr-actions">
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => setStep("scanner")}
-              >
-                Rescan
-              </button>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={saveDraft}
-              >
-                <Icon name="check" size={16} /> Confirm as Draft
-              </button>
-            </div>
-          </div>
-        )}
-
-        {step === "saved" && (
-          <div className="omr-step-content omr-saved-state">
-            <span className="omr-saved-icon">
-              <Icon name="check" size={25} />
-            </span>
-            <h3>Score saved as Draft</h3>
-            <p>
-              {scannedStudent.name}'s {proposedScore}/100 for{" "}
-              {selectedAssessment.label} is ready in the gradebook for final
-              review.
-            </p>
-            <button
-              className="primary-button omr-primary-action"
-              type="button"
-              onClick={scanNextPaper}
-            >
-              <Icon name="scan" size={17} /> Scan next paper
-            </button>
-          </div>
-        )}
-      </section>
-    </div>
-  )
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 const generateStudentAccessCode = () => {
@@ -1939,7 +1745,7 @@ function AddClassModal({
 }) {
   const isEditing = Boolean(initialClass)
   const makeSchedule = (schedule?: Partial<ClassSchedule>): ClassSchedule => ({
-    id: schedule?.id ?? crypto.randomUUID(),
+    id: schedule?.id ?? createClientId(),
     meetingDays: schedule?.meetingDays ?? [],
     startTime: schedule?.startTime ?? "",
     endTime: schedule?.endTime ?? "",
@@ -1965,7 +1771,7 @@ function AddClassModal({
     initialClass?.schedules?.length ? initialClass.schedules : [legacySchedule],
   )
   const [saving, setSaving] = useState(false)
-  const [studentAccessCode] = useState(
+  const [studentAccessCode, setStudentAccessCode] = useState(
     () => initialClass?.accessCode || generateStudentAccessCode(),
   )
   const updateForm = (field: keyof typeof form, value: string) =>
@@ -1987,18 +1793,13 @@ function AddClassModal({
         schedule.id === scheduleId ? { ...schedule, ...changes } : schedule,
       ),
     )
-  const toggleScheduleDay = (scheduleId: string, day: string) =>
+  const selectScheduleDay = (scheduleId: string, day: string) =>
     setSchedules((current) =>
-      current.map((schedule) => {
-        if (schedule.id !== scheduleId) return schedule
-        const selected = schedule.meetingDays.includes(day)
-        return {
-          ...schedule,
-          meetingDays: selected
-            ? schedule.meetingDays.filter((value) => value !== day)
-            : [...schedule.meetingDays, day],
-        }
-      }),
+      current.map((schedule) =>
+        schedule.id === scheduleId
+          ? { ...schedule, meetingDays: [day] }
+          : schedule,
+      ),
     )
 
   const submitClass = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -2155,7 +1956,7 @@ function AddClassModal({
             </label>
           </div>
           <div className="form-section-title">Class schedules</div>
-          <p>Add another schedule when the same subject meets at a different time or room.</p>
+          <p>Select one class day per schedule. Add another schedule for each additional day, time, or room.</p>
           <div className="schedule-list">
             {schedules.map((schedule, index) => (
               <section className="schedule-form-card" key={schedule.id} style={{ border: "1px solid #dbe6f0", borderRadius: 12, padding: 16, marginBottom: 14, fontFamily: "inherit" }}>
@@ -2170,7 +1971,12 @@ function AddClassModal({
                       const selected = schedule.meetingDays.includes(day.value)
                       return (
                         <label key={day.value} className={selected ? "selected" : ""}>
-                          <input type="checkbox" checked={selected} onChange={() => toggleScheduleDay(schedule.id, day.value)} />
+                          <input
+                            type="radio"
+                            name={`schedule-day-${schedule.id}`}
+                            checked={selected}
+                            onChange={() => selectScheduleDay(schedule.id, day.value)}
+                          />
                           <span>{day.label}</span>
                         </label>
                       )
@@ -2193,8 +1999,18 @@ function AddClassModal({
           </div>
           <button type="button" className="secondary-button" style={{ fontFamily: "inherit" }} onClick={addSchedule}><Icon name="plus" size={16} /> Add another schedule</button>
           <label>Student access code
-            <input type="text" value={studentAccessCode} readOnly />
-            <small>This unique code is generated automatically. Students use it to join the class.</small>
+            <div className="class-access-code-field">
+              <input type="text" value={studentAccessCode} readOnly aria-label="Generated student access code" />
+              <button
+                type="button"
+                className="secondary-button class-code-generate"
+                onClick={() => setStudentAccessCode(generateStudentAccessCode())}
+                disabled={saving}
+              >
+                Generate code
+              </button>
+            </div>
+            <small>A code is generated automatically. Generate a new one before saving if needed. Students use this code to join the class.</small>
           </label>
           <label>Required materials or prerequisites
             <textarea value={form.requirements} onChange={(event) => updateForm("requirements", event.target.value)} placeholder="e.g. Laptop, network cable, and completed safety orientation" />
@@ -3062,7 +2878,11 @@ function RecordsPage({
           >
             <span>
               <small>Currently managing</small>
-              <strong>{sectionsLoading ? "Loading…" : selectedSection.code}</strong>
+              <strong>
+                {sectionsLoading
+                  ? "Loading..."
+                  : `${selectedSection.subject} - ${selectedSection.code}`}
+              </strong>
             </span>
             <Icon name="chevron" size={17} />
           </button>
@@ -4466,10 +4286,16 @@ const reminderFormValid = Boolean(
                       </span>
                       <h3>{a.title}</h3>
                       <p>
-                        {a.type} ·{" "}
-                        {reminderClasses.find((item) => item.id === a.classId)?.code ??
-                          "Unassigned class"}
+                        {(() => {
+                          const activityClass = reminderClasses.find(
+                            (item) => item.id === a.classId,
+                          )
+                          return activityClass
+                            ? `${activityClass.subject} - ${activityClass.code}`
+                            : "Unassigned class"
+                        })()}
                       </p>
+                      <small className="reminder-activity-type">{a.type}</small>
                       <small>
                         <Icon name="clock" size={15} />
                         {formatActivityTime(a.startTime)} –{" "}
@@ -5920,7 +5746,7 @@ function ActiveClass({
             <div className="qr-display-heading">
               <span>Live attendance</span>
               <h2 id="qr-display-title">Scan to check in</h2>
-              <p>{item.subject} · {item. section}</p>
+              <p>{item.subject} · {item.code}</p>
             </div>
             <div className="qr-display-code">
               {attendanceQrPayload ? (
@@ -6181,8 +6007,6 @@ function LandingPage({
         formData.get("department") ?? ""
       )
 
-      onRegistrationComplete()
-
       await registerFaculty({
         email,
         password,
@@ -6192,12 +6016,15 @@ function LandingPage({
       })
 
       // Supabase may create a session immediately when email confirmation is disabled.
-      // Registration must not grant dashboard access, so always end that session.
-      await supabase.auth.signOut({ scope: "local" })
+      // Registration must not grant dashboard access, so always end that session first.
+      const { error: signOutError } = await supabase.auth.signOut({ scope: "local" })
+      if (signOutError) throw signOutError
+
       form.reset()
       setAuthMode("signIn")
       setShowPassword(false)
       setShowConfirmation(false)
+      onRegistrationComplete()
 
       showMessage(
   "Faculty account created. Please sign in using the account you just created.",
