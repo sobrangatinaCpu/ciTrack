@@ -28,7 +28,8 @@ type OmrAssessment = {
   omr_answer_keys?: { answers: Choice[]; verified_at: string | null } | null
 }
 
-const EMPTY_ANSWERS: (Choice | "")[] = Array.from({ length: 50 }, () => "")
+const MAX_ITEMS = 50
+const EMPTY_ANSWERS: (Choice | "")[] = Array.from({ length: MAX_ITEMS }, () => "")
 const CHOICES: Choice[] = ["A", "B", "C", "D"]
 
 function classLabel(row: Record<string, unknown>) {
@@ -56,7 +57,7 @@ function localDateValue() {
   ].join("-")
 }
 
-export default function OmrManager({ onClose }: { onClose?: () => void }) {
+export default function OmrManager({ onClose, autoOpenCamera = false, scannerOnly = false }: { onClose?: () => void; autoOpenCamera?: boolean; scannerOnly?: boolean }) {
   const [facultyId, setFacultyId] = useState("")
   const [classes, setClasses] = useState<FacultyClass[]>([])
   const [assessments, setAssessments] = useState<OmrAssessment[]>([])
@@ -66,6 +67,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
   const [assessmentType, setAssessmentType] = useState<AssessmentType>("quiz")
   const [testId, setTestId] = useState(randomTestId())
   const [pointsPerItem, setPointsPerItem] = useState(1)
+  const [itemCount, setItemCount] = useState(50)
   const [scheduledDate, setScheduledDate] = useState(localDateValue())
   const [startTime, setStartTime] = useState("09:00")
   const [endTime, setEndTime] = useState("10:00")
@@ -80,7 +82,8 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const uploadInputRef = useRef<HTMLInputElement>(null)
 
-  const completed = useMemo(() => answers.filter(Boolean).length, [answers])
+  const visibleAnswers = useMemo(() => answers.slice(0, itemCount), [answers, itemCount])
+  const completed = useMemo(() => visibleAnswers.filter(Boolean).length, [visibleAnswers])
   const selectedAssessment = useMemo(
     () => assessments.find((item) => item.id === selectedId) ?? null,
     [assessments, selectedId],
@@ -127,6 +130,12 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
   }, [loadData])
 
   useEffect(() => {
+    if (!autoOpenCamera || loading) return
+    const timer = window.setTimeout(() => cameraInputRef.current?.click(), 120)
+    return () => window.clearTimeout(timer)
+  }, [autoOpenCamera, loading])
+
+  useEffect(() => {
     return () => {
       if (scanPreview) URL.revokeObjectURL(scanPreview)
     }
@@ -138,6 +147,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
     setAssessmentType("quiz")
     setTestId(randomTestId())
     setPointsPerItem(1)
+    setItemCount(50)
     setScheduledDate(localDateValue())
     setStartTime("09:00")
     setEndTime("10:00")
@@ -156,6 +166,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
     setAssessmentType(item.assessment_type)
     setTestId(item.test_id)
     setPointsPerItem(Number(item.points_per_item))
+    setItemCount(Math.min(MAX_ITEMS, Math.max(1, Number(item.item_count) || 50)))
     setScheduledDate(item.scheduled_date || localDateValue())
     setStartTime(String(item.start_time || "09:00").slice(0, 5))
     setEndTime(String(item.end_time || "10:00").slice(0, 5))
@@ -163,7 +174,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
       ? item.omr_answer_keys[0]
       : item.omr_answer_keys
     const saved = key?.answers ?? []
-    setAnswers(Array.from({ length: 50 }, (_, index) => saved[index] ?? ""))
+    setAnswers(Array.from({ length: MAX_ITEMS }, (_, index) => saved[index] ?? ""))
     setMessage("")
     setError("")
   }
@@ -183,7 +194,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
     if (!/^\d{3}$/.test(testId)) return setError("Test ID must contain exactly three digits.")
     if (!scheduledDate || !startTime || !endTime) return setError("Complete the activity date and time.")
     if (endTime <= startTime) return setError("End time must be later than start time.")
-    if (completed !== 50) return setError(`Complete all 50 answers. ${50 - completed} remaining.`)
+    if (completed !== itemCount) return setError(`Complete all ${itemCount} answers. ${itemCount - completed} remaining.`)
 
     setSaving(true)
     try {
@@ -194,7 +205,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
         title: title.trim(),
         assessment_type: assessmentType,
         test_id: testId,
-        item_count: 50,
+        item_count: itemCount,
         points_per_item: pointsPerItem,
         scheduled_date: scheduledDate,
         start_time: startTime,
@@ -222,7 +233,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
         {
           assessment_id: assessmentId,
           faculty_id: facultyId,
-          answers,
+          answers: answers.slice(0, itemCount),
           verified_at: new Date().toISOString(),
         },
         { onConflict: "assessment_id" },
@@ -285,7 +296,11 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
   }
 
   async function saveScanDraft() {
-    if (!selectedAssessment || selectedAssessment.status !== "open") {
+    if (!selectedAssessment) {
+      setError("Select an assessment before capturing an OMR sheet.")
+      return
+    }
+    if (!scannerOnly && selectedAssessment.status !== "open") {
       setError("Select an open assessment before uploading an OMR sheet.")
       return
     }
@@ -312,7 +327,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
         detected_test_id: selectedAssessment.test_id,
         detected_answers: [],
         correct_count: 0,
-        blank_count: 50,
+        blank_count: selectedAssessment.item_count,
         multiple_count: 0,
         proposed_score: 0,
         confidence: 0,
@@ -335,7 +350,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
   }
 
   async function setStatus(status: "open" | "closed") {
-    if (!selectedId || completed !== 50) return
+    if (!selectedId || completed !== itemCount) return
     setSaving(true)
     setError("")
     try {
@@ -344,14 +359,112 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
         .update({ status })
         .eq("id", selectedId)
       if (statusError) throw statusError
-      setMessage(status === "open" ? "Assessment opened for scanning." : "Assessment closed.")
+      setMessage(status === "open" ? "Camera ready for this assessment." : "Assessment closed.")
       await loadData()
       setSelectedId(selectedId)
+      if (status === "open") window.setTimeout(() => cameraInputRef.current?.click(), 80)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to change assessment status.")
     } finally {
       setSaving(false)
     }
+  }
+
+  if (scannerOnly) {
+    const classAssessments = assessments.filter((assessment) => assessment.class_id === classId)
+
+    return (
+      <div className="omr-shell" role="dialog" aria-modal="true" aria-labelledby="omr-scanner-title">
+        <div className="omr-panel omr-scanner-only-panel">
+          <header className="omr-header">
+            <div>
+              <p className="omr-eyebrow">Faculty OMR scanner</p>
+              <h2 id="omr-scanner-title">Scan answer sheet</h2>
+              <p>Select the class and saved assessment, then open the camera.</p>
+            </div>
+            {onClose && <button className="omr-icon-button" type="button" onClick={onClose} aria-label="Close OMR scanner">X</button>}
+          </header>
+
+          {error && <div className="omr-alert omr-alert-error" role="alert">{error}</div>}
+          {message && <div className="omr-alert omr-alert-success" role="status">{message}</div>}
+
+          <section className="omr-scanner-only-content">
+            <div className="omr-card">
+              <div className="omr-section-heading">
+                <div><span>1</span><h3>Select assessment</h3></div>
+              </div>
+              <div className="omr-fields">
+                <label>Subject and section
+                  <select
+                    value={classId}
+                    onChange={(event) => {
+                      setClassId(event.target.value)
+                      setSelectedId("")
+                      clearScan()
+                    }}
+                    disabled={loading || uploadingScan}
+                  >
+                    <option value="">Select class</option>
+                    {classes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                  </select>
+                </label>
+                <label>Assessment
+                  <select
+                    value={selectedId}
+                    onChange={(event) => {
+                      selectAssessment(event.target.value)
+                      clearScan()
+                    }}
+                    disabled={!classId || loading || uploadingScan}
+                  >
+                    <option value="">Select saved assessment</option>
+                    {classAssessments.map((assessment) => (
+                      <option key={assessment.id} value={assessment.id}>
+                        {assessment.title} - {assessment.item_count} items
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {classId && !loading && classAssessments.length === 0 && (
+                <p className="omr-scanner-note">No saved Quiz or Exam exists for this class. Create one from Activities using Add assessment.</p>
+              )}
+            </div>
+
+            <div className="omr-card">
+              <div className="omr-section-heading">
+                <div><span>2</span><h3>Open camera and scan</h3></div>
+                {selectedAssessment && <b>{selectedAssessment.item_count} items</b>}
+              </div>
+              <p className="omr-scan-help">Keep the complete OMR paper inside the camera frame and make sure all four alignment markers are visible.</p>
+              <input ref={cameraInputRef} className="omr-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => chooseScan(event.target.files?.[0])} />
+              <input ref={uploadInputRef} className="omr-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => chooseScan(event.target.files?.[0])} />
+              <div className="omr-capture-buttons">
+                <button type="button" className="omr-primary" onClick={() => cameraInputRef.current?.click()} disabled={!selectedAssessment || uploadingScan}>Open camera</button>
+                <button type="button" className="omr-secondary" onClick={() => uploadInputRef.current?.click()} disabled={!selectedAssessment || uploadingScan}>Choose image</button>
+              </div>
+
+              {scanPreview ? (
+                <div className="omr-scan-preview">
+                  <img src={scanPreview} alt="Selected OMR answer sheet preview" />
+                  <div>
+                    <strong>{scanFile?.name}</strong>
+                    <span>{scanFile ? `${(scanFile.size / 1024 / 1024).toFixed(2)} MB` : ""}</span>
+                    <p>Confirm the correct subject and assessment before saving this scan.</p>
+                    <div className="omr-preview-actions">
+                      <button type="button" className="omr-secondary" onClick={clearScan} disabled={uploadingScan}>Retake</button>
+                      <button type="button" className="omr-primary" onClick={() => void saveScanDraft()} disabled={uploadingScan}>{uploadingScan ? "Uploading..." : "Save scan draft"}</button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="omr-scan-empty">Select a subject and assessment, then open the camera.</div>
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -361,7 +474,7 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
           <div>
             <p className="omr-eyebrow">Faculty OMR</p>
             <h2 id="omr-title">Assessment and answer key</h2>
-            <p>Create the test first. Camera scanning is enabled after all 50 answers are verified.</p>
+            <p>Create the test first. Set the number of items, complete the answer key, then open the camera scanner.</p>
           </div>
           {onClose && <button className="omr-icon-button" type="button" onClick={onClose} aria-label="Close OMR">X</button>}
         </header>
@@ -383,8 +496,9 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
                     onClick={() => selectAssessment(item.id)}
                   >
                     <strong>{item.title}</strong>
-                    <span>{item.assessment_type.toUpperCase()} - Test {item.test_id}</span>
+                    <span>{item.assessment_type.toUpperCase()} - {item.item_count} items - Test {item.test_id}</span>
                     <small>{item.status.replace("_", " ")}</small>
+                    <span className="omr-assessment-edit">Edit assessment</span>
                   </button>
                 ))}
               </div>
@@ -427,6 +541,9 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
                     <button type="button" onClick={() => setTestId(randomTestId())} disabled={saving}>Generate</button>
                   </div>
                 </label>
+                <label>Number of items
+                  <input type="text" inputMode="numeric" pattern="[0-9]*" value={itemCount} onChange={(event) => { const digits = event.target.value.replace(/\D/g, "").slice(0, 2); setItemCount(digits ? Math.min(MAX_ITEMS, Math.max(1, Number(digits))) : 1) }} disabled={saving} />
+                </label>
                 <label>Points per item
                   <input type="number" min="0.01" step="0.01" value={pointsPerItem} onChange={(event) => setPointsPerItem(Math.max(0.01, Number(event.target.value) || 1))} disabled={saving} />
                 </label>
@@ -435,12 +552,12 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
 
             <section className="omr-card">
               <div className="omr-section-heading">
-                <div><span>2</span><h3>50-item answer key</h3></div>
-                <b>{completed}/50 complete</b>
+                <div><span>2</span><h3>{itemCount}-item answer key</h3></div>
+                <b>{completed}/{itemCount} complete</b>
               </div>
-              <div className="omr-progress"><i style={{ width: `${completed * 2}%` }} /></div>
+              <div className="omr-progress"><i style={{ width: `${itemCount ? (completed / itemCount) * 100 : 0}%` }} /></div>
               <div className="omr-answer-grid">
-                {answers.map((answer, index) => (
+                {visibleAnswers.map((answer, index) => (
                   <fieldset key={index} className={answer ? "omr-question complete" : "omr-question"}>
                     <legend>{index + 1}</legend>
                     {CHOICES.map((choice) => (
@@ -491,10 +608,13 @@ export default function OmrManager({ onClose }: { onClose?: () => void }) {
             <footer className="omr-actions">
               <button type="button" className="omr-secondary" onClick={startNew} disabled={saving}>Clear</button>
               {selectedId && selectedAssessment?.status !== "open" && (
-                <button type="button" className="omr-secondary" onClick={() => void setStatus("open")} disabled={saving || completed !== 50}>Open scanner</button>
+                <button type="button" className="omr-secondary" onClick={() => void setStatus("open")} disabled={saving || completed !== itemCount}>Open scanner</button>
               )}
               {selectedId && selectedAssessment?.status === "open" && (
-                <button type="button" className="omr-secondary" onClick={() => void setStatus("closed")} disabled={saving}>Close assessment</button>
+                <>
+                  <button type="button" className="omr-secondary" onClick={() => cameraInputRef.current?.click()} disabled={saving || uploadingScan}>Open scanner</button>
+                  <button type="button" className="omr-secondary" onClick={() => void setStatus("closed")} disabled={saving}>Close assessment</button>
+                </>
               )}
               <button type="submit" className="omr-primary" disabled={saving || loading}>{saving ? "Saving..." : selectedId ? "Update answer key" : "Save answer key"}</button>
             </footer>

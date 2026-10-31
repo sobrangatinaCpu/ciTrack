@@ -16,3 +16,10 @@
 .omr-scan-help{margin:-6px 0 16px;color:#64748b;line-height:1.55}.omr-file-input{display:none}.omr-capture-buttons{display:flex;flex-wrap:wrap;gap:10px}.omr-scan-empty{margin-top:16px;padding:28px;border:2px dashed #cbd5e1;border-radius:14px;text-align:center;color:#64748b;background:#f8fafc}.omr-scan-preview{display:grid;grid-template-columns:minmax(180px,320px) 1fr;gap:18px;align-items:start;margin-top:16px;padding:14px;border:1px solid #dbe3ef;border-radius:14px;background:#f8fafc}.omr-scan-preview img{display:block;width:100%;max-height:420px;object-fit:contain;border-radius:10px;background:#e2e8f0}.omr-scan-preview>div{display:grid;gap:8px}.omr-scan-preview span,.omr-scan-preview p{color:#64748b}.omr-preview-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
 @media(max-width:650px){.omr-scan-preview{grid-template-columns:1fr}.omr-capture-buttons button,.omr-preview-actions button{flex:1 1 45%}}
 @media(prefers-color-scheme:dark){.omr-scan-help,.omr-scan-preview span,.omr-scan-preview p,.omr-scan-empty{color:#94a3b8}.omr-scan-empty,.omr-scan-preview{background:#0f172a;border-color:#334155}.omr-scan-preview img{background:#1e293b}}
+
+/* Quick Action OMR scanner: scanning only, assessment setup stays in Activities */
+.omr-scanner-only-panel{width:min(820px,100%)}
+.omr-scanner-only-content{display:grid;gap:18px;padding:20px}
+.omr-scanner-note{margin:14px 0 0;padding:11px 12px;border:1px solid #f2cf8b;border-radius:10px;background:#fff9e9;color:#815b14;font-weight:700}
+@media(max-width:600px){.omr-scanner-only-content{padding:12px}.omr-scanner-only-panel .omr-fields{grid-template-columns:1fr}}
+@media(prefers-color-scheme:dark){.omr-scanner-note{border-color:#854d0e;background:#422006;color:#fde68a}}

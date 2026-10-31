@@ -3,7 +3,7 @@ import { QRCodeCanvas } from "qrcode.react"
 import { supabase } from './lib/supabase'
 import { useAttendanceQr } from "./useAttendanceQr"
 import {loginFaculty, registerFaculty,} from "./lib/auth"
-import OmrManager from "./OmrManager"
+import OmrScanner from "./OmrScanner"
 
 const citLogo = `${import.meta.env.BASE_URL}cit.png`
 const citBuilding = `${import.meta.env.BASE_URL}citbuild.jpg` 
@@ -283,6 +283,10 @@ type ActivityItem = {
   endTime: string
   participation: string
   groups: ActivityGroup[]
+  itemCount: number
+  pointsPerItem: number
+  omrAssessmentId?: string
+  answerKey: string[]
 }
 
 const dashboardDate = "2026-10-23"
@@ -298,6 +302,10 @@ const createActivityDraft = (): ActivityItem => ({
   endTime: "10:00",
   participation: "Individual",
   groups: [],
+  itemCount: 50,
+  pointsPerItem: 1,
+  omrAssessmentId: undefined,
+  answerKey: Array.from({ length: 50 }, () => ""),
 })
 
 const formatActivityTime = (value: string) => {
@@ -1172,7 +1180,7 @@ function Dashboard({
       const [remindersResult, concernsResult] = await Promise.all([
         supabase
           .from("faculty_reminders")
-          .select("id, class_id, reminder_date, title, activity_type, start_time, end_time, participation, groups")
+          .select("id, class_id, reminder_date, title, activity_type, start_time, end_time, participation, groups, item_count, points_per_item, omr_assessment_id")
           .eq("faculty_id", user.id)
           .order("reminder_date", { ascending: true }),
         supabase
@@ -1219,6 +1227,19 @@ function Dashboard({
   const [calendarNow, setCalendarNow] = useState(() => new Date())
   const today = calendarNow
   const todayKey = toLocalDateKey(today)
+  const currentTimeKey = `${String(dashboardNow.getHours()).padStart(2, "0")}:${String(dashboardNow.getMinutes()).padStart(2, "0")}`
+  const dashboardPendingActivities = dashboardReminders.filter((activity) =>
+    activity.date === todayKey && (!activity.endTime || activity.endTime > currentTimeKey),
+  )
+  const dashboardAttentionCount = dashboardPendingActivities.length + dashboardOpenConcerns
+  const dashboardAttentionLabel = [
+    dashboardPendingActivities.length > 0
+      ? `${dashboardPendingActivities.length} ${dashboardPendingActivities.length === 1 ? "activity" : "activities"}`
+      : "",
+    dashboardOpenConcerns > 0
+      ? `${dashboardOpenConcerns} ${dashboardOpenConcerns === 1 ? "request" : "requests"}`
+      : "",
+  ].filter(Boolean).join(" · ")
   const [selectedDateKey, setSelectedDateKey] = useState(todayKey)
 
   useEffect(() => {
@@ -1502,13 +1523,19 @@ function Dashboard({
               <small>No records waiting for review</small>
             </span>
           </button>
-          <button onClick={() => setPage("activities")}>
+          <button
+            onClick={() => {
+              sessionStorage.setItem("activities-focus", "today-activities")
+              setPage("activities")
+            }}
+            aria-label="Open today's activities and student requests"
+          >
             <span className="summary-icon blue">
-              <Icon name="users" />
+              <Icon name="calendar" />
             </span>
             <span>
-              <strong>{dashboardOpenConcerns} {dashboardOpenConcerns === 1 ? "concern" : "concerns"}</strong>
-              <small>{dashboardOpenConcerns > 0 ? "Need your attention" : "No open concerns"}</small>
+              <strong>{dashboardAttentionCount} {dashboardAttentionCount === 1 ? "reminder" : "reminders"}</strong>
+              <small>{dashboardAttentionCount > 0 ? dashboardAttentionLabel : "No activities or requests pending"}</small>
             </span>
           </button>
         </div>
@@ -3851,6 +3878,10 @@ function ActivitiesPage({
     endTime: String(row.end_time ?? "").slice(0, 5),
     participation: String(row.participation ?? "Individual"),
     groups: Array.isArray(row.groups) ? row.groups : [],
+    itemCount: Math.min(50, Math.max(1, Number(row.item_count) || 50)),
+    pointsPerItem: Math.max(0.01, Number(row.points_per_item) || 1),
+    omrAssessmentId: row.omr_assessment_id ? String(row.omr_assessment_id) : undefined,
+    answerKey: Array.from({ length: 50 }, () => ""),
   })
 
   const loadReminderClasses = async () => {
@@ -3883,7 +3914,7 @@ function ActivitiesPage({
     }
     const { data, error } = await supabase
       .from("faculty_reminders")
-      .select("id, class_id, reminder_date, title, activity_type, start_time, end_time, participation, groups")
+      .select("id, class_id, reminder_date, title, activity_type, start_time, end_time, participation, groups, item_count, points_per_item, omr_assessment_id")
       .eq("faculty_id", user.id)
       .order("reminder_date", { ascending: true })
       .order("start_time", { ascending: true })
@@ -4092,6 +4123,30 @@ function ActivitiesPage({
       }),
     }))
 
+  const openAssessmentEditor = async (activity: ActivityItem, index: number) => {
+    const nextDraft: ActivityItem = {
+      ...activity,
+      groups: activity.groups.map((group) => ({ ...group, studentIds: [...group.studentIds] })),
+      answerKey: Array.from({ length: 50 }, (_, answerIndex) => activity.answerKey?.[answerIndex] ?? ""),
+    }
+
+    if (activity.omrAssessmentId && (activity.type === "Quiz" || activity.type === "Exam")) {
+      const { data, error } = await supabase
+        .from("omr_answer_keys")
+        .select("answers")
+        .eq("assessment_id", activity.omrAssessmentId)
+        .maybeSingle()
+
+      if (error) showToast(`Unable to load answer key: ${error.message}`, "error")
+      const savedAnswers = Array.isArray(data?.answers) ? data.answers : []
+      nextDraft.answerKey = Array.from({ length: 50 }, (_, answerIndex) => String(savedAnswers[answerIndex] ?? ""))
+    }
+
+    setDraft(nextDraft)
+    setActiveGroupId(null)
+    setEditing(index)
+  }
+
   const saveReminder = async () => {
     if (!draft.title.trim()) {
       showToast("Enter a reminder title.", "error")
@@ -4113,6 +4168,20 @@ function ActivitiesPage({
       showToast("Add at least one group for a group activity.", "error")
       return
     }
+    if (draft.itemCount < 1 || draft.itemCount > 50) {
+      showToast("Number of items must be between 1 and 50.", "error")
+      return
+    }
+    if (draft.pointsPerItem <= 0) {
+      showToast("Points per item must be greater than zero.", "error")
+      return
+    }
+    const requiresAnswerKey = draft.type === "Quiz" || draft.type === "Exam"
+    const completedAnswers = draft.answerKey.slice(0, draft.itemCount).filter(Boolean).length
+    if (requiresAnswerKey && completedAnswers !== draft.itemCount) {
+      showToast(`Complete all ${draft.itemCount} answer-key items before saving.`, "error")
+      return
+    }
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -4122,6 +4191,72 @@ function ActivitiesPage({
 
     setReminderSaving(true)
     setReminderNotice("")
+    let omrAssessmentId = draft.omrAssessmentId
+    const isOmrAssessment = draft.type === "Quiz" || draft.type === "Exam"
+
+    if (isOmrAssessment) {
+      const omrPayload = {
+        faculty_id: user.id,
+        class_id: String(draft.classId),
+        title: draft.title.trim(),
+        assessment_type: draft.type.toLowerCase(),
+        item_count: draft.itemCount,
+        points_per_item: draft.pointsPerItem,
+        scheduled_date: draft.date,
+        start_time: draft.startTime,
+        end_time: draft.endTime,
+      }
+
+      if (omrAssessmentId) {
+        const { error: omrUpdateError } = await supabase
+          .from("omr_assessments")
+          .update(omrPayload)
+          .eq("id", omrAssessmentId)
+          .eq("faculty_id", user.id)
+        if (omrUpdateError) {
+          setReminderSaving(false)
+          showToast(`Unable to update OMR assessment: ${omrUpdateError.message}`, "error")
+          return
+        }
+      } else {
+        let created: { id: string } | null = null
+        let createError: any = null
+        for (let attempt = 0; attempt < 8 && !created; attempt += 1) {
+          const testId = String(Math.floor(100 + Math.random() * 900))
+          const result = await supabase
+            .from("omr_assessments")
+            .insert({ ...omrPayload, test_id: testId, status: "draft" })
+            .select("id")
+            .single()
+          if (!result.error) created = result.data
+          else if (result.error.code !== "23505") createError = result.error
+        }
+        if (!created) {
+          setReminderSaving(false)
+          showToast(`Unable to create OMR assessment: ${createError?.message ?? "No unique Test ID was available."}`, "error")
+          return
+        }
+        omrAssessmentId = created.id
+      }
+    }
+
+    if (isOmrAssessment && omrAssessmentId) {
+      const { error: answerKeyError } = await supabase
+        .from("omr_answer_keys")
+        .upsert({
+          assessment_id: omrAssessmentId,
+          faculty_id: user.id,
+          answers: draft.answerKey.slice(0, draft.itemCount),
+          verified_at: new Date().toISOString(),
+        }, { onConflict: "assessment_id" })
+
+      if (answerKeyError) {
+        setReminderSaving(false)
+        showToast(`Unable to save answer key: ${answerKeyError.message}`, "error")
+        return
+      }
+    }
+
     const payload = {
       faculty_id: user.id,
       class_id: String(draft.classId),
@@ -4132,6 +4267,9 @@ function ActivitiesPage({
       end_time: draft.endTime,
       participation: draft.participation,
       groups: draft.groups,
+      item_count: draft.itemCount,
+      points_per_item: draft.pointsPerItem,
+      omr_assessment_id: isOmrAssessment ? omrAssessmentId : null,
       updated_at: new Date().toISOString(),
     }
 
@@ -4141,11 +4279,11 @@ function ActivitiesPage({
 
     setReminderSaving(false)
     if (result.error) {
-      showToast(`Unable to save reminder: ${result.error.message}`, "error")
+      showToast(`Unable to save assessment: ${result.error.message}`, "error")
       return
     }
     setEditing(null)
-    showToast(draft.id ? "Reminder updated successfully." : "Reminder added successfully.")
+    showToast(draft.id ? "Assessment updated successfully." : "Assessment added successfully.")
     await loadReminders()
   }
 
@@ -4179,8 +4317,25 @@ const reminderFormValid = Boolean(
     draft.startTime &&
     draft.endTime &&
     draft.endTime > draft.startTime &&
+    draft.itemCount >= 1 && draft.itemCount <= 50 &&
+    draft.pointsPerItem > 0 &&
     (draft.participation !== "Group" || draft.groups.length > 0),
   )
+
+  useEffect(() => {
+    const focusTarget = sessionStorage.getItem("activities-focus")
+    if (!focusTarget) return
+
+    sessionStorage.removeItem("activities-focus")
+    const targetId = focusTarget === "student-concerns" ? "student-concerns" : "scheduled-activities"
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(targetId)
+      target?.scrollIntoView({ behavior: "smooth", block: "start" })
+      target?.focus({ preventScroll: true })
+    }, 120)
+
+    return () => window.clearTimeout(timer)
+  }, [])
 
   return (
     <>
@@ -4189,22 +4344,29 @@ const reminderFormValid = Boolean(
         onNotify={() => setPage("notifications")}
         onProfile={() => setPage("profile")}
       />
-      <div className="page-intro">
+      <div className="page-intro activities-page-intro">
         <div>
           <p className="eyebrow">Faculty calendar</p>
           <h2>Assessments & reminders</h2>
           <p>Schedule exams, quizzes, and activities for your classes.</p>
         </div>
-        <button className="primary-button" onClick={openNewReminder} disabled={reminderClasses.length === 0}>
-          <Icon name="plus" /> {reminderClasses.length === 0 ? "Create a class first" : "Add reminder"}
-        </button>
+
       </div>
       <div className="activities-workspace">
-        <section className="concerns-section" aria-labelledby="concerns-title">
+        <section id="scheduled-activities" className="activities-frame-toolbar" aria-label="Assessment and reminder actions" tabIndex={-1}>
+          <div>
+            <p className="eyebrow">Faculty calendar</p>
+            <h3>Scheduled assessments and reminders</h3>
+          </div>
+          <button className="primary-button" onClick={openNewReminder} disabled={reminderClasses.length === 0}>
+            <Icon name="plus" /> {reminderClasses.length === 0 ? "Create a class first" : "Add assessment"}
+          </button>
+        </section>
+        <section id="student-concerns" className="concerns-section" aria-labelledby="concerns-title" tabIndex={-1}>
           <div className="concerns-heading">
             <div>
-              <p className="eyebrow">Student requests</p>
-              <h2 id="concerns-title">Student Concerns / Requests</h2>
+              <p className="eyebrow">Activities inbox</p>
+              <h2 id="concerns-title">Student concerns & requests</h2>
             </div>
             <span className="concerns-count">
               {
@@ -4383,7 +4545,7 @@ const reminderFormValid = Boolean(
           {remindersLoading ? (
             <p className="reminder-list-state">Loading reminders...</p>
           ) : reminders.length === 0 ? (
-            <p className="reminder-list-state">No reminders yet. Select Add reminder to create one.</p>
+            <p className="reminder-list-state">No reminders yet. Select Add assessment to create one.</p>
           ) : reminders.map((a, i) => (
             <article key={a.id ?? `${a.title}-${i}`}>
               {(() => {
@@ -4432,11 +4594,7 @@ const reminderFormValid = Boolean(
                       <button
                         type="button"
                         aria-label={`Edit ${a.title}`}
-                        onClick={() => {
-                          setDraft({ ...a, groups: a.groups.map((group) => ({ ...group, studentIds: [...group.studentIds] })) })
-                          setActiveGroupId(null)
-                          setEditing(i)
-                        }}
+                        onClick={() => void openAssessmentEditor(a, i)}
                       >
                         <Icon name="edit" size={15} />
                         Edit
@@ -4497,9 +4655,9 @@ const reminderFormValid = Boolean(
             </button>
             <p className="eyebrow">Faculty calendar</p>
             <h2 id="reminder-title">
-              {editing === -1 ? "Add a reminder" : "Edit reminder"}
+              {editing === -1 ? "Add assessment" : "Edit assessment"}
             </h2>
-            <p>Create a scheduled exam, quiz, or class activity.</p>
+            <p>Create or edit an assessment. Quiz and Exam settings are shared with the OMR scanner.</p>
             <label>
               <span className="reminder-field-label">Title <em>Required</em></span>
               <input
@@ -4521,6 +4679,36 @@ const reminderFormValid = Boolean(
                 ))}
               </select>
             </label>
+            {(draft.type === "Quiz" || draft.type === "Exam") && (
+              <div className="reminder-fields omr-activity-settings">
+                <label>
+                  <span className="reminder-field-label">Number of items <em>Required</em></span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.itemCount}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onChange={(event) => {
+                      const digits = event.target.value.replace(/\D/g, "").slice(0, 2)
+                      setDraft({ ...draft, itemCount: digits ? Math.min(50, Math.max(1, Number(digits))) : 1 })
+                    }}
+                    required
+                  />
+                </label>
+                <label>
+                  <span className="reminder-field-label">Points per item <em>Required</em></span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={draft.pointsPerItem}
+                    onChange={(event) => setDraft({ ...draft, pointsPerItem: Math.max(0.01, Number(event.target.value) || 1) })}
+                    required
+                  />
+                </label>
+              </div>
+            )}
             <label>
               <span className="reminder-field-label">Class <em>Required</em></span>
               <select required
@@ -4652,6 +4840,56 @@ const reminderFormValid = Boolean(
                 )}
               </section>
             )}
+            {(draft.type === "Quiz" || draft.type === "Exam") && (
+              <section className="activity-answer-key" aria-labelledby="activity-answer-key-title">
+                <div className="activity-answer-key-heading">
+                  <div>
+                    <span className="eyebrow">OMR answer key</span>
+                    <div className="activity-answer-key-title-row">
+                      <input
+                        className="activity-answer-key-item-input"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        aria-label="Number of OMR answer key items"
+                        value={draft.itemCount}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onChange={(event) => {
+                          const digits = event.target.value.replace(/\D/g, "").slice(0, 2)
+                          const nextCount = digits ? Math.min(50, Math.max(1, Number(digits))) : 1
+                          setDraft((current) => ({ ...current, itemCount: nextCount }))
+                        }}
+                      />
+                      <h3 id="activity-answer-key-title">items in the answer key</h3>
+                    </div>
+                    <small>Type a value from 1 to 50. The answer grid updates automatically.</small>
+                  </div>
+                  <strong>{draft.answerKey.slice(0, draft.itemCount).filter(Boolean).length}/{draft.itemCount} complete</strong>
+                </div>
+                <div className="activity-answer-key-progress"><i style={{ width: `${draft.itemCount ? (draft.answerKey.slice(0, draft.itemCount).filter(Boolean).length / draft.itemCount) * 100 : 0}%` }} /></div>
+                <div className="activity-answer-key-grid">
+                  {draft.answerKey.slice(0, draft.itemCount).map((answer, answerIndex) => (
+                    <fieldset key={answerIndex} className={answer ? "complete" : ""}>
+                      <legend>{answerIndex + 1}</legend>
+                      {(["A", "B", "C", "D"] as const).map((choice) => (
+                        <label key={choice}>
+                          <input
+                            type="radio"
+                            name={`activity-answer-${answerIndex}`}
+                            checked={answer === choice}
+                            onChange={() => setDraft((current) => ({
+                              ...current,
+                              answerKey: current.answerKey.map((value, index) => index === answerIndex ? choice : value),
+                            }))}
+                          />
+                          <span>{choice}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  ))}
+                </div>
+              </section>
+            )}
             <label>
               <span className="reminder-field-label">Date <em>Required</em></span>
               <input
@@ -4693,9 +4931,9 @@ const reminderFormValid = Boolean(
               type="button"
               className="primary-button"
               onClick={() => void saveReminder()}
-              disabled={reminderSaving}
+              disabled={reminderSaving || ((draft.type === "Quiz" || draft.type === "Exam") && draft.answerKey.slice(0, draft.itemCount).filter(Boolean).length !== draft.itemCount)}
             >
-              {reminderSaving ? "Saving..." : editing === -1 ? "Save reminder" : "Save changes"}
+              {reminderSaving ? "Saving..." : editing === -1 ? "Save assessment" : "Save changes"}
             </button>
           </section>
         </div>
@@ -4970,7 +5208,6 @@ function ActiveClass({
   >("idle")
   const [lastCard, setLastCard] = useState("")
   const [liveAttendance, setLiveAttendance] = useState<any[]>([])
-  const [actualEnrolledCount, setActualEnrolledCount] = useState(0)
   const [qrExpanded, setQrExpanded] = useState(false)
 
   useEffect(() => {
@@ -5400,47 +5637,6 @@ function ActiveClass({
   }, [])
 
   useEffect(() => {
-    let active = true
-
-    const loadActualEnrolledCount = async () => {
-      const { count, error } = await supabase
-        .from("class_students")
-        .select("*", { count: "exact", head: true })
-        .eq("class_id", String(item.id))
-
-      if (!active) return
-      if (error) {
-        console.error("Unable to load actual class enrollment:", error)
-        return
-      }
-      setActualEnrolledCount(count ?? 0)
-    }
-
-    void loadActualEnrolledCount()
-    const channel = supabase
-      .channel(`live-class-enrollment-${item.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "class_students",
-          filter: `class_id=eq.${item.id}`,
-        },
-        () => void loadActualEnrolledCount(),
-      )
-      .subscribe()
-
-    const reloadOnFocus = () => void loadActualEnrolledCount()
-    window.addEventListener("focus", reloadOnFocus)
-    return () => {
-      active = false
-      window.removeEventListener("focus", reloadOnFocus)
-      void supabase.removeChannel(channel)
-    }
-  }, [item.id])
-
-  useEffect(() => {
     if (!attendanceSessionId) {
       setLiveAttendance([])
       return
@@ -5563,11 +5759,11 @@ function ActiveClass({
               <small>Late</small>
             </div>
             <div>
-              <strong>{Math.max(0, actualEnrolledCount - liveAttendance.length)}</strong>
+              <strong>{Math.max(0, item.attendance - liveAttendance.length)}</strong>
               <small>Not recorded</small>
             </div>
             <div>
-              <strong>{actualEnrolledCount}</strong>
+              <strong>{item.attendance}</strong>
               <small>Enrolled</small>
             </div>
           </div>
@@ -5722,10 +5918,10 @@ function ActiveClass({
                 </small>
                 <div className="progress-label">
                   <span>Attendance recorded</span>
-                  <strong>{liveAttendance.length} of {actualEnrolledCount}</strong>
+                  <strong>{liveAttendance.length} of {item.attendance}</strong>
                 </div>
                 <div className="progress">
-                  <span style={{ width: `${Math.min(100, actualEnrolledCount ? (liveAttendance.length / actualEnrolledCount) * 100 : 0)}%` }} />
+                  <span style={{ width: `${Math.min(100, item.attendance ? (liveAttendance.length / item.attendance) * 100 : 0)}%` }} />
                 </div>
               </section>
             ) : (
@@ -5924,7 +6120,7 @@ function ActiveClass({
             </div>
             <div className="qr-display-footer">
               <strong>{attendanceQrPayload ? `Refreshes in ${attendanceQrCountdown}s` : "Waiting for QR"}</strong>
-              <span>{liveAttendance.length} of {actualEnrolledCount} attendance recorded</span>
+              <span>{liveAttendance.length} of {item.attendance} attendance recorded</span>
             </div>
           </section>
         </div>
@@ -6682,7 +6878,7 @@ export default function App() {
         onScanAnswer={() => setOmrScannerOpen(true)}
       />
       {omrScannerOpen && (
-        <OmrManager onClose={() => setOmrScannerOpen(false)} />
+        <OmrScanner onClose={() => setOmrScannerOpen(false)} />
       )}
       {minimizedSession && !activeClass && (
         <MinimizedSession
