@@ -466,44 +466,151 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
 
   async function publishToGradebook() {
     if (!result || !selectedAssessment) return
-    if (!result.studentNumber.trim()) {
-      setError("Enter the student number before publishing to the gradebook.")
+
+    const studentNumber = result.studentNumber.trim()
+
+    if (!studentNumber) {
+      setError("Enter or confirm the student number before publishing.")
       return
     }
 
     setPublishing(true)
     setError("")
-    try {
-      const assessmentUuid = await saveStudentScore({
-        classId,
-        studentNumber: result.studentNumber,
-        title: selectedAssessment.title,
-        type: selectedAssessment.assessment_type,
-        term: selectedAssessment.academic_term,
-        maxScore: result.maxScore,
-        score: result.score,
-        status: "published",
-        assessmentId: gradebookAssessmentId || selectedAssessment.gradebook_assessment_id || undefined,
-      })
+    setMessage("")
 
-      if (!selectedAssessment.gradebook_assessment_id) {
-        const { error: linkError } = await supabase
+    const scoreInput = {
+      classId,
+      studentNumber,
+      title: selectedAssessment.title,
+      type: selectedAssessment.assessment_type,
+      term: selectedAssessment.academic_term,
+      maxScore: result.maxScore,
+      score: result.score,
+      status: "published" as const,
+    }
+
+    try {
+      let assessmentUuid: string
+      const linkedAssessmentId =
+        gradebookAssessmentId ||
+        selectedAssessment.gradebook_assessment_id ||
+        undefined
+
+      try {
+        assessmentUuid = await saveStudentScore({
+          ...scoreInput,
+          assessmentId: linkedAssessmentId,
+        })
+      } catch (firstReason) {
+        const firstProblem = firstReason as {
+          code?: string
+          message?: string
+          details?: string
+          hint?: string
+        }
+
+        const firstMessage = [
+          firstProblem.message,
+          firstProblem.details,
+          firstProblem.hint,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+
+        const metadataMismatch =
+          firstMessage.includes("assessment metadata does not match") ||
+          firstMessage.includes("assessment does not match")
+
+        if (!metadataMismatch) throw firstReason
+
+        // The linked UUID belongs to another class, title, type, or term.
+        // Remove the stale link, then let the RPC find or create the correct
+        // Gradebook assessment automatically.
+        const { error: unlinkError } = await supabase
           .from("omr_assessments")
-          .update({ gradebook_assessment_id: assessmentUuid })
+          .update({ gradebook_assessment_id: null })
           .eq("id", selectedAssessment.id)
           .eq("faculty_id", facultyId)
-        if (linkError) throw linkError
+
+        if (unlinkError) throw unlinkError
+
+        setGradebookAssessmentId("")
+        setAssessments((current) =>
+          current.map((assessment) =>
+            assessment.id === selectedAssessment.id
+              ? { ...assessment, gradebook_assessment_id: null }
+              : assessment,
+          ),
+        )
+
+        assessmentUuid = await saveStudentScore({
+          ...scoreInput,
+          assessmentId: undefined,
+        })
       }
 
+      // Persist the Gradebook assessment UUID returned by the RPC. All later
+      // student papers for this Quiz/Exam reuse this same Gradebook column.
+      const { error: linkError } = await supabase
+        .from("omr_assessments")
+        .update({ gradebook_assessment_id: assessmentUuid })
+        .eq("id", selectedAssessment.id)
+        .eq("faculty_id", facultyId)
+
+      if (linkError) throw linkError
+
       setGradebookAssessmentId(assessmentUuid)
-      setAssessments((current) => current.map((assessment) =>
-        assessment.id === selectedAssessment.id
-          ? { ...assessment, gradebook_assessment_id: assessmentUuid }
-          : assessment,
-      ))
-      setMessage("Score published to the student gradebook.")
+      setAssessments((current) =>
+        current.map((assessment) =>
+          assessment.id === selectedAssessment.id
+            ? { ...assessment, gradebook_assessment_id: assessmentUuid }
+            : assessment,
+        ),
+      )
+
+      window.dispatchEvent(
+        new CustomEvent("cit-portal:gradebook-score-published", {
+          detail: {
+            assessmentId: assessmentUuid,
+            classId,
+            studentNumber,
+            title: selectedAssessment.title,
+            type: selectedAssessment.assessment_type,
+            term: selectedAssessment.academic_term,
+            maxScore: result.maxScore,
+            score: result.score,
+            status: "published",
+          },
+        }),
+      )
+
+      setMessage(
+        `${selectedAssessment.title} was added to the Gradebook and the score was published.`,
+      )
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to publish the score to the gradebook.")
+      console.error("Gradebook publication failed:", reason)
+
+      const problem = reason as {
+        code?: string
+        message?: string
+        details?: string
+        hint?: string
+      }
+
+      const completeMessage = [
+        problem.message,
+        problem.details,
+        problem.hint,
+        problem.code ? `Error code: ${problem.code}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+
+      setError(
+        completeMessage ||
+          "Unable to publish the score to the gradebook.",
+      )
     } finally {
       setPublishing(false)
     }

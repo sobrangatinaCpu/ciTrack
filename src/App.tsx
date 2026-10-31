@@ -278,6 +278,8 @@ type ActivityItem = {
   classId: string
   date: string
   title: string
+  assessmentIndex: number
+  description: string
   type: string
   startTime: string
   endTime: string
@@ -295,7 +297,9 @@ const initialActivities: ActivityItem[] = []
 
 const createActivityDraft = (): ActivityItem => ({
   classId: "",
-  title: "",
+  title: "Quiz 1",
+  assessmentIndex: 1,
+  description: "",
   type: "Quiz",
   date: "2026-10-30",
   startTime: "09:00",
@@ -1180,7 +1184,7 @@ function Dashboard({
       const [remindersResult, concernsResult] = await Promise.all([
         supabase
           .from("faculty_reminders")
-          .select("id, class_id, reminder_date, title, activity_type, start_time, end_time, participation, groups, item_count, points_per_item, omr_assessment_id")
+          .select("id, class_id, reminder_date, title, assessment_index, description, activity_type, start_time, end_time, participation, groups, item_count, points_per_item, omr_assessment_id")
           .eq("faculty_id", user.id)
           .order("reminder_date", { ascending: true }),
         supabase
@@ -1227,19 +1231,6 @@ function Dashboard({
   const [calendarNow, setCalendarNow] = useState(() => new Date())
   const today = calendarNow
   const todayKey = toLocalDateKey(today)
-  const currentTimeKey = `${String(dashboardNow.getHours()).padStart(2, "0")}:${String(dashboardNow.getMinutes()).padStart(2, "0")}`
-  const dashboardPendingActivities = dashboardReminders.filter((activity) =>
-    activity.date === todayKey && (!activity.endTime || activity.endTime > currentTimeKey),
-  )
-  const dashboardAttentionCount = dashboardPendingActivities.length + dashboardOpenConcerns
-  const dashboardAttentionLabel = [
-    dashboardPendingActivities.length > 0
-      ? `${dashboardPendingActivities.length} ${dashboardPendingActivities.length === 1 ? "activity" : "activities"}`
-      : "",
-    dashboardOpenConcerns > 0
-      ? `${dashboardOpenConcerns} ${dashboardOpenConcerns === 1 ? "request" : "requests"}`
-      : "",
-  ].filter(Boolean).join(" · ")
   const [selectedDateKey, setSelectedDateKey] = useState(todayKey)
 
   useEffect(() => {
@@ -1523,19 +1514,13 @@ function Dashboard({
               <small>No records waiting for review</small>
             </span>
           </button>
-          <button
-            onClick={() => {
-              sessionStorage.setItem("activities-focus", "today-activities")
-              setPage("activities")
-            }}
-            aria-label="Open today's activities and student requests"
-          >
+          <button onClick={() => setPage("activities")}>
             <span className="summary-icon blue">
-              <Icon name="calendar" />
+              <Icon name="users" />
             </span>
             <span>
-              <strong>{dashboardAttentionCount} {dashboardAttentionCount === 1 ? "reminder" : "reminders"}</strong>
-              <small>{dashboardAttentionCount > 0 ? dashboardAttentionLabel : "No activities or requests pending"}</small>
+              <strong>{dashboardOpenConcerns} {dashboardOpenConcerns === 1 ? "concern" : "concerns"}</strong>
+              <small>{dashboardOpenConcerns > 0 ? "Need your attention" : "No open concerns"}</small>
             </span>
           </button>
         </div>
@@ -2296,7 +2281,9 @@ function RecordsPage({
     () => new Date("2026-10-01T12:00:00"),
   )
   const [assessmentColumns, setAssessmentColumns] = useState(
-    initialRecordAssessmentColumns,
+    () => initialRecordAssessmentColumns.filter(
+      (column) => column.type !== "Quiz" && column.type !== "Exam",
+    ),
   )
   const [assessmentMenuOpen, setAssessmentMenuOpen] = useState(false)
   const [gradebookView, setGradebookView] = useState<"summary" | "daily">(
@@ -2523,6 +2510,191 @@ function RecordsPage({
   }, [selectedSectionId])
 
   useEffect(() => {
+    let active = true
+
+    const normalizeAssessmentLabel = (value: string) =>
+      String(value ?? "").trim().toLowerCase().replace(/^(midterm|final)\s+/, "").replace(/\s+/g, " ")
+
+    const assessmentNumber = (row: any) => {
+      const explicit = Number(row?.assessment_index)
+      if (Number.isFinite(explicit) && explicit > 0) return explicit
+      const match = String(row?.title ?? "").match(/\d+/)
+      return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER
+    }
+
+    const loadDatabaseGradebook = async () => {
+      if (!selectedSectionId) return
+
+      const [{ data: assessmentRows, error: assessmentError }, { data: reminderRows, error: reminderError }] = await Promise.all([
+        supabase
+          .from("omr_assessments")
+          .select("id, class_id, title, assessment_type, academic_term, assessment_index, item_count, points_per_item, status, gradebook_assessment_id")
+          .eq("class_id", selectedSectionId)
+          .neq("status", "archived")
+          .order("assessment_index", { ascending: true }),
+        supabase
+          .from("faculty_reminders")
+          .select("id, class_id, omr_assessment_id")
+          .eq("class_id", selectedSectionId)
+          .not("omr_assessment_id", "is", null),
+      ])
+
+      if (!active) return
+      if (assessmentError || reminderError) {
+        console.error(
+          "Unable to synchronize Gradebook assessments:",
+          assessmentError ?? reminderError,
+        )
+        return
+      }
+
+      // Activities/reminders are the source of truth for whether an assessment
+      // still exists. Old OMR rows left behind by earlier deletion logic must
+      // not remain visible as Gradebook columns.
+      const linkedAssessmentIds = new Set(
+        (reminderRows ?? []).map((row: any) => String(row.omr_assessment_id)),
+      )
+
+      const databaseAssessments = (assessmentRows ?? [])
+        .filter((row: any) => linkedAssessmentIds.has(String(row.id)))
+        .filter((row: any) => row.assessment_type === "quiz" || row.assessment_type === "exam")
+        .sort((a: any, b: any) => {
+          const aTerm = a.academic_term === "final" ? 1 : 0
+          const bTerm = b.academic_term === "final" ? 1 : 0
+          if (aTerm !== bTerm) return aTerm - bTerm
+          if (a.assessment_type !== b.assessment_type) return String(a.assessment_type).localeCompare(String(b.assessment_type))
+          return assessmentNumber(a) - assessmentNumber(b)
+        })
+
+      const resolvedColumnByAssessment = new Map<string, string>()
+
+      setAssessmentColumns((current) => {
+        // Supabase is authoritative for Quiz and Exam columns. Keeping previous
+        // Quiz/Exam columns here caused deleted reminders to remain in Records.
+        const next = current
+          .filter((column) => column.type !== "Quiz" && column.type !== "Exam")
+          .map((column) => ({ ...column }))
+
+        databaseAssessments.forEach((row: any) => {
+          const type: RecordAssessmentColumn["type"] = row.assessment_type === "exam" ? "Exam" : "Quiz"
+          const term: RecordAssessmentColumn["term"] = row.academic_term === "final" ? "Final" : "Midterm"
+          const title = String(row.title ?? `${type} ${assessmentNumber(row)}`)
+          const linkedGradebookId = String(row.gradebook_assessment_id ?? "")
+
+          // Use the OMR assessment UUID as the stable Records column ID.
+          const columnId = String(row.id)
+          next.push({ id: columnId, label: title, type, term })
+          resolvedColumnByAssessment.set(String(row.id), columnId)
+          if (linkedGradebookId) resolvedColumnByAssessment.set(linkedGradebookId, columnId)
+        })
+
+        const order = (column: RecordAssessmentColumn) => {
+          const termOrder = column.term === "Final" ? 10000 : 0
+          const typeOrder = column.type === "Quiz" ? 0 : column.type === "Exam" ? 1000 : 2000
+          const match = column.label.match(/\d+/)
+          return termOrder + typeOrder + (match ? Number(match[0]) : 999)
+        }
+        return next.sort((a, b) => order(a) - order(b))
+      })
+
+      const assessmentIds = databaseAssessments.map((row: any) => String(row.id))
+      if (assessmentIds.length > 0) {
+        const { data: submissionRows, error: submissionError } = await supabase
+          .from("omr_submissions")
+          .select("assessment_id, detected_student_number, final_score, proposed_score, status, created_at")
+          .in("assessment_id", assessmentIds)
+          .in("status", ["approved", "published"])
+          .order("created_at", { ascending: true })
+
+        if (!active) return
+        if (submissionError) console.error("Unable to synchronize OMR scores:", submissionError)
+        else {
+          setRecordValues((current) => {
+            const next = { ...current }
+            ;(submissionRows ?? []).forEach((submission: any) => {
+              const studentNumber = String(submission.detected_student_number ?? "").trim()
+              const columnId = resolvedColumnByAssessment.get(String(submission.assessment_id))
+              const score = Number(submission.final_score ?? submission.proposed_score)
+              if (!studentNumber || !columnId || !Number.isFinite(score)) return
+              next[studentNumber] = { ...next[studentNumber], [columnId]: score }
+            })
+            return next
+          })
+        }
+      }
+
+      setRecordSectionOptions((current) => current.map((section) =>
+        section.id === selectedSectionId ? { ...section, assessmentCount: databaseAssessments.length } : section,
+      ))
+    }
+
+    void loadDatabaseGradebook()
+    const channel = supabase
+      .channel(`records-database-gradebook-${selectedSectionId || "none"}`)
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "omr_assessments",
+        filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
+      }, () => void loadDatabaseGradebook())
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "omr_submissions",
+      }, () => void loadDatabaseGradebook())
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "faculty_reminders",
+        filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
+      }, () => void loadDatabaseGradebook())
+      .subscribe()
+
+    const reloadOnFocus = () => void loadDatabaseGradebook()
+    const reloadWhenVisible = () => document.visibilityState === "visible" && void loadDatabaseGradebook()
+    window.addEventListener("focus", reloadOnFocus)
+    document.addEventListener("visibilitychange", reloadWhenVisible)
+    return () => {
+      active = false
+      window.removeEventListener("focus", reloadOnFocus)
+      document.removeEventListener("visibilitychange", reloadWhenVisible)
+      void supabase.removeChannel(channel)
+    }
+  }, [selectedSectionId])
+
+  useEffect(() => {
+    const handleAssessmentDeleted = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        assessmentId: string
+        classId: string
+        title: string
+        type: string
+      }>).detail
+
+      if (!detail || detail.classId !== selectedSectionId) return
+
+      const normalize = (value: string) =>
+        String(value ?? "").trim().toLowerCase().replace(/^(midterm|final)\s+/, "").replace(/\s+/g, " ")
+
+      const removedIds = new Set<string>()
+      setAssessmentColumns((current) => current.filter((column) => {
+        const matches =
+          (detail.assessmentId && column.id === detail.assessmentId) ||
+          ((column.type === "Quiz" || column.type === "Exam") && normalize(column.label) === normalize(detail.title))
+        if (matches) removedIds.add(column.id)
+        return !matches
+      }))
+
+      setRecordValues((current) => {
+        const next: Record<string, Record<string, number | "">> = {}
+        Object.entries(current).forEach(([studentNumber, values]) => {
+          const studentValues = { ...values }
+          removedIds.forEach((id) => delete studentValues[id])
+          next[studentNumber] = studentValues
+        })
+        return next
+      })
+    }
+
+    window.addEventListener("cit-portal:gradebook-assessment-deleted", handleAssessmentDeleted)
+    return () => window.removeEventListener("cit-portal:gradebook-assessment-deleted", handleAssessmentDeleted)
+  }, [selectedSectionId])
+
+  useEffect(() => {
     if (dailySessions[recordDate]) return
     const term = recordDate <= "2026-10-31" ? "Midterm" : "Final"
     const attendanceId = `daily-${recordDate}-attendance`
@@ -2557,15 +2729,187 @@ function RecordsPage({
   }, [dailySessions, recordDate])
 
   useEffect(() => {
+    const normalizeAssessmentLabel = (value: string) =>
+      value.trim().toLowerCase().replace(/^(midterm|final)\s+/, "").replace(/\s+/g, " ")
+
+    const handleAssessmentSaved = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        assessmentId: string
+        classId: string
+        title: string
+        type: "quiz" | "exam"
+        term: "midterm" | "final"
+      }>).detail
+
+      if (!detail || detail.classId !== selectedSectionId) return
+
+      const columnType: RecordAssessmentColumn["type"] = detail.type === "exam" ? "Exam" : "Quiz"
+      const columnTerm: RecordAssessmentColumn["term"] = detail.term === "final" ? "Final" : "Midterm"
+      const normalizedTitle = normalizeAssessmentLabel(detail.title)
+
+      setAssessmentColumns((current) => {
+        const existing = current.find((column) =>
+          column.id === detail.assessmentId ||
+          (
+            column.type === columnType &&
+            column.term === columnTerm &&
+            normalizeAssessmentLabel(column.label) === normalizedTitle
+          ),
+        )
+
+        if (existing) {
+          return current.map((column) =>
+            column.id === existing.id
+              ? { ...column, label: detail.title, type: columnType, term: columnTerm }
+              : column,
+          )
+        }
+
+        const newColumn: RecordAssessmentColumn = {
+          id: detail.assessmentId,
+          label: detail.title,
+          type: columnType,
+          term: columnTerm,
+        }
+        const lastMatchingIndex = current.reduce(
+          (lastIndex, column, index) =>
+            column.type === columnType && column.term === columnTerm ? index : lastIndex,
+          -1,
+        )
+        const insertAt = lastMatchingIndex < 0 ? current.length : lastMatchingIndex + 1
+        return [...current.slice(0, insertAt), newColumn, ...current.slice(insertAt)]
+      })
+    }
+
+    window.addEventListener("cit-portal:gradebook-assessment-saved", handleAssessmentSaved)
+    return () => window.removeEventListener("cit-portal:gradebook-assessment-saved", handleAssessmentSaved)
+  }, [selectedSectionId])
+
+  useEffect(() => {
+    const normalizeAssessmentLabel = (value: string) =>
+      value
+        .trim()
+        .toLowerCase()
+        .replace(/^(midterm|final)\s+/, "")
+        .replace(/\s+/g, " ")
+
+    const handlePublishedOmrScore = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        assessmentId: string
+        classId: string
+        studentNumber: string
+        title: string
+        type: "quiz" | "exam"
+        term: "midterm" | "final"
+        maxScore: number
+        score: number
+        status: "published"
+      }>).detail
+
+      if (!detail || detail.classId !== selectedSectionId) return
+
+      const columnType: RecordAssessmentColumn["type"] =
+        detail.type === "exam" ? "Exam" : "Quiz"
+      const columnTerm: RecordAssessmentColumn["term"] =
+        detail.term === "final" ? "Final" : "Midterm"
+      const normalizedTitle = normalizeAssessmentLabel(detail.title)
+
+      setAssessmentColumns((current) => {
+        // Reuse a default/manual column such as "Midterm Quiz 2" when the
+        // published OMR assessment is titled "Quiz 2". Only create a new
+        // column when no matching type, term, and title exists.
+        const existing = current.find((column) =>
+          column.id === detail.assessmentId ||
+          (
+            column.type === columnType &&
+            column.term === columnTerm &&
+            normalizeAssessmentLabel(column.label) === normalizedTitle
+          ),
+        )
+        const targetColumnId = existing?.id ?? detail.assessmentId
+
+        setRecordValues((values) => ({
+          ...values,
+          [detail.studentNumber]: {
+            ...values[detail.studentNumber],
+            [targetColumnId]: detail.score,
+          },
+        }))
+
+        if (existing) {
+          return current.map((column) =>
+            column.id === existing.id
+              ? { ...column, label: detail.title, type: columnType, term: columnTerm }
+              : column,
+          )
+        }
+
+        const newColumn: RecordAssessmentColumn = {
+          id: detail.assessmentId,
+          label: detail.title,
+          type: columnType,
+          term: columnTerm,
+        }
+        const lastMatchingIndex = current.reduce(
+          (lastIndex, column, index) =>
+            column.type === columnType && column.term === columnTerm ? index : lastIndex,
+          -1,
+        )
+        const insertAt = lastMatchingIndex < 0 ? current.length : lastMatchingIndex + 1
+        return [...current.slice(0, insertAt), newColumn, ...current.slice(insertAt)]
+      })
+    }
+
+    window.addEventListener("cit-portal:gradebook-score-published", handlePublishedOmrScore)
+    return () => window.removeEventListener("cit-portal:gradebook-score-published", handlePublishedOmrScore)
+  }, [selectedSectionId])
+
+  useEffect(() => {
     try {
       const saved = localStorage.getItem("cit-portal:gradebook")
       if (!saved) return
+
       const parsed = JSON.parse(saved)
       if (Array.isArray(parsed.students) && parsed.students.length > 0) setRecordStudents(parsed.students)
-      if (parsed.values && typeof parsed.values === "object") setRecordValues(parsed.values)
       if (parsed.statuses && typeof parsed.statuses === "object") setStudentStatuses(parsed.statuses)
-      if (Array.isArray(parsed.columns) && parsed.columns.length > 0) setAssessmentColumns(parsed.columns)
       if (parsed.remarks && typeof parsed.remarks === "object") setDailyRemarks(parsed.remarks)
+
+      // Quiz and Exam columns come only from Supabase. This permanently clears
+      // deleted Quiz 5/Quiz 6 columns left behind by older localStorage data.
+      const preservedColumns: RecordAssessmentColumn[] = Array.isArray(parsed.columns)
+        ? parsed.columns.filter((column: RecordAssessmentColumn) =>
+            column.type !== "Quiz" && column.type !== "Exam",
+          )
+        : []
+      const preservedIds = new Set(preservedColumns.map((column) => column.id))
+      const savedValues = parsed.values && typeof parsed.values === "object"
+        ? parsed.values as Record<string, Record<string, number | "">>
+        : {}
+      const cleanedValues: Record<string, Record<string, number | "">> = {}
+
+      Object.entries(savedValues).forEach(([studentNumber, values]) => {
+        cleanedValues[studentNumber] = Object.fromEntries(
+          Object.entries(values).filter(([columnId]) => preservedIds.has(columnId)),
+        )
+      })
+
+      setAssessmentColumns((current) => [
+        ...preservedColumns,
+        ...current.filter((column) => column.type === "Quiz" || column.type === "Exam"),
+      ])
+      setRecordValues((current) => {
+        const next = { ...cleanedValues }
+        Object.entries(current).forEach(([studentNumber, values]) => {
+          next[studentNumber] = { ...next[studentNumber], ...values }
+        })
+        return next
+      })
+
+      localStorage.setItem("cit-portal:gradebook", JSON.stringify({
+        ...parsed,
+        columns: preservedColumns,
+        values: cleanedValues,
+      }))
     } catch (error) {
       console.error("Unable to restore gradebook data:", error)
     }
@@ -3873,6 +4217,8 @@ function ActivitiesPage({
     classId: row.class_id ?? "",
     date: String(row.reminder_date ?? ""),
     title: String(row.title ?? ""),
+    assessmentIndex: Math.max(1, Number(row.assessment_index) || Number(String(row.title ?? "").match(/\d+/)?.[0]) || 1),
+    description: String(row.description ?? ""),
     type: String(row.activity_type ?? "Quiz"),
     startTime: String(row.start_time ?? "").slice(0, 5),
     endTime: String(row.end_time ?? "").slice(0, 5),
@@ -3914,7 +4260,7 @@ function ActivitiesPage({
     }
     const { data, error } = await supabase
       .from("faculty_reminders")
-      .select("id, class_id, reminder_date, title, activity_type, start_time, end_time, participation, groups, item_count, points_per_item, omr_assessment_id")
+      .select("id, class_id, reminder_date, title, assessment_index, description, activity_type, start_time, end_time, participation, groups, item_count, points_per_item, omr_assessment_id")
       .eq("faculty_id", user.id)
       .order("reminder_date", { ascending: true })
       .order("start_time", { ascending: true })
@@ -4193,12 +4539,17 @@ function ActivitiesPage({
     setReminderNotice("")
     let omrAssessmentId = draft.omrAssessmentId
     const isOmrAssessment = draft.type === "Quiz" || draft.type === "Exam"
+    const canonicalAssessmentTitle = isOmrAssessment
+      ? `${draft.type} ${draft.assessmentIndex}`
+      : draft.title.trim()
 
     if (isOmrAssessment) {
       const omrPayload = {
         faculty_id: user.id,
         class_id: String(draft.classId),
-        title: draft.title.trim(),
+        title: canonicalAssessmentTitle,
+        assessment_index: draft.assessmentIndex,
+        description: draft.description.trim(),
         assessment_type: draft.type.toLowerCase(),
         item_count: draft.itemCount,
         points_per_item: draft.pointsPerItem,
@@ -4261,7 +4612,9 @@ function ActivitiesPage({
       faculty_id: user.id,
       class_id: String(draft.classId),
       reminder_date: draft.date,
-      title: draft.title.trim(),
+      title: canonicalAssessmentTitle,
+      assessment_index: draft.assessmentIndex,
+      description: draft.description.trim(),
       activity_type: draft.type,
       start_time: draft.startTime,
       end_time: draft.endTime,
@@ -4282,6 +4635,23 @@ function ActivitiesPage({
       showToast(`Unable to save assessment: ${result.error.message}`, "error")
       return
     }
+    if (isOmrAssessment && omrAssessmentId) {
+      // The current form does not yet expose a term selector. Keep the existing
+      // portal convention: dates through October are Midterm, later dates Final.
+      const assessmentTerm: "midterm" | "final" =
+        new Date(`${draft.date}T12:00:00`).getMonth() <= 9 ? "midterm" : "final"
+
+      window.dispatchEvent(new CustomEvent("cit-portal:gradebook-assessment-saved", {
+        detail: {
+          assessmentId: omrAssessmentId,
+          classId: String(draft.classId),
+          title: canonicalAssessmentTitle,
+          type: draft.type.toLowerCase(),
+          term: assessmentTerm,
+        },
+      }))
+    }
+
     setEditing(null)
     showToast(draft.id ? "Assessment updated successfully." : "Assessment added successfully.")
     await loadReminders()
@@ -4289,29 +4659,62 @@ function ActivitiesPage({
 
   const deleteReminder = async () => {
     if (!reminderToDelete?.id) return
+
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       showToast("Your session expired. Sign in again.", "error")
       return
     }
+
     setReminderDeleting(true)
-    const { error } = await supabase
-      .from("faculty_reminders")
-      .delete()
-      .eq("id", reminderToDelete.id)
-      .eq("faculty_id", user.id)
-    setReminderDeleting(false)
-    if (error) {
-      showToast(`Unable to delete reminder: ${error.message}`, "error")
-      return
+    const linkedAssessmentId = reminderToDelete.omrAssessmentId
+
+    try {
+      const { error: reminderError } = await supabase
+        .from("faculty_reminders")
+        .delete()
+        .eq("id", reminderToDelete.id)
+        .eq("faculty_id", user.id)
+
+      if (reminderError) throw reminderError
+
+      // Quiz and Exam reminders own their linked OMR assessment. Deleting the
+      // reminder must also remove the assessment, answer key, submissions, and
+      // Gradebook column. Answer keys/submissions cascade from omr_assessments.
+      if (linkedAssessmentId) {
+        const { error: assessmentError } = await supabase
+          .from("omr_assessments")
+          .delete()
+          .eq("id", linkedAssessmentId)
+          .eq("faculty_id", user.id)
+
+        if (assessmentError) throw assessmentError
+      }
+
+      window.dispatchEvent(new CustomEvent("cit-portal:gradebook-assessment-deleted", {
+        detail: {
+          assessmentId: linkedAssessmentId ?? "",
+          classId: reminderToDelete.classId,
+          title: reminderToDelete.title,
+          type: reminderToDelete.type.toLowerCase(),
+        },
+      }))
+
+      setReminderToDelete(null)
+      showToast("Assessment deleted from Activities, OMR, and Records.")
+      await loadReminders()
+    } catch (reason) {
+      const problem = reason as { message?: string }
+      showToast(`Unable to delete assessment: ${problem.message ?? "Unknown database error"}`, "error")
+    } finally {
+      setReminderDeleting(false)
     }
-    setReminderToDelete(null)
-    showToast("Reminder deleted successfully.")
-    await loadReminders()
   }
 
 const reminderFormValid = Boolean(
     draft.title.trim() &&
+    draft.description.trim() &&
+    draft.assessmentIndex >= 1 &&
     draft.classId &&
     draft.date &&
     draft.startTime &&
@@ -4322,21 +4725,6 @@ const reminderFormValid = Boolean(
     (draft.participation !== "Group" || draft.groups.length > 0),
   )
 
-  useEffect(() => {
-    const focusTarget = sessionStorage.getItem("activities-focus")
-    if (!focusTarget) return
-
-    sessionStorage.removeItem("activities-focus")
-    const targetId = focusTarget === "student-concerns" ? "student-concerns" : "scheduled-activities"
-    const timer = window.setTimeout(() => {
-      const target = document.getElementById(targetId)
-      target?.scrollIntoView({ behavior: "smooth", block: "start" })
-      target?.focus({ preventScroll: true })
-    }, 120)
-
-    return () => window.clearTimeout(timer)
-  }, [])
-
   return (
     <>
       <Header
@@ -4344,7 +4732,7 @@ const reminderFormValid = Boolean(
         onNotify={() => setPage("notifications")}
         onProfile={() => setPage("profile")}
       />
-      <div className="page-intro activities-page-intro">
+      <div className="page-intro">
         <div>
           <p className="eyebrow">Faculty calendar</p>
           <h2>Assessments & reminders</h2>
@@ -4353,7 +4741,7 @@ const reminderFormValid = Boolean(
 
       </div>
       <div className="activities-workspace">
-        <section id="scheduled-activities" className="activities-frame-toolbar" aria-label="Assessment and reminder actions" tabIndex={-1}>
+        <section className="activities-frame-toolbar" aria-label="Assessment and reminder actions">
           <div>
             <p className="eyebrow">Faculty calendar</p>
             <h3>Scheduled assessments and reminders</h3>
@@ -4362,11 +4750,11 @@ const reminderFormValid = Boolean(
             <Icon name="plus" /> {reminderClasses.length === 0 ? "Create a class first" : "Add assessment"}
           </button>
         </section>
-        <section id="student-concerns" className="concerns-section" aria-labelledby="concerns-title" tabIndex={-1}>
+        <section className="concerns-section" aria-labelledby="concerns-title">
           <div className="concerns-heading">
             <div>
-              <p className="eyebrow">Activities inbox</p>
-              <h2 id="concerns-title">Student concerns & requests</h2>
+              <p className="eyebrow">Student requests</p>
+              <h2 id="concerns-title">Student Concerns / Requests</h2>
             </div>
             <span className="concerns-count">
               {
@@ -4566,6 +4954,7 @@ const reminderFormValid = Boolean(
                         {status}
                       </span>
                       <h3>{a.title}</h3>
+                      {a.description && <p className="assessment-description">Description: {a.description}</p>}
                       <p>
                         {(() => {
                           const activityClass = reminderClasses.find(
@@ -4658,19 +5047,58 @@ const reminderFormValid = Boolean(
               {editing === -1 ? "Add assessment" : "Edit assessment"}
             </h2>
             <p>Create or edit an assessment. Quiz and Exam settings are shared with the OMR scanner.</p>
-            <label>
-              <span className="reminder-field-label">Title <em>Required</em></span>
-              <input
-                value={draft.title}
-                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                required
-              />
-            </label>
+            {(draft.type === "Quiz" || draft.type === "Exam") ? (
+              <div className="reminder-fields assessment-identity-fields">
+                <label>
+                  <span className="reminder-field-label">{draft.type} index <em>Required</em></span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.assessmentIndex}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onChange={(event) => {
+                      const digits = event.target.value.replace(/\D/g, "").slice(0, 3)
+                      const index = digits ? Math.max(1, Number(digits)) : 1
+                      setDraft({ ...draft, assessmentIndex: index, title: `${draft.type} ${index}` })
+                    }}
+                    required
+                  />
+                  <small>Gradebook column: {draft.type} {draft.assessmentIndex}</small>
+                </label>
+                <label>
+                  <span className="reminder-field-label">Description <em>Required</em></span>
+                  <input
+                    value={draft.description}
+                    placeholder="Example: Fundamentals"
+                    onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                    required
+                  />
+                </label>
+              </div>
+            ) : (
+              <label>
+                <span className="reminder-field-label">Title <em>Required</em></span>
+                <input
+                  value={draft.title}
+                  onChange={(event) => setDraft({ ...draft, title: event.target.value, description: event.target.value })}
+                  required
+                />
+              </label>
+            )}
             <label>
               <span className="reminder-field-label">Activity type <em>Required</em></span>
               <select required
                 value={draft.type}
-                onChange={(e) => setDraft({ ...draft, type: e.target.value })}
+                onChange={(event) => {
+                  const nextType = event.target.value
+                  const indexed = nextType === "Quiz" || nextType === "Exam"
+                  setDraft({
+                    ...draft,
+                    type: nextType,
+                    title: indexed ? `${nextType} ${draft.assessmentIndex}` : draft.description || draft.title,
+                  })
+                }}
               >
                 {activityTypes.map((type) => (
                   <option key={type} value={type}>
@@ -4860,7 +5288,7 @@ const reminderFormValid = Boolean(
                           setDraft((current) => ({ ...current, itemCount: nextCount }))
                         }}
                       />
-                      <h3 id="activity-answer-key-title">items in the answer key</h3>
+                      <h3 id="activity-answer-key-title">-item answer key</h3>
                     </div>
                     <small>Type a value from 1 to 50. The answer grid updates automatically.</small>
                   </div>
