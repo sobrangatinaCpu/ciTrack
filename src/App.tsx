@@ -2295,6 +2295,8 @@ function RecordsPage({
   const [recordSectionOptions, setRecordSectionOptions] = useState<RecordSectionOption[]>([])
   const [sectionsLoading, setSectionsLoading] = useState(true)
   const [sectionMenuOpen, setSectionMenuOpen] = useState(false)
+  const [enrolledStudentsLoading, setEnrolledStudentsLoading] = useState(false)
+  const [enrolledStudentsError, setEnrolledStudentsError] = useState("")
 
   useEffect(() => {
     let active = true
@@ -2387,6 +2389,111 @@ function RecordsPage({
       void supabase.removeChannel(channel)
     }
   }, [assessmentColumns.length])
+
+  useEffect(() => {
+    let active = true
+
+    const readFirst = (source: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = source?.[key]
+        if (value !== null && value !== undefined && String(value).trim()) return String(value).trim()
+      }
+      return ""
+    }
+
+    const loadEnrolledStudents = async () => {
+      if (!selectedSectionId) {
+        if (active) {
+          setRecordStudents([])
+          setEnrolledStudentsLoading(false)
+          setEnrolledStudentsError("")
+        }
+        return
+      }
+
+      setEnrolledStudentsLoading(true)
+      setEnrolledStudentsError("")
+      const { data: enrollmentRows, error: enrollmentError } = await supabase
+        .from("class_students")
+        .select("*")
+        .eq("class_id", selectedSectionId)
+
+      if (!active) return
+      if (enrollmentError) {
+        console.error("Unable to load enrolled students:", enrollmentError)
+        setRecordStudents([])
+        setEnrolledStudentsError(enrollmentError.message)
+        setEnrolledStudentsLoading(false)
+        return
+      }
+
+      const enrollments = enrollmentRows ?? []
+      const studentIds = [...new Set(enrollments
+        .map((row: any) => readFirst(row, ["student_id", "profile_id", "user_id", "id"]))
+        .filter(Boolean))]
+
+      let profileRows: any[] = []
+      if (studentIds.length > 0) {
+        const studentProfilesResult = await supabase.from("student_profiles").select("*").in("id", studentIds)
+        if (!studentProfilesResult.error) profileRows = studentProfilesResult.data ?? []
+        else {
+          const profilesResult = await supabase.from("profiles").select("*").in("id", studentIds)
+          if (!profilesResult.error) profileRows = profilesResult.data ?? []
+        }
+      }
+      if (!active) return
+
+      const profileById = new Map<string, any>()
+      profileRows.forEach((profile: any) => {
+        const profileId = readFirst(profile, ["id", "student_id", "user_id", "profile_id"])
+        if (profileId) profileById.set(profileId, profile)
+      })
+
+      const loadedStudents: RecordStudent[] = enrollments.map((enrollment: any, index: number) => {
+        const authStudentId = readFirst(enrollment, ["student_id", "profile_id", "user_id", "id"])
+        const profile = enrollment.student_profiles ?? enrollment.profiles ?? enrollment.student ?? profileById.get(authStudentId) ?? {}
+        const studentNumber = readFirst(enrollment, ["student_number", "student_no", "school_id", "student_code"]) ||
+          readFirst(profile, ["student_number", "student_no", "school_id", "student_code"]) || authStudentId || `student-${index + 1}`
+        const fullName = readFirst(enrollment, ["student_name", "full_name", "name"]) ||
+          readFirst(profile, ["full_name", "student_name", "name", "display_name"]) || `Student ${studentNumber}`
+        const enrollmentStatus = readFirst(enrollment, ["status", "enrollment_status"])
+        return {
+          id: studentNumber,
+          name: fullName,
+          score: 0,
+          attendance: enrollmentStatus.toLowerCase() === "inactive" ? "Absent" : "Present",
+        }
+      })
+
+      loadedStudents.sort((a, b) => a.name.localeCompare(b.name))
+      setRecordStudents(loadedStudents)
+      setStudentStatuses((current) => {
+        const next = { ...current }
+        loadedStudents.forEach((student) => { if (!next[student.id]) next[student.id] = student.attendance })
+        return next
+      })
+      setRecordSectionOptions((current) => current.map((section) =>
+        section.id === selectedSectionId ? { ...section, students: loadedStudents.length } : section,
+      ))
+      setEnrolledStudentsLoading(false)
+    }
+
+    void loadEnrolledStudents()
+    const channel = supabase
+      .channel(`records-enrolled-students-${selectedSectionId || "none"}`)
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "class_students",
+        filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
+      }, () => void loadEnrolledStudents())
+      .subscribe()
+    const reloadOnFocus = () => void loadEnrolledStudents()
+    window.addEventListener("focus", reloadOnFocus)
+    return () => {
+      active = false
+      window.removeEventListener("focus", reloadOnFocus)
+      void supabase.removeChannel(channel)
+    }
+  }, [selectedSectionId])
 
   useEffect(() => {
     if (dailySessions[recordDate]) return
@@ -2940,7 +3047,13 @@ function RecordsPage({
               <p className="eyebrow">{selectedSection.academicYear}</p>
               <h2>{selectedSection.code}: {selectedSection.subject}</h2>
               <p>
-                {selectedSection.code} · {selectedSection.schedule} · {selectedSection.students === 0 ? "No enrolled students yet" : `${selectedSection.students} student${selectedSection.students === 1 ? "" : "s"}`}
+                {selectedSection.code} · {selectedSection.schedule} · {enrolledStudentsLoading
+                    ? "Loading enrolled students..."
+                    : enrolledStudentsError
+                      ? "Enrollment list unavailable"
+                      : selectedSection.students === 0
+                        ? "No enrolled students yet"
+                        : `${selectedSection.students} student${selectedSection.students === 1 ? "" : "s"}`}
               </p>
             </>
           )}
@@ -3589,7 +3702,13 @@ function RecordsPage({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((student) => (
+                {enrolledStudentsLoading ? (
+                  <tr><td colSpan={99} className="records-empty-row">Loading enrolled students...</td></tr>
+                ) : enrolledStudentsError ? (
+                  <tr><td colSpan={99} className="records-empty-row error">Unable to load enrolled students: {enrolledStudentsError}</td></tr>
+                ) : filtered.length === 0 ? (
+                  <tr><td colSpan={99} className="records-empty-row">{query ? "No students match the search." : "No students have joined this class yet."}</td></tr>
+                ) : filtered.map((student) => (
                   <tr key={student.id}>
                     <td>
                       <strong>{student.name}</strong>
