@@ -5403,18 +5403,22 @@ function ActiveClass({
       setLiveAttendance([])
       return
     }
+    // Clear the previous session's roster while loading this session.
+    setLiveAttendance([])
     let active = true
+    let loadVersion = 0
     const loadAttendance = async () => {
-      const { data, error } = await supabase
-        .from("attendance")
-        .select("*")
-        .eq("session_id", attendanceSessionId)
-      if (!active) return
+      const version = ++loadVersion
+      const { data, error } = await supabase.rpc("faculty_get_live_attendance", {
+        p_session_id: attendanceSessionId,
+      })
+      if (!active || version !== loadVersion) return
       if (error) {
         console.error("Unable to load live attendance:", error)
+        showToast("Unable to load student names and attendance. Refresh the class to retry.", "error")
         return
       }
-      setLiveAttendance(data ?? [])
+      setLiveAttendance(Array.isArray(data) ? data : [])
     }
     void loadAttendance()
     const channel = supabase
@@ -5445,10 +5449,12 @@ function ActiveClass({
     return () => window.clearTimeout(timer)
   }, [performanceMessage])
 
-  const liveRoster: Array<{ name: string; id: string; time: string; status: string; method: string }> =
+  const liveRoster: Array<{ name: string; id: string; studentNumber: string; time: string; status: string; method: string }> =
     liveAttendance.map((row: any) => ({
-      name: String(row.student_name ?? row.full_name ?? "Verified student"),
-      id: String(row.student_number ?? row.student_id ?? ""),
+      name: String(row.full_name ?? "").trim() || "Student name unavailable",
+      // Keep database identity internal; display only the school's student number.
+      id: String(row.student_id ?? row.id),
+      studentNumber: String(row.student_number ?? "").trim() || "Student ID unavailable",
       time: (() => {
         const recordedAt =
           row.checked_in_at ??
@@ -5465,7 +5471,7 @@ function ActiveClass({
           : "Recorded"
       })(),
       status: String(row.status ?? "Present"),
-      method: String(row.method ?? "Mobile NFC"),
+      method: String(row.method ?? "").trim(),
     }))
   return (
     <div
@@ -5801,7 +5807,7 @@ function ActiveClass({
                         )}
                         <span>
                           <strong>{student.name}</strong>
-                          <small>{student.id} · {method}</small>
+                          <small>{student.studentNumber}{method ? " · " + method : ""}</small>
                         </span>
                       </span>
                       <span>{time}</span>
@@ -6682,5 +6688,4 @@ export default function App() {
     </div>
   )
 }
-
 
