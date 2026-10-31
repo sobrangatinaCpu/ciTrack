@@ -79,7 +79,11 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [result, setResult] = useState<ScanResult | null>(null)
-  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [cameraStarting, setCameraStarting] = useState(false)
+  const [cameraMessage, setCameraMessage] = useState("")
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
   const uploadInputRef = useRef<HTMLInputElement>(null)
 
   const selectedClass = useMemo(() => classes.find((item) => item.id === classId) ?? null, [classes, classId])
@@ -112,12 +116,15 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
   }, [])
 
   useEffect(() => { void loadScannerData() }, [loadScannerData])
-  useEffect(() => () => { if (scanPreview) URL.revokeObjectURL(scanPreview) }, [scanPreview])
+  useEffect(() => () => {
+    if (scanPreview) URL.revokeObjectURL(scanPreview)
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop())
+    cameraStreamRef.current = null
+  }, [scanPreview])
 
   function clearScan() {
     if (scanPreview) URL.revokeObjectURL(scanPreview)
     setScanFile(null); setScanPreview(""); setResult(null); setMessage("")
-    if (cameraInputRef.current) cameraInputRef.current.value = ""
     if (uploadInputRef.current) uploadInputRef.current.value = ""
   }
   function chooseScan(file?: File) {
@@ -128,11 +135,91 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
     if (scanPreview) URL.revokeObjectURL(scanPreview)
     setScanFile(file); setScanPreview(URL.createObjectURL(file))
   }
-  function openCamera() {
+  function stopCamera() {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop())
+    cameraStreamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+    setCameraOpen(false)
+    setCameraStarting(false)
+  }
+
+  async function openCamera() {
     if (!classId) return setError("Select a subject and section first.")
     if (!selectedAssessment) return setError("Select a saved assessment first.")
-    if (selectedAssessment.answerKey.length < selectedAssessment.item_count) return setError("This assessment has no complete answer key. Edit it in Activities first.")
-    setError(""); cameraInputRef.current?.click()
+    if (selectedAssessment.answerKey.length < selectedAssessment.item_count) {
+      return setError("This assessment has no complete answer key. Edit it in Activities first.")
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      return setError("Live camera is unavailable. Use Import image instead.")
+    }
+
+    setError("")
+    setCameraMessage("Starting rear camera...")
+    setCameraStarting(true)
+    setCameraOpen(true)
+
+    try {
+      stopCamera()
+      setCameraOpen(true)
+      setCameraStarting(true)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 2560, min: 1280 },
+          height: { ideal: 1440, min: 720 },
+        },
+      })
+      cameraStreamRef.current = stream
+      if (!videoRef.current) throw new Error("Camera preview is unavailable.")
+      videoRef.current.srcObject = stream
+      await videoRef.current.play()
+      setCameraMessage("Place the complete A4 sheet inside the guide. Keep all four black corner squares visible.")
+    } catch (reason) {
+      stopCamera()
+      const name = reason instanceof DOMException ? reason.name : ""
+      if (name === "NotAllowedError") setError("Camera permission was denied. Allow camera access in Chrome site settings, then try again.")
+      else if (name === "NotFoundError") setError("No rear camera was found. Use Import image instead.")
+      else if (name === "NotReadableError") setError("The camera is already being used by another app.")
+      else setError(reason instanceof Error ? reason.message : "Unable to open the camera.")
+    } finally {
+      setCameraStarting(false)
+    }
+  }
+
+  async function captureCameraImage() {
+    const video = videoRef.current
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setError("The camera is not ready yet.")
+      return
+    }
+
+    const sourceWidth = video.videoWidth
+    const sourceHeight = video.videoHeight
+    const a4Ratio = 210 / 297
+    let cropHeight = sourceHeight * 0.92
+    let cropWidth = cropHeight * a4Ratio
+    if (cropWidth > sourceWidth * 0.92) {
+      cropWidth = sourceWidth * 0.92
+      cropHeight = cropWidth / a4Ratio
+    }
+    const cropX = (sourceWidth - cropWidth) / 2
+    const cropY = (sourceHeight - cropHeight) / 2
+
+    const canvas = document.createElement("canvas")
+    canvas.width = 1200
+    canvas.height = 1697
+    const context = canvas.getContext("2d")
+    if (!context) return setError("Unable to capture the camera image.")
+    context.fillStyle = "#fff"
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height)
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.94))
+    if (!blob) return setError("Unable to create the captured image.")
+    const file = new File([blob], `omr-camera-${Date.now()}.jpg`, { type: "image/jpeg" })
+    stopCamera()
+    chooseScan(file)
   }
 
   function findLargestRun(values: number[], minimum: number) {
@@ -633,7 +720,7 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
   return (
     <div className="omr-shell" role="dialog" aria-modal="true" aria-labelledby="omr-scanner-title">
       <div className="omr-panel omr-scanner-only-panel">
-        <header className="omr-header"><div><p className="omr-eyebrow">Faculty OMR scanner</p><h2 id="omr-scanner-title">{result ? "OMR scan result" : "Scan answer sheet"}</h2><p>{result ? "Review every missed, wrong, or multiple-mark item before approval." : "Select the class and saved assessment, then capture or import the paper."}</p></div><button className="omr-icon-button" type="button" onClick={onClose}>X</button></header>
+        <header className="omr-header"><div><p className="omr-eyebrow">Faculty OMR scanner</p><h2 id="omr-scanner-title">{result ? "OMR scan result" : "Scan answer sheet"}</h2><p>{result ? "Review every missed, wrong, or multiple-mark item before approval." : "Select the class and saved assessment, then capture or import the paper."}</p></div><button className="omr-icon-button" type="button" onClick={() => { stopCamera(); onClose() }}>X</button></header>
         {error && <div className="omr-alert omr-alert-error" role="alert">{error}</div>}{message && <div className="omr-alert omr-alert-success">{message}</div>}
 
         {!result ? <section className="omr-scanner-only-content">
@@ -642,8 +729,9 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
             <label>Assessment<select value={assessmentId} onChange={(e) => { const nextId = e.target.value; setAssessmentId(nextId); setGradebookAssessmentId(assessments.find((item) => item.id === nextId)?.gradebook_assessment_id ?? ""); clearScan() }} disabled={!classId || loading}><option value="">Select saved assessment</option>{classAssessments.map((item) => <option key={item.id} value={item.id}>{item.title} - {item.item_count} items</option>)}</select></label>
           </div>{classId && !loading && classAssessments.length === 0 && <p className="omr-scanner-note">No saved assessment for this class. Create one in Activities.</p>}</div>
           <div className="omr-card"><div className="omr-section-heading"><div><span>2</span><h3>Capture or import paper</h3></div>{selectedAssessment && <b>{selectedAssessment.item_count} items</b>}</div>
-            <input ref={cameraInputRef} className="omr-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(e) => chooseScan(e.target.files?.[0])}/><input ref={uploadInputRef} className="omr-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => chooseScan(e.target.files?.[0])}/>
-            <div className="omr-capture-buttons"><button type="button" className="omr-primary" onClick={openCamera} disabled={!selectedAssessment || processing}>Open camera</button><button type="button" className="omr-secondary" onClick={() => uploadInputRef.current?.click()} disabled={!selectedAssessment || processing}>Import image</button></div>
+            <input ref={uploadInputRef} className="omr-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => chooseScan(e.target.files?.[0])}/>
+            <div className="omr-capture-buttons"><button type="button" className="omr-primary" onClick={() => void openCamera()} disabled={!selectedAssessment || processing || cameraStarting}>{cameraStarting ? "Starting camera..." : "Open camera"}</button><button type="button" className="omr-secondary" onClick={() => uploadInputRef.current?.click()} disabled={!selectedAssessment || processing || cameraOpen}>Import image</button></div>
+            {cameraOpen && <div className="omr-live-camera" role="dialog" aria-modal="true" aria-label="OMR camera preview"><div className="omr-camera-stage"><video ref={videoRef} playsInline muted/><div className="omr-a4-guide" aria-hidden="true"><i/><i/><i/><i/></div><div className="omr-camera-instruction">{cameraMessage}</div></div><div className="omr-camera-actions"><button type="button" className="omr-secondary" onClick={stopCamera}>Cancel</button><button type="button" className="omr-primary" onClick={() => void captureCameraImage()} disabled={cameraStarting}>Capture paper</button></div></div>}
             {scanPreview ? <div className="omr-scan-preview"><img src={scanPreview} alt="OMR paper preview"/><div><strong>{scanFile?.name}</strong><p>Use a straight, well-lit image with all four page markers visible.</p><div className="omr-preview-actions"><button type="button" className="omr-secondary" onClick={clearScan}>Retake</button><button type="button" className="omr-primary" onClick={() => void processSheet()} disabled={processing}>{processing ? "Checking answers..." : "Check OMR answers"}</button></div></div></div> : <div className="omr-scan-empty">Select an assessment, then capture or import the answer sheet.</div>}
           </div>
         </section> : <section className="omr-result-frame omr-print-report">
