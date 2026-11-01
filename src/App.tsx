@@ -6012,6 +6012,8 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
   const [savingProfile, setSavingProfile] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [activePanel, setActivePanel] = useState<ProfilePanel>(null)
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
   const [notifications, setNotifications] = useState({ classStarts: true, studentRequests: true, attendance: true, reminders: true })
   const [attendanceSettings, setAttendanceSettings] = useState({ lateMinutes: 15, closeMinutes: 30, allowExcused: true })
 
@@ -6178,10 +6180,22 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
         <button onClick={() => setActivePanel("attendance")}>Attendance settings<Icon name="chevron" /></button>
       </section>
     </div>
-
-
-
+    <button type="button" className="profile-mobile-logout" onClick={() => setLogoutConfirmOpen(true)}>
+      <Icon name="logout" size={18} /> Log out
+    </button>
     </main>
+
+    {logoutConfirmOpen && <div className="modal-backdrop profile-logout-backdrop" onMouseDown={event => event.target === event.currentTarget && !loggingOut && setLogoutConfirmOpen(false)}>
+      <section className="profile-logout-confirm" role="alertdialog" aria-modal="true" aria-labelledby="profile-logout-title" aria-describedby="profile-logout-description">
+        <span className="profile-logout-icon" aria-hidden="true"><Icon name="logout" size={21} /></span>
+        <h2 id="profile-logout-title">Log out?</h2>
+        <p id="profile-logout-description">You will return to the faculty sign-in page on this device.</p>
+        <div className="profile-logout-actions">
+          <button type="button" className="secondary-button" onClick={() => setLogoutConfirmOpen(false)} disabled={loggingOut}>Cancel</button>
+          <button type="button" className="danger-button" disabled={loggingOut} onClick={async () => { setLoggingOut(true); try { await onLogout() } finally { setLoggingOut(false) } }}>{loggingOut ? "Logging out..." : "Log out"}</button>
+        </div>
+      </section>
+    </div>}
 
     {activePanel && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setActivePanel(null)}><section className="profile-settings-modal" role="dialog" aria-modal="true" aria-labelledby="profile-settings-title">
       <button className="modal-close" onClick={() => setActivePanel(null)} aria-label="Close">×</button><p className="eyebrow">Profile settings</p><h2 id="profile-settings-title">{panelTitle[activePanel as Exclude<ProfilePanel, null>]}</h2>
@@ -7993,10 +8007,12 @@ export default function App() {
         {renderPage()}
       </main>
       <BottomNav page={page} setPage={setPage} />
-      <QuickActionsFab
-        setPage={setPage}
-        onScanAnswer={() => setOmrScannerOpen(true)}
-      />
+      {page !== "profile" && (
+        <QuickActionsFab
+          setPage={setPage}
+          onScanAnswer={() => setOmrScannerOpen(true)}
+        />
+      )}
       {omrScannerOpen && (
         <OmrScanner onClose={() => setOmrScannerOpen(false)} />
       )}
