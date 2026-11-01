@@ -4670,11 +4670,17 @@ function ActivitiesPage({
     return index === 0 ? "Next up" : "Scheduled"
   }
 
+  const isQuizManuallyOpen = (activity: ActivityItem) =>
+    Boolean(
+      activity.type === "Quiz" &&
+      activity.omrAssessmentId &&
+      quizOpenStates[activity.omrAssessmentId],
+    )
   const activeAssessments = reminders.filter((activity, index) =>
-    getActivityStatus(activity, index) !== "Finished",
+    isQuizManuallyOpen(activity) || getActivityStatus(activity, index) !== "Finished",
   )
   const finishedAssessments = reminders.filter((activity, index) =>
-    getActivityStatus(activity, index) === "Finished",
+    !isQuizManuallyOpen(activity) && getActivityStatus(activity, index) === "Finished",
   )
   const visibleAssessments = assessmentView === "finished"
     ? finishedAssessments
@@ -5613,7 +5619,9 @@ const reminderFormValid = Boolean(
             return (
             <article key={a.id ?? `${a.title}-${originalIndex}`}>
               {(() => {
-                const status = getActivityStatus(a, originalIndex)
+                const scheduledStatus = getActivityStatus(a, originalIndex)
+                const manuallyReopened = isQuizManuallyOpen(a) && scheduledStatus === "Finished"
+                const status = manuallyReopened ? "Reopened" : scheduledStatus
                 return (
                   <>
                     <div className="timeline-date">
@@ -5666,18 +5674,21 @@ const reminderFormValid = Boolean(
                           <span>Print OMR</span>
                         </button>
                       )}
-                      {a.omrAssessmentId && a.type === "Quiz" && status === "Finished" && (
+                      {a.omrAssessmentId && a.type === "Quiz" && (
+                        (scheduledStatus === "Finished" && assessmentView === "finished") ||
+                        (manuallyReopened && assessmentView === "active")
+                      ) && (
                         <button
                           type="button"
-                          className={`reminder-open-quiz-button${quizOpenStates[a.omrAssessmentId] ? " open" : ""}`}
-                          aria-label={`${quizOpenStates[a.omrAssessmentId] ? "Close" : "Open"} ${a.title} for students`}
-                          aria-pressed={Boolean(quizOpenStates[a.omrAssessmentId])}
+                          className={`reminder-open-quiz-button${manuallyReopened ? " open" : ""}`}
+                          aria-label={`${manuallyReopened ? "Close" : "Open"} ${a.title} for students`}
+                          aria-pressed={manuallyReopened}
                           disabled={quizStatusSavingId === a.omrAssessmentId}
                           onClick={() => void toggleQuizOpen(a)}
                         >
                           {quizStatusSavingId === a.omrAssessmentId
                             ? "Updating..."
-                            : quizOpenStates[a.omrAssessmentId]
+                            : manuallyReopened
                               ? "Close quiz"
                               : "Open quiz"}
                         </button>
