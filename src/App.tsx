@@ -4324,6 +4324,8 @@ function ActivitiesPage({
   const [reminderNotice, setReminderNotice] = useState("")
   const [reminderToDelete, setReminderToDelete] = useState<ActivityItem | null>(null)
   const [reminderDeleting, setReminderDeleting] = useState(false)
+  const [quizOpenStates, setQuizOpenStates] = useState<Record<string, boolean>>({})
+  const [quizStatusSavingId, setQuizStatusSavingId] = useState<string | null>(null)
 
   const mapReminderRow = (row: any): ActivityItem => ({
     id: String(row.id),
@@ -4377,8 +4379,33 @@ function ActivitiesPage({
       .eq("faculty_id", user.id)
       .order("reminder_date", { ascending: true })
       .order("start_time", { ascending: true })
-    if (error) setReminderNotice(`Unable to load reminders: ${error.message}`)
-    else setReminders((data ?? []).map(mapReminderRow))
+    if (error) {
+      setReminderNotice(`Unable to load reminders: ${error.message}`)
+    } else {
+      const mappedReminders = (data ?? []).map(mapReminderRow)
+      setReminders(mappedReminders)
+
+      const assessmentIds = mappedReminders
+        .map((item) => item.omrAssessmentId)
+        .filter((id): id is string => Boolean(id))
+
+      if (assessmentIds.length > 0) {
+        const { data: statusRows, error: statusError } = await supabase
+          .from("omr_assessments")
+          .select("id, status")
+          .in("id", assessmentIds)
+
+        if (statusError) {
+          console.error("Unable to load quiz open states:", statusError)
+        } else {
+          setQuizOpenStates(Object.fromEntries(
+            (statusRows ?? []).map((row: any) => [String(row.id), String(row.status) === "open"]),
+          ))
+        }
+      } else {
+        setQuizOpenStates({})
+      }
+    }
     setRemindersLoading(false)
   }
 
@@ -4394,6 +4421,7 @@ function ActivitiesPage({
     const channel = supabase
       .channel("faculty-reminders-sync")
       .on("postgres_changes", { event: "*", schema: "public", table: "faculty_reminders" }, () => void loadReminders())
+      .on("postgres_changes", { event: "*", schema: "public", table: "omr_assessments" }, () => void loadReminders())
       .subscribe()
     return () => { void supabase.removeChannel(channel) }
   }, [])
@@ -4404,6 +4432,7 @@ function ActivitiesPage({
   const [draftSavingId, setDraftSavingId] = useState<string | null>(null)
   const [savedDraftIds, setSavedDraftIds] = useState<Record<string, boolean>>({})
   const [concernView, setConcernView] = useState<"open" | "reviewed">("open")
+  const [assessmentView, setAssessmentView] = useState<"active" | "finished">("active")
 
   const formatRequestSubmittedAt = (value: string) => {
     const date = new Date(value)
@@ -4640,6 +4669,16 @@ function ActivitiesPage({
     if (!Number.isNaN(startAt) && currentTime >= startAt) return "In progress"
     return index === 0 ? "Next up" : "Scheduled"
   }
+
+  const activeAssessments = reminders.filter((activity, index) =>
+    getActivityStatus(activity, index) !== "Finished",
+  )
+  const finishedAssessments = reminders.filter((activity, index) =>
+    getActivityStatus(activity, index) === "Finished",
+  )
+  const visibleAssessments = assessmentView === "finished"
+    ? finishedAssessments
+    : activeAssessments
 
   const openNewReminder = () => {
     setDraft({ ...createActivityDraft(), classId: reminderClasses[0]?.id ?? "" })
@@ -4943,6 +4982,43 @@ function ActivitiesPage({
     setEditing(null)
     showToast(draft.id ? "Assessment updated successfully." : "Assessment added successfully.")
     await loadReminders()
+  }
+
+  const toggleQuizOpen = async (activity: ActivityItem) => {
+    if (!activity.omrAssessmentId || activity.type !== "Quiz") return
+
+    const isOpen = Boolean(quizOpenStates[activity.omrAssessmentId])
+    const nextStatus = isOpen ? "closed" : "open"
+    setQuizStatusSavingId(activity.omrAssessmentId)
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setQuizStatusSavingId(null)
+      showToast("Your session expired. Sign in again.", "error")
+      return
+    }
+
+    const { error } = await supabase
+      .from("omr_assessments")
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .eq("id", activity.omrAssessmentId)
+      .eq("faculty_id", user.id)
+
+    setQuizStatusSavingId(null)
+    if (error) {
+      showToast(`Unable to ${isOpen ? "close" : "open"} quiz: ${error.message}`, "error")
+      return
+    }
+
+    setQuizOpenStates((current) => ({
+      ...current,
+      [activity.omrAssessmentId as string]: !isOpen,
+    }))
+    showToast(
+      isOpen
+        ? `${activity.title} is now closed to students.`
+        : `${activity.title} is now open to enrolled students.`,
+    )
   }
 
   const generatePrintableOmrPaper = async (activity: ActivityItem) => {
@@ -5307,9 +5383,29 @@ const reminderFormValid = Boolean(
             <p className="eyebrow">Faculty calendar</p>
             <h3>Scheduled assessments and reminders</h3>
           </div>
-          <button className="primary-button" onClick={openNewReminder} disabled={reminderClasses.length === 0}>
-            <Icon name="plus" /> {reminderClasses.length === 0 ? "Create a class first" : "Add assessment"}
-          </button>
+          <div className="assessment-toolbar-actions">
+            <div className="assessment-view-controls" role="group" aria-label="Assessment view">
+              <button
+                type="button"
+                className={assessmentView === "active" ? "active" : ""}
+                aria-pressed={assessmentView === "active"}
+                onClick={() => setAssessmentView("active")}
+              >
+                Active <span>{activeAssessments.length}</span>
+              </button>
+              <button
+                type="button"
+                className={assessmentView === "finished" ? "active" : ""}
+                aria-pressed={assessmentView === "finished"}
+                onClick={() => setAssessmentView("finished")}
+              >
+                Finished <span>{finishedAssessments.length}</span>
+              </button>
+            </div>
+            <button className="primary-button" onClick={openNewReminder} disabled={reminderClasses.length === 0}>
+              <Icon name="plus" /> {reminderClasses.length === 0 ? "Create a class first" : "Add assessment"}
+            </button>
+          </div>
         </section>
         <section className="concerns-section" aria-labelledby="concerns-title">
           <div className="concerns-heading">
@@ -5506,12 +5602,18 @@ const reminderFormValid = Boolean(
         <div className="timeline">
           {remindersLoading ? (
             <p className="reminder-list-state">Loading reminders...</p>
-          ) : reminders.length === 0 ? (
-            <p className="reminder-list-state">No reminders yet. Select Add assessment to create one.</p>
-          ) : reminders.map((a, i) => (
-            <article key={a.id ?? `${a.title}-${i}`}>
+          ) : visibleAssessments.length === 0 ? (
+            <p className="reminder-list-state">
+              {assessmentView === "finished"
+                ? "No finished assessments yet."
+                : "No active assessments. Select Add assessment to create one."}
+            </p>
+          ) : visibleAssessments.map((a) => {
+            const originalIndex = reminders.findIndex((item) => item.id === a.id)
+            return (
+            <article key={a.id ?? `${a.title}-${originalIndex}`}>
               {(() => {
-                const status = getActivityStatus(a, i)
+                const status = getActivityStatus(a, originalIndex)
                 return (
                   <>
                     <div className="timeline-date">
@@ -5564,10 +5666,26 @@ const reminderFormValid = Boolean(
                           <span>Print OMR</span>
                         </button>
                       )}
+                      {a.omrAssessmentId && a.type === "Quiz" && status === "Finished" && (
+                        <button
+                          type="button"
+                          className={`reminder-open-quiz-button${quizOpenStates[a.omrAssessmentId] ? " open" : ""}`}
+                          aria-label={`${quizOpenStates[a.omrAssessmentId] ? "Close" : "Open"} ${a.title} for students`}
+                          aria-pressed={Boolean(quizOpenStates[a.omrAssessmentId])}
+                          disabled={quizStatusSavingId === a.omrAssessmentId}
+                          onClick={() => void toggleQuizOpen(a)}
+                        >
+                          {quizStatusSavingId === a.omrAssessmentId
+                            ? "Updating..."
+                            : quizOpenStates[a.omrAssessmentId]
+                              ? "Close quiz"
+                              : "Open quiz"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         aria-label={`Edit ${a.title}`}
-                        onClick={() => void openAssessmentEditor(a, i)}
+                        onClick={() => void openAssessmentEditor(a, originalIndex)}
                       >
                         Edit
                       </button>
@@ -5584,7 +5702,8 @@ const reminderFormValid = Boolean(
                 )
               })()}
             </article>
-          ))}
+            )
+          })}
         </div>
       </div>
       {reminderToDelete && (
