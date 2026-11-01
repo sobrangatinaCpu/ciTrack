@@ -4973,3 +4973,35 @@ a {
     left: auto;
   }
 }
+
+/* Final phone placement: center sync notice above Records in bottom navigation */
+@media (max-width: 600px) {
+  .connection-notice {
+    right: auto !important;
+    left: 50% !important;
+    bottom: calc(82px + env(safe-area-inset-bottom)) !important;
+    width: max-content !important;
+    max-width: calc(100vw - 28px) !important;
+    min-height: 38px !important;
+    padding: 8px 13px !important;
+    transform: translateX(-50%) !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    text-align: center !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .connection-notice span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .summary-speed-dial {
+    right: 14px !important;
+    bottom: calc(136px + env(safe-area-inset-bottom)) !important;
+    left: auto !important;
+  }
+}
