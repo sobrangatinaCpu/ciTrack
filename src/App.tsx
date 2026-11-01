@@ -517,12 +517,14 @@ type FacultyProfile = {
 
 type FacultyNotification = {
   id: string
-  kind: "concern" | "omr"
+  kind: "concern" | "omr" | "assessment" | "quiz" | "gradebook" | "system"
   title: string
   message: string
   createdAt: string
-  targetPage?: "activities" | "records"
+  readAt?: string
+  targetPage?: "activities" | "records" | "classes" | "home"
   classId?: string
+  entityId?: string
 }
 
 const emptyFacultyProfile: FacultyProfile = {
@@ -560,111 +562,31 @@ const loadFacultyNotifications = async (): Promise<FacultyNotification[]> => {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return []
 
-  const [requestResult, submissionResult] = await Promise.all([
-    supabase
-      .from("student_requests")
-      .select("id, faculty_id, student_name, category, message, status, created_at")
-      .eq("faculty_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(30),
-    supabase
-      .from("omr_submissions")
-      .select("id, faculty_id, class_id, assessment_id, detected_student_number, correct_count, blank_count, multiple_count, proposed_score, final_score, confidence, status, reviewed_at, published_at, created_at")
-      .eq("faculty_id", user.id)
-      .in("status", ["needs_review", "approved", "published"])
-      .order("created_at", { ascending: false })
-      .limit(30),
-  ])
+  const { data, error } = await supabase
+    .from("faculty_notifications")
+    .select("id, kind, title, message, target_page, class_id, entity_id, read_at, created_at")
+    .eq("recipient_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(100)
 
-  const notifications: FacultyNotification[] = []
-
-  if (requestResult.error) {
-    console.error("Unable to load student request notifications:", requestResult.error)
-  } else {
-    notifications.push(
-      ...(requestResult.data ?? [])
-        .filter((row) => ["open", "pending", "submitted"].includes(String(row.status ?? "open").toLowerCase()))
-        .map((row) => {
-          const studentName = String(row.student_name ?? "A student")
-          return {
-            id: `concern-${row.id}`,
-            kind: "concern" as const,
-            title: `Concern from ${studentName}`,
-            message: String(row.message ?? `${studentName} submitted a concern.`),
-            createdAt: String(row.created_at ?? new Date().toISOString()),
-            targetPage: "activities" as const,
-          }
-        }),
-    )
+  if (error) {
+    console.error("Unable to load faculty notifications:", error)
+    return []
   }
 
-  if (submissionResult.error) {
-    console.error("Unable to load OMR notifications:", submissionResult.error)
-  } else {
-    const submissions = submissionResult.data ?? []
-    const assessmentIds = [...new Set(submissions.map((row) => String(row.assessment_id ?? "")).filter(Boolean))]
-    const classIds = [...new Set(submissions.map((row) => String(row.class_id ?? "")).filter(Boolean))]
-
-    const [assessmentResult, classResult, enrollmentResult] = await Promise.all([
-      assessmentIds.length
-        ? supabase.from("omr_assessments").select("id, title, item_count, points_per_item").in("id", assessmentIds)
-        : Promise.resolve({ data: [], error: null }),
-      classIds.length
-        ? supabase.from("classes").select("id, subject, code").in("id", classIds)
-        : Promise.resolve({ data: [], error: null }),
-      classIds.length
-        ? supabase.from("class_students").select("*").in("class_id", classIds)
-        : Promise.resolve({ data: [], error: null }),
-    ])
-
-    if (assessmentResult.error) console.error("Unable to load OMR assessment notification details:", assessmentResult.error)
-    if (classResult.error) console.error("Unable to load OMR class notification details:", classResult.error)
-    if (enrollmentResult.error) console.error("Unable to load OMR student notification details:", enrollmentResult.error)
-
-    const assessmentById = new Map((assessmentResult.data ?? []).map((row: any) => [String(row.id), row]))
-    const classById = new Map((classResult.data ?? []).map((row: any) => [String(row.id), row]))
-    const studentByClassAndNumber = new Map<string, string>()
-    ;(enrollmentResult.data ?? []).forEach((row: any) => {
-      const studentNumber = String(row.student_number ?? row.student_no ?? row.school_id ?? row.student_code ?? "").trim()
-      const studentName = String(row.student_name ?? row.full_name ?? row.name ?? "").trim()
-      if (studentNumber && studentName) {
-        studentByClassAndNumber.set(`${String(row.class_id)}:${studentNumber}`, studentName)
-      }
-    })
-
-    notifications.push(...submissions.map((row: any) => {
-      const assessment = assessmentById.get(String(row.assessment_id)) as any
-      const classItem = classById.get(String(row.class_id)) as any
-      const title = String(assessment?.title ?? "OMR assessment")
-      const classLabel = [classItem?.subject, classItem?.code].filter(Boolean).join(" - ") || "Class"
-      const studentNumber = String(row.detected_student_number ?? "").trim()
-      const studentName = studentByClassAndNumber.get(`${String(row.class_id)}:${studentNumber}`) || "Student"
-      const score = Number(row.final_score ?? row.proposed_score ?? 0)
-      const itemCount = Math.max(0, Number(assessment?.item_count ?? 0))
-      const pointsPerItem = Math.max(0, Number(assessment?.points_per_item ?? 1))
-      const maximum = itemCount * pointsPerItem
-      const status = String(row.status ?? "needs_review")
-      const statusLabel = status === "published" ? "Published" : status === "approved" ? "Approved" : "Needs review"
-      const issueSummary = [
-        Number(row.blank_count ?? 0) > 0 ? `${row.blank_count} missed` : "",
-        Number(row.multiple_count ?? 0) > 0 ? `${row.multiple_count} multiple` : "",
-      ].filter(Boolean).join(" · ")
-
-      return {
-        id: `omr-${row.id}`,
-        kind: "omr" as const,
-        title: `${studentName} (${studentNumber || "No student number"}) submitted ${title}`,
-        message: `${classLabel} · Score ${score}${maximum > 0 ? ` / ${maximum}` : ""} · ${statusLabel}${issueSummary ? ` · ${issueSummary}` : ""}`,
-        createdAt: String(row.published_at ?? row.reviewed_at ?? row.created_at ?? new Date().toISOString()),
-        targetPage: "records" as const,
-        classId: String(row.class_id ?? ""),
-      }
-    }))
-  }
-
-  return notifications
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
-    .slice(0, 50)
+  return (data ?? []).map((row: any) => ({
+    id: String(row.id),
+    kind: String(row.kind ?? "system") as FacultyNotification["kind"],
+    title: String(row.title ?? "Notification"),
+    message: String(row.message ?? ""),
+    targetPage: ["activities", "records", "classes", "home"].includes(String(row.target_page))
+      ? String(row.target_page) as FacultyNotification["targetPage"]
+      : "home",
+    classId: row.class_id ? String(row.class_id) : undefined,
+    entityId: row.entity_id ? String(row.entity_id) : undefined,
+    readAt: row.read_at ? String(row.read_at) : undefined,
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  }))
 }
 
 function Header({
@@ -686,14 +608,13 @@ function Header({
       const { data: { user } } = await supabase.auth.getUser()
       if (active && user) setProfile(profileFromUser(user))
       const notices = await loadFacultyNotifications()
-      if (active) setNotificationCount(notices.length)
+      if (active) setNotificationCount(notices.filter((notice) => !notice.readAt).length)
     }
     void loadHeader()
     const timer = window.setInterval(loadHeader, 60_000)
     const profileChannel = supabase
       .channel("faculty-header-sync")
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, loadHeader)
-      .on("postgres_changes", { event: "*", schema: "public", table: "omr_submissions" }, loadHeader)
+      .on("postgres_changes", { event: "*", schema: "public", table: "faculty_notifications" }, loadHeader)
       .subscribe()
     return () => {
       active = false
@@ -6279,29 +6200,80 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
 function NotificationsPage({ setPage }: { setPage: (page: string) => void }) {
   const [items, setItems] = useState<FacultyNotification[]>([])
   const [loading, setLoading] = useState(true)
-  const load = async () => { setLoading(true); setItems(await loadFacultyNotifications()); setLoading(false) }
+  const [notificationView, setNotificationView] = useState<"all" | "unread">("all")
+
+  const load = async () => {
+    setLoading(true)
+    setItems(await loadFacultyNotifications())
+    setLoading(false)
+  }
+
+  const markRead = async (item: FacultyNotification) => {
+    if (!item.readAt) {
+      const readAt = new Date().toISOString()
+      const { error } = await supabase
+        .from("faculty_notifications")
+        .update({ read_at: readAt })
+        .eq("id", item.id)
+      if (!error) setItems((current) => current.map((notice) =>
+        notice.id === item.id ? { ...notice, readAt } : notice,
+      ))
+    }
+
+    if (item.targetPage === "records") {
+      if (item.classId) sessionStorage.setItem("records-target-class", item.classId)
+      sessionStorage.setItem("records-target-view", "summary")
+    }
+    if (item.targetPage === "activities" && item.entityId) {
+      sessionStorage.setItem("activities-target-entity", item.entityId)
+    }
+    setPage(item.targetPage ?? "home")
+  }
+
+  const markAllRead = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const readAt = new Date().toISOString()
+    const { error } = await supabase
+      .from("faculty_notifications")
+      .update({ read_at: readAt })
+      .eq("recipient_id", user.id)
+      .is("read_at", null)
+    if (!error) setItems((current) => current.map((item) => ({ ...item, readAt: item.readAt ?? readAt })))
+  }
+
   useEffect(() => {
     void load()
     const channel = supabase.channel("faculty-notifications-page")
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "omr_submissions" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "faculty_notifications" }, load)
       .subscribe()
     return () => { void supabase.removeChannel(channel) }
   }, [])
+
+  const visibleItems = notificationView === "unread"
+    ? items.filter((item) => !item.readAt)
+    : items
+  const unreadCount = items.filter((item) => !item.readAt).length
+
   return (<>
     <Header title="Notifications" onNotify={() => setPage("notifications")} onProfile={() => setPage("profile")} />
     <section className="notifications-page" aria-labelledby="notifications-title">
-      <div className="section-heading"><div><p className="eyebrow">Teacher updates</p><h2 id="notifications-title">Notifications</h2></div><button onClick={() => void load()}>Refresh</button></div>
-      {loading ? <p className="notification-empty">Loading notifications...</p> : items.length === 0 ? <div className="empty-prompt"><span><Icon name="bell"/></span><h3>You’re all caught up</h3><p>New OMR results and open student concerns will appear here.</p></div> : <div className="notification-list">{items.map(item => <button key={item.id} className={`notification-item ${item.kind}`} onClick={() => {
-        if (item.kind === "omr") {
-          if (item.classId) sessionStorage.setItem("records-target-class", item.classId)
-          sessionStorage.setItem("records-target-view", "summary")
-        }
-        setPage(item.targetPage ?? "activities")
-      }}><span className="notification-item-icon"><Icon name={item.kind === "omr" ? "scan" : item.kind === "concern" ? "users" : "clipboard"}/></span><span><strong>{item.title}</strong><small>{item.message}</small><time>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(item.createdAt))}</time></span><Icon name="chevron" size={16}/></button>)}</div>}
+      <div className="section-heading">
+        <div><p className="eyebrow">Teacher updates</p><h2 id="notifications-title">Notifications</h2></div>
+        <div className="notification-heading-actions">
+          <div className="notification-view-controls" role="group" aria-label="Notification view">
+            <button type="button" className={notificationView === "all" ? "active" : ""} onClick={() => setNotificationView("all")}>All <span>{items.length}</span></button>
+            <button type="button" className={notificationView === "unread" ? "active" : ""} onClick={() => setNotificationView("unread")}>Unread <span>{unreadCount}</span></button>
+          </div>
+          {unreadCount > 0 && <button type="button" onClick={() => void markAllRead()}>Mark all read</button>}
+          <button type="button" onClick={() => void load()}>Refresh</button>
+        </div>
+      </div>
+      {loading ? <p className="notification-empty">Loading notifications...</p> : visibleItems.length === 0 ? <div className="empty-prompt"><span><Icon name="bell"/></span><h3>{notificationView === "unread" ? "No unread notifications" : "You’re all caught up"}</h3><p>Concerns, assessments, quiz access, OMR results, and gradebook updates will appear here.</p></div> : <div className="notification-list">{visibleItems.map(item => <button key={item.id} className={`notification-item ${item.kind}${item.readAt ? " read" : " unread"}`} onClick={() => void markRead(item)}><span className="notification-item-icon"><Icon name={item.kind === "omr" ? "scan" : item.kind === "concern" ? "users" : item.kind === "gradebook" ? "chart" : item.kind === "quiz" ? "book" : "clipboard"}/></span><span><strong>{item.title}</strong><small>{item.message}</small><time>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(item.createdAt))}</time></span>{!item.readAt && <i className="notification-unread-dot" aria-label="Unread"/>}<Icon name="chevron" size={16}/></button>)}</div>}
     </section>
   </>)
 }
+
 function ActiveClass({
   item,
   onClose,

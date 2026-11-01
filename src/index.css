@@ -4341,3 +4341,15 @@ a {
   color: #087849;
   background: #e6f7ef;
 }
+
+/* Complete faculty notification center */
+.notification-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.notification-view-controls{display:inline-flex;align-items:center;gap:4px;padding:3px;border:1px solid #d7e4ee;border-radius:11px;background:#fff}
+.notification-view-controls button{min-height:34px;display:inline-flex;align-items:center;gap:6px;padding:0 11px;border:0!important;border-radius:8px!important;color:#5e7387!important;background:transparent!important;box-shadow:none!important}
+.notification-view-controls button.active{color:#1769aa!important;background:#eaf5ff!important}
+.notification-view-controls button span{min-width:20px;padding:2px 5px;border-radius:999px;background:#eef3f7;font-size:10px;text-align:center}
+.notification-item.unread{border-color:#a9cce7;background:#fbfdff}
+.notification-item.read{opacity:.82}
+.notification-unread-dot{width:8px;height:8px;border-radius:50%;background:#e85b61;box-shadow:0 0 0 3px #fdebec}
+.notification-item.assessment{border-left:3px solid #3e8fcf}.notification-item.quiz{border-left:3px solid #d39a2c}.notification-item.gradebook{border-left:3px solid #528f69}.notification-item.system{border-left:3px solid #7b8793}
+@media(max-width:760px){.notification-heading-actions{width:100%;align-items:stretch}.notification-view-controls{width:100%}.notification-view-controls button{flex:1;justify-content:center}.notification-heading-actions>button{flex:1}}
