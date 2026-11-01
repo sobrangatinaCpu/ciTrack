@@ -8007,12 +8007,10 @@ export default function App() {
         {renderPage()}
       </main>
       <BottomNav page={page} setPage={setPage} />
-      {page !== "profile" && (
-        <QuickActionsFab
-          setPage={setPage}
-          onScanAnswer={() => setOmrScannerOpen(true)}
-        />
-      )}
+      <QuickActionsFab
+        setPage={setPage}
+        onScanAnswer={() => setOmrScannerOpen(true)}
+      />
       {omrScannerOpen && (
         <OmrScanner onClose={() => setOmrScannerOpen(false)} />
       )}
