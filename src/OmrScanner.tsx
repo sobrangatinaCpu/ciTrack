@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "./lib/supabase"
 import { jsPDF } from "jspdf"
+import jsQR from "jsqr"
 import { saveStudentScore } from "./lib/teacher-grade-service"
 import "./omr-manager.css"
 
@@ -61,6 +62,9 @@ function classDetails(row: Record<string, unknown>): FacultyClass {
   return { id: String(row.id), subject, section, label: `${subject} - ${section}` }
 }
 function clamp(value: number, min: number, max: number) { return Math.min(max, Math.max(min, value)) }
+function expectedPaperCode(assessment: Assessment) {
+  return `CIT-OMR|${assessment.id}|${assessment.test_id}`
+}
 function csvEscape(value: unknown) { const text = String(value ?? ""); return `"${text.replace(/"/g, '""')}"` }
 
 export default function OmrScanner({ onClose }: { onClose: () => void }) {
@@ -357,6 +361,29 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
       context.fillRect(0, 0, canvas.width, canvas.height)
       context.drawImage(image, paper.sx, paper.sy, paper.sw, paper.sh, 0, 0, canvas.width, canvas.height)
       const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
+
+      // Restrict scanning to the official assessment-bound OMR paper.
+      // The printed sheet must contain a QR payload in this exact format:
+      // CIT-OMR|<assessment UUID>|<three-digit test ID>
+      const paperQr = jsQR(imageData.data, canvas.width, canvas.height, {
+        inversionAttempts: "attemptBoth",
+      })
+      if (!paperQr) {
+        throw new Error(
+          "Official OMR paper code was not found. Use the CiTracker sheet generated for this assessment and keep its QR code fully visible.",
+        )
+      }
+
+      const expectedCode = expectedPaperCode(selectedAssessment)
+      if (paperQr.data.trim() !== expectedCode) {
+        const parts = paperQr.data.trim().split("|")
+        if (parts[0] !== "CIT-OMR") {
+          throw new Error("This is not an official CiTracker OMR paper.")
+        }
+        throw new Error(
+          "This OMR paper belongs to another assessment. Select the matching Quiz or Exam, or use the correct printed sheet.",
+        )
+      }
 
       const itemResults: ItemResult[] = []
       for (let index = 0; index < selectedAssessment.item_count; index += 1) {
@@ -727,7 +754,15 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
           <div className="omr-card"><div className="omr-section-heading"><div><span>1</span><h3>Select assessment</h3></div></div><div className="omr-fields">
             <label>Subject and section<select value={classId} onChange={(e) => { setClassId(e.target.value); setAssessmentId(""); clearScan() }} disabled={loading}><option value="">Select class</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
             <label>Assessment<select value={assessmentId} onChange={(e) => { const nextId = e.target.value; setAssessmentId(nextId); setGradebookAssessmentId(assessments.find((item) => item.id === nextId)?.gradebook_assessment_id ?? ""); clearScan() }} disabled={!classId || loading}><option value="">Select saved assessment</option>{classAssessments.map((item) => <option key={item.id} value={item.id}>{item.title} - {item.item_count} items</option>)}</select></label>
-          </div>{classId && !loading && classAssessments.length === 0 && <p className="omr-scanner-note">No saved assessment for this class. Create one in Activities.</p>}</div>
+          </div>
+          {selectedAssessment && (
+            <div className="omr-paper-code-status">
+              <strong>Required paper code</strong>
+              <code>{expectedPaperCode(selectedAssessment)}</code>
+              <small>The scanner accepts only a sheet containing this assessment QR code.</small>
+            </div>
+          )}
+          {classId && !loading && classAssessments.length === 0 && <p className="omr-scanner-note">No saved assessment for this class. Create one in Activities.</p>}</div>
           <div className="omr-card"><div className="omr-section-heading"><div><span>2</span><h3>Capture or import paper</h3></div>{selectedAssessment && <b>{selectedAssessment.item_count} items</b>}</div>
             <input ref={uploadInputRef} className="omr-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => chooseScan(e.target.files?.[0])}/>
             <div className="omr-capture-buttons"><button type="button" className="omr-primary" onClick={() => void openCamera()} disabled={!selectedAssessment || processing || cameraStarting}>{cameraStarting ? "Starting camera..." : "Open camera"}</button><button type="button" className="omr-secondary" onClick={() => uploadInputRef.current?.click()} disabled={!selectedAssessment || processing || cameraOpen}>Import image</button></div>

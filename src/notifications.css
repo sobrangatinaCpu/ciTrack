@@ -1,0 +1,173 @@
+/* Notifications aligned with the CIT Portal light design system */
+.notifications-page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 30px clamp(22px, 4vw, 52px) 112px;
+}
+.notifications-page .section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+.notifications-page .section-heading .eyebrow {
+  color: #6d8296;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+.notifications-page .section-heading h2 {
+  margin: 5px 0 0;
+  color: #102a43;
+  font-size: 26px;
+  line-height: 1.2;
+}
+.notifications-page .section-heading button {
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid #cfdce7;
+  border-radius: 10px;
+  color: #176fc1;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(18, 48, 73, .04);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.notifications-page .section-heading button:hover {
+  border-color: #90b8d9;
+  background: #f5faff;
+}
+.notification-list {
+  display: grid;
+  gap: 11px;
+}
+.notification-item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 17px;
+  border: 1px solid #dbe5ed;
+  border-radius: 14px;
+  color: #18324b;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(22, 50, 76, .04);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.notification-item:hover {
+  transform: translateY(-1px);
+  border-color: #a9c8df;
+  background: #fbfdff;
+  box-shadow: 0 8px 20px rgba(22, 50, 76, .075);
+}
+.notification-item:focus-visible {
+  outline: 3px solid rgba(25, 118, 210, .18);
+  outline-offset: 2px;
+}
+.notification-item-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cee2f2;
+  border-radius: 12px;
+  color: #1878ce;
+  background: #edf7ff;
+}
+.notification-item > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.notification-item strong {
+  display: block;
+  color: #17324d;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.notification-item small {
+  display: block;
+  color: #557088;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.notification-item time {
+  display: block;
+  margin-top: 1px;
+  color: #8796a5;
+  font-size: 10px;
+  font-weight: 700;
+}
+.notification-item > svg:last-child {
+  color: #8294a4;
+}
+.notification-item.omr {
+  border-left: 3px solid #2386d8;
+}
+.notification-item.concern {
+  border-left: 3px solid #d9963b;
+}
+.notification-item.petition,
+.notification-item.request {
+  border-left: 3px solid #7568c9;
+}
+.notification-empty,
+.notifications-page .empty-prompt {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  padding: 30px;
+  border: 1px dashed #cbdbe7;
+  border-radius: 17px;
+  color: #61778b;
+  background: rgba(255, 255, 255, .58);
+  text-align: center;
+}
+.notifications-page .empty-prompt > span {
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #1878ce;
+  background: #edf7ff;
+}
+.notifications-page .empty-prompt h3 {
+  margin: 3px 0 0;
+  color: #17324d;
+  font-size: 16px;
+}
+.notifications-page .empty-prompt p {
+  margin: 0;
+  color: #718598;
+  font-size: 12px;
+}
+@media (max-width: 680px) {
+  .notifications-page { padding: 22px 14px 96px; }
+  .notifications-page .section-heading { align-items: stretch; flex-direction: column; }
+  .notifications-page .section-heading button { width: 100%; }
+  .notification-item {
+    grid-template-columns: 40px minmax(0, 1fr) 16px;
+    gap: 11px;
+    padding: 13px;
+  }
+  .notification-item-icon { width: 40px; height: 40px; }
+  .notification-item strong { font-size: 13px; }
+  .notification-item small { font-size: 11px; }
+}
+
+.reminder-card-actions .reminder-print-omr-button{color:#176fc1;border-color:#bcd7eb;background:#f3f9fd}.reminder-card-actions .reminder-print-omr-button:hover{border-color:#75abd3;background:#e9f5fe}

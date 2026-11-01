@@ -1,0 +1,81 @@
+/* Assessment card actions aligned with the CIT Portal design language */
+.reminder-card-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  width: 132px;
+}
+.reminder-card-actions > button {
+  width: 100%;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid #c9d9e7;
+  border-radius: 11px;
+  color: #315d7e;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.reminder-card-actions > button:hover {
+  border-color: #8bb6d7;
+  background: #f5faff;
+  box-shadow: 0 5px 12px rgba(26, 80, 120, .08);
+}
+.reminder-card-actions .reminder-print-omr-button {
+  min-height: 52px;
+  flex-direction: column;
+  gap: 3px;
+  border-color: #8fc0e6;
+  color: #0871cc;
+  background: #f2f9ff;
+}
+.reminder-card-actions .reminder-print-omr-button:hover {
+  border-color: #278cdc;
+  background: #e8f5ff;
+}
+.reminder-print-icon {
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+.reminder-card-actions .reminder-delete-button {
+  border-color: #efb9b9;
+  color: #b3261e;
+  background: #fff;
+}
+.reminder-card-actions .reminder-delete-button:hover {
+  border-color: #df8585;
+  background: #fff5f4;
+}
+@media (max-width: 760px) {
+  .reminder-card-actions {
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .reminder-card-actions .reminder-print-omr-button {
+    min-height: 48px;
+    flex-direction: row;
+  }
+}
+@media (max-width: 460px) {
+  .reminder-card-actions { grid-template-columns: 1fr; }
+}
+
+/* Text-only assessment actions */
+.reminder-card-actions .reminder-print-omr-button {
+  min-height: 44px;
+  flex-direction: row;
+  gap: 0;
+}
+.reminder-card-actions .reminder-print-omr-button,
+.reminder-card-actions > button {
+  justify-content: center;
+  text-align: center;
+}

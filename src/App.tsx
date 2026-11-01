@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { QRCodeCanvas } from "qrcode.react"
+import { jsPDF } from "jspdf"
+import QRCode from "qrcode"
 import { supabase } from './lib/supabase'
 import { useAttendanceQr } from "./useAttendanceQr"
 import {loginFaculty, registerFaculty,} from "./lib/auth"
 import OmrScanner from "./OmrScanner"
+import "./notifications.css"
+import "./assessment-actions.css"
 
 const citLogo = `${import.meta.env.BASE_URL}cit.png`
 const citBuilding = `${import.meta.env.BASE_URL}citbuild.jpg` 
@@ -338,6 +342,9 @@ type StudentConcern = {
   createdAt: string
   status: "Open" | "Accepted" | "Denied"
   facultyReply?: string
+  reviewDraft?: string
+  draftDecision?: "Accepted" | "Denied"
+  draftSavedAt?: string
 }
 
 const initialStudentConcerns: StudentConcern[] = []
@@ -510,10 +517,12 @@ type FacultyProfile = {
 
 type FacultyNotification = {
   id: string
-  kind: "concern" | "petition" | "request"
+  kind: "concern" | "omr"
   title: string
   message: string
   createdAt: string
+  targetPage?: "activities" | "records"
+  classId?: string
 }
 
 const emptyFacultyProfile: FacultyProfile = {
@@ -551,32 +560,111 @@ const loadFacultyNotifications = async (): Promise<FacultyNotification[]> => {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return []
 
-  const { data, error } = await supabase
-    .from("student_requests")
-    .select("id, faculty_id, student_name, category, message, status, created_at")
-    .eq("faculty_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(30)
+  const [requestResult, submissionResult] = await Promise.all([
+    supabase
+      .from("student_requests")
+      .select("id, faculty_id, student_name, category, message, status, created_at")
+      .eq("faculty_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(30),
+    supabase
+      .from("omr_submissions")
+      .select("id, faculty_id, class_id, assessment_id, detected_student_number, correct_count, blank_count, multiple_count, proposed_score, final_score, confidence, status, reviewed_at, published_at, created_at")
+      .eq("faculty_id", user.id)
+      .in("status", ["needs_review", "approved", "published"])
+      .order("created_at", { ascending: false })
+      .limit(30),
+  ])
 
-  if (error) {
-    console.error("Unable to load student request notifications:", error)
-    return []
+  const notifications: FacultyNotification[] = []
+
+  if (requestResult.error) {
+    console.error("Unable to load student request notifications:", requestResult.error)
+  } else {
+    notifications.push(
+      ...(requestResult.data ?? [])
+        .filter((row) => ["open", "pending", "submitted"].includes(String(row.status ?? "open").toLowerCase()))
+        .map((row) => {
+          const studentName = String(row.student_name ?? "A student")
+          return {
+            id: `concern-${row.id}`,
+            kind: "concern" as const,
+            title: `Concern from ${studentName}`,
+            message: String(row.message ?? `${studentName} submitted a concern.`),
+            createdAt: String(row.created_at ?? new Date().toISOString()),
+            targetPage: "activities" as const,
+          }
+        }),
+    )
   }
 
-  return (data ?? [])
-    .filter((row) => ["open", "pending", "submitted"].includes(String(row.status ?? "open").toLowerCase()))
-    .map((row) => {
-      const kind = normalizeStudentRequestCategory(row.category)
-      const label = studentRequestCategoryLabel(row.category)
-      const studentName = String(row.student_name ?? "A student")
-      return {
-        id: `${kind}-${row.id}`,
-        kind,
-        title: `${label} from ${studentName}`,
-        message: String(row.message ?? `${studentName} submitted a ${label.toLowerCase()}.`),
-        createdAt: String(row.created_at ?? new Date().toISOString()),
+  if (submissionResult.error) {
+    console.error("Unable to load OMR notifications:", submissionResult.error)
+  } else {
+    const submissions = submissionResult.data ?? []
+    const assessmentIds = [...new Set(submissions.map((row) => String(row.assessment_id ?? "")).filter(Boolean))]
+    const classIds = [...new Set(submissions.map((row) => String(row.class_id ?? "")).filter(Boolean))]
+
+    const [assessmentResult, classResult, enrollmentResult] = await Promise.all([
+      assessmentIds.length
+        ? supabase.from("omr_assessments").select("id, title, item_count, points_per_item").in("id", assessmentIds)
+        : Promise.resolve({ data: [], error: null }),
+      classIds.length
+        ? supabase.from("classes").select("id, subject, code").in("id", classIds)
+        : Promise.resolve({ data: [], error: null }),
+      classIds.length
+        ? supabase.from("class_students").select("*").in("class_id", classIds)
+        : Promise.resolve({ data: [], error: null }),
+    ])
+
+    if (assessmentResult.error) console.error("Unable to load OMR assessment notification details:", assessmentResult.error)
+    if (classResult.error) console.error("Unable to load OMR class notification details:", classResult.error)
+    if (enrollmentResult.error) console.error("Unable to load OMR student notification details:", enrollmentResult.error)
+
+    const assessmentById = new Map((assessmentResult.data ?? []).map((row: any) => [String(row.id), row]))
+    const classById = new Map((classResult.data ?? []).map((row: any) => [String(row.id), row]))
+    const studentByClassAndNumber = new Map<string, string>()
+    ;(enrollmentResult.data ?? []).forEach((row: any) => {
+      const studentNumber = String(row.student_number ?? row.student_no ?? row.school_id ?? row.student_code ?? "").trim()
+      const studentName = String(row.student_name ?? row.full_name ?? row.name ?? "").trim()
+      if (studentNumber && studentName) {
+        studentByClassAndNumber.set(`${String(row.class_id)}:${studentNumber}`, studentName)
       }
     })
+
+    notifications.push(...submissions.map((row: any) => {
+      const assessment = assessmentById.get(String(row.assessment_id)) as any
+      const classItem = classById.get(String(row.class_id)) as any
+      const title = String(assessment?.title ?? "OMR assessment")
+      const classLabel = [classItem?.subject, classItem?.code].filter(Boolean).join(" - ") || "Class"
+      const studentNumber = String(row.detected_student_number ?? "").trim()
+      const studentName = studentByClassAndNumber.get(`${String(row.class_id)}:${studentNumber}`) || "Student"
+      const score = Number(row.final_score ?? row.proposed_score ?? 0)
+      const itemCount = Math.max(0, Number(assessment?.item_count ?? 0))
+      const pointsPerItem = Math.max(0, Number(assessment?.points_per_item ?? 1))
+      const maximum = itemCount * pointsPerItem
+      const status = String(row.status ?? "needs_review")
+      const statusLabel = status === "published" ? "Published" : status === "approved" ? "Approved" : "Needs review"
+      const issueSummary = [
+        Number(row.blank_count ?? 0) > 0 ? `${row.blank_count} missed` : "",
+        Number(row.multiple_count ?? 0) > 0 ? `${row.multiple_count} multiple` : "",
+      ].filter(Boolean).join(" · ")
+
+      return {
+        id: `omr-${row.id}`,
+        kind: "omr" as const,
+        title: `${studentName} (${studentNumber || "No student number"}) submitted ${title}`,
+        message: `${classLabel} · Score ${score}${maximum > 0 ? ` / ${maximum}` : ""} · ${statusLabel}${issueSummary ? ` · ${issueSummary}` : ""}`,
+        createdAt: String(row.published_at ?? row.reviewed_at ?? row.created_at ?? new Date().toISOString()),
+        targetPage: "records" as const,
+        classId: String(row.class_id ?? ""),
+      }
+    }))
+  }
+
+  return notifications
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .slice(0, 50)
 }
 
 function Header({
@@ -605,6 +693,7 @@ function Header({
     const profileChannel = supabase
       .channel("faculty-header-sync")
       .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, loadHeader)
+      .on("postgres_changes", { event: "*", schema: "public", table: "omr_submissions" }, loadHeader)
       .subscribe()
     return () => {
       active = false
@@ -2286,9 +2375,14 @@ function RecordsPage({
     ),
   )
   const [assessmentMenuOpen, setAssessmentMenuOpen] = useState(false)
-  const [gradebookView, setGradebookView] = useState<"summary" | "daily">(
-    "daily",
-  )
+  const [gradebookView, setGradebookView] = useState<"summary" | "daily">(() => {
+    const requestedView = sessionStorage.getItem("records-target-view")
+    if (requestedView === "summary") {
+      sessionStorage.removeItem("records-target-view")
+      return "summary"
+    }
+    return localStorage.getItem("cit-portal:records-view") === "summary" ? "summary" : "daily"
+  })
   const [dailyRemarks, setDailyRemarks] = useState<Record<string, string>>({})
   const [dailySessions, setDailySessions] = useState<Record<string, {
     attendanceId: string
@@ -2304,7 +2398,7 @@ function RecordsPage({
   const [studentStatuses, setStudentStatuses] =
     useState<Record<string, string>>({})
   const [selectedSectionId, setSelectedSectionId] = useState(
-    "",
+    () => sessionStorage.getItem("records-target-class") || localStorage.getItem("cit-portal:records-section") || "",
   )
   const [recordSectionOptions, setRecordSectionOptions] = useState<RecordSectionOption[]>([])
   const [sectionsLoading, setSectionsLoading] = useState(true)
@@ -2381,9 +2475,12 @@ function RecordsPage({
       })
 
       setRecordSectionOptions(sections)
-      setSelectedSectionId((current) =>
-        sections.some((section) => section.id === current) ? current : sections[0]?.id ?? "",
-      )
+      setSelectedSectionId((current) => {
+        const requested = sessionStorage.getItem("records-target-class")
+        const candidate = requested || current || localStorage.getItem("cit-portal:records-section") || ""
+        sessionStorage.removeItem("records-target-class")
+        return sections.some((section) => section.id === candidate) ? candidate : sections[0]?.id ?? ""
+      })
       setSectionsLoading(false)
     }
 
@@ -2403,6 +2500,22 @@ function RecordsPage({
       void supabase.removeChannel(channel)
     }
   }, [assessmentColumns.length])
+
+  useEffect(() => {
+    if (selectedSectionId) localStorage.setItem("cit-portal:records-section", selectedSectionId)
+  }, [selectedSectionId])
+
+  useEffect(() => {
+    localStorage.setItem("cit-portal:records-view", gradebookView)
+  }, [gradebookView])
+
+  useEffect(() => {
+    const requestedView = sessionStorage.getItem("records-target-view")
+    if (requestedView === "summary") {
+      setGradebookView("summary")
+      sessionStorage.removeItem("records-target-view")
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -4287,8 +4400,10 @@ function ActivitiesPage({
 
   const [studentConcerns, setStudentConcerns] = useState(initialStudentConcerns)
   const [studentConcernsLoading, setStudentConcernsLoading] = useState(true)
-  const [requestCategoryFilter, setRequestCategoryFilter] = useState<"All" | "Petition" | "Request" | "Concern">("All")
   const [reviewSavingId, setReviewSavingId] = useState<string | null>(null)
+  const [draftSavingId, setDraftSavingId] = useState<string | null>(null)
+  const [savedDraftIds, setSavedDraftIds] = useState<Record<string, boolean>>({})
+  const [concernView, setConcernView] = useState<"open" | "reviewed">("open")
 
   const formatRequestSubmittedAt = (value: string) => {
     const date = new Date(value)
@@ -4311,7 +4426,7 @@ function ActivitiesPage({
     }
     const { data, error } = await supabase
       .from("student_requests")
-      .select("id, student_id, student_name, category, message, section, status, faculty_reply, created_at")
+      .select("id, student_id, student_name, category, message, section, status, faculty_reply, review_draft, draft_decision, draft_saved_at, reviewed_at, created_at")
       .eq("faculty_id", user.id)
       .order("created_at", { ascending: false })
     if (error) {
@@ -4327,8 +4442,18 @@ function ActivitiesPage({
         section: String(row.section ?? "Unassigned class"),
         submittedAt: formatRequestSubmittedAt(String(row.created_at ?? "")),
         createdAt: String(row.created_at ?? ""),
-        status: row.status === "Accepted" || row.status === "Denied" ? row.status : "Open",
+        status: String(row.status ?? "Open").toLowerCase() === "accepted"
+          ? "Accepted"
+          : String(row.status ?? "Open").toLowerCase() === "denied"
+            ? "Denied"
+            : "Open",
         facultyReply: String(row.faculty_reply ?? ""),
+        reviewDraft: String(row.review_draft ?? ""),
+        draftDecision:
+          row.draft_decision === "Accepted" || row.draft_decision === "Denied"
+            ? row.draft_decision
+            : undefined,
+        draftSavedAt: String(row.draft_saved_at ?? ""),
       })))
     }
     setStudentConcernsLoading(false)
@@ -4342,6 +4467,98 @@ function ActivitiesPage({
       .subscribe()
     return () => { void supabase.removeChannel(channel) }
   }, [])
+
+  useEffect(() => {
+    const replies: Record<string, string> = {}
+    const decisions: Record<string, "Accepted" | "Denied"> = {}
+    const draftIds: Record<string, boolean> = {}
+
+    studentConcerns.forEach((concern) => {
+      if (concern.reviewDraft) replies[concern.id] = concern.reviewDraft
+      if (concern.draftDecision) decisions[concern.id] = concern.draftDecision
+      if (concern.reviewDraft || concern.draftDecision || concern.draftSavedAt) {
+        draftIds[concern.id] = true
+      }
+    })
+
+    setConcernReplies((current) => {
+      const next = { ...current }
+      Object.entries(replies).forEach(([id, value]) => {
+        if (!(id in next)) next[id] = value
+      })
+      return next
+    })
+    setConcernDecisions((current) => {
+      const next = { ...current }
+      Object.entries(decisions).forEach(([id, value]) => {
+        if (!(id in next)) next[id] = value
+      })
+      return next
+    })
+    setSavedDraftIds(draftIds)
+  }, [studentConcerns])
+
+  const saveConcernDraft = async (concern: StudentConcern) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      showMessage("Your session expired. Please sign in again.")
+      return
+    }
+
+    setDraftSavingId(concern.id)
+    const savedAt = new Date().toISOString()
+    const draftReply = concernReplies[concern.id]?.trim() || null
+    const draftDecision = concernDecisions[concern.id] ?? null
+
+    const { error } = await supabase
+      .from("student_requests")
+      .update({
+        review_draft: draftReply,
+        draft_decision: draftDecision,
+        draft_saved_at: savedAt,
+        updated_at: savedAt,
+      })
+      .eq("id", concern.id)
+      .eq("faculty_id", user.id)
+
+    setDraftSavingId(null)
+    if (error) {
+      showToast(`Unable to save draft: ${error.message}`, "error")
+      return
+    }
+
+    setSavedDraftIds((current) => ({ ...current, [concern.id]: true }))
+    setStudentConcerns((current) => current.map((item) =>
+      item.id === concern.id
+        ? {
+            ...item,
+            reviewDraft: draftReply ?? "",
+            draftDecision: draftDecision ?? undefined,
+            draftSavedAt: savedAt,
+          }
+        : item,
+    ))
+    showToast("Concern review draft saved and synchronized.")
+  }
+
+  const removeConcernDraft = async (concernId: string, facultyId: string) => {
+    const { error } = await supabase
+      .from("student_requests")
+      .update({
+        review_draft: null,
+        draft_decision: null,
+        draft_saved_at: null,
+      })
+      .eq("id", concernId)
+      .eq("faculty_id", facultyId)
+
+    if (error) console.error("Unable to clear concern draft:", error)
+    setSavedDraftIds((current) => {
+      const next = { ...current }
+      delete next[concernId]
+      return next
+    })
+  }
 
   const submitRequestReview = async (concern: StudentConcern) => {
     const decision = concernDecisions[concern.id]
@@ -4359,6 +4576,9 @@ function ActivitiesPage({
         status: decision,
         faculty_reply: reply,
         reviewed_at: new Date().toISOString(),
+        review_draft: null,
+        draft_decision: null,
+        draft_saved_at: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", concern.id)
@@ -4379,7 +4599,13 @@ function ActivitiesPage({
       delete next[concern.id]
       return next
     })
-    showToast(`Request ${decision.toLowerCase()} successfully.`)
+    await removeConcernDraft(concern.id, user.id)
+    setStudentConcerns((current) => current.map((item) =>
+      item.id === concern.id
+        ? { ...item, status: decision, facultyReply: reply }
+        : item,
+    ))
+    showToast(`Concern ${decision.toLowerCase()} successfully.`)
     await loadStudentRequests()
   }
 
@@ -4570,21 +4796,83 @@ function ActivitiesPage({
           return
         }
       } else {
+        // Read the faculty's existing Test IDs and choose an actually unused
+        // three-digit value. Do not treat every 23505 conflict as a Test ID
+        // collision because class/type/term/index also has a unique rule.
+        const { data: existingTestRows, error: existingTestError } = await supabase
+          .from("omr_assessments")
+          .select("test_id")
+          .eq("faculty_id", user.id)
+
+        if (existingTestError) {
+          setReminderSaving(false)
+          showToast(`Unable to prepare a Test ID: ${existingTestError.message}`, "error")
+          return
+        }
+
+        const usedTestIds = new Set(
+          (existingTestRows ?? []).map((row: any) => String(row.test_id ?? "")),
+        )
+        const availableTestIds = Array.from({ length: 900 }, (_, index) => String(index + 100))
+          .filter((value) => !usedTestIds.has(value))
+
+        if (availableTestIds.length === 0) {
+          setReminderSaving(false)
+          showToast("All three-digit Test IDs from 100 to 999 are already used.", "error")
+          return
+        }
+
+        // Randomize the first choice, then retry only when the database reports
+        // the faculty/test_id unique constraint. Other conflicts are real form
+        // errors and must be shown to the faculty immediately.
+        const startAt = Math.floor(Math.random() * availableTestIds.length)
+        const candidates = [
+          ...availableTestIds.slice(startAt),
+          ...availableTestIds.slice(0, startAt),
+        ]
         let created: { id: string } | null = null
         let createError: any = null
-        for (let attempt = 0; attempt < 8 && !created; attempt += 1) {
-          const testId = String(Math.floor(100 + Math.random() * 900))
+
+        for (const testId of candidates.slice(0, 20)) {
           const result = await supabase
             .from("omr_assessments")
             .insert({ ...omrPayload, test_id: testId, status: "draft" })
             .select("id")
             .single()
-          if (!result.error) created = result.data
-          else if (result.error.code !== "23505") createError = result.error
+
+          if (!result.error) {
+            created = result.data
+            break
+          }
+
+          const errorText = [
+            result.error.message,
+            result.error.details,
+            result.error.hint,
+          ].filter(Boolean).join(" ").toLowerCase()
+          const isTestIdConflict =
+            result.error.code === "23505" &&
+            (errorText.includes("test_id") || errorText.includes("faculty_test_id"))
+
+          if (!isTestIdConflict) {
+            createError = result.error
+            break
+          }
         }
+
         if (!created) {
           setReminderSaving(false)
-          showToast(`Unable to create OMR assessment: ${createError?.message ?? "No unique Test ID was available."}`, "error")
+          const errorText = String(createError?.message ?? "Unable to create the OMR assessment.")
+          const duplicateAssessment =
+            createError?.code === "23505" &&
+            (errorText.toLowerCase().includes("assessment_index") ||
+              errorText.toLowerCase().includes("class_type_term_index"))
+          showToast(
+            duplicateAssessment
+              ? `${draft.type} ${draft.assessmentIndex} already exists for this class and term. Use another index or edit the existing assessment.`
+              : `Unable to create OMR assessment: ${errorText}`,
+            "error",
+          )
           return
         }
         omrAssessmentId = created.id
@@ -4655,6 +4943,279 @@ function ActivitiesPage({
     setEditing(null)
     showToast(draft.id ? "Assessment updated successfully." : "Assessment added successfully.")
     await loadReminders()
+  }
+
+  const generatePrintableOmrPaper = async (activity: ActivityItem) => {
+    if (!activity.omrAssessmentId || (activity.type !== "Quiz" && activity.type !== "Exam")) {
+      showToast("Only saved Quiz and Exam assessments can generate an OMR paper.", "error")
+      return
+    }
+
+    try {
+      const { data: assessment, error: assessmentError } = await supabase
+        .from("omr_assessments")
+        .select("id, title, description, test_id, item_count, points_per_item, scheduled_date")
+        .eq("id", activity.omrAssessmentId)
+        .single()
+
+      if (assessmentError) throw assessmentError
+
+      const activityClass = reminderClasses.find((item) => item.id === activity.classId)
+      const paperCode = `CIT-OMR|${assessment.id}|${assessment.test_id}`
+      const qrDataUrl = await QRCode.toDataURL(paperCode, {
+        errorCorrectionLevel: "H",
+        margin: 1,
+        width: 480,
+        color: { dark: "#000000", light: "#ffffff" },
+      })
+
+      const itemCount = Math.min(50, Math.max(1, Number(assessment.item_count) || 1))
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
+      const pageWidth = 210
+      const pageHeight = 297
+      const navy = [23, 59, 99] as const
+      const blue = [31, 110, 171] as const
+      const pale = [238, 246, 252] as const
+      const line = [83, 123, 158] as const
+      const muted = [85, 105, 123] as const
+
+      const drawLabelLine = (label: string, value: string, x: number, y: number, width: number) => {
+        pdf.setFont("helvetica", "bold")
+        pdf.setFontSize(6.4)
+        pdf.setTextColor(...navy)
+        pdf.text(`${label}:`, x, y)
+        pdf.setFont("helvetica", "normal")
+        pdf.setTextColor(34, 52, 70)
+        const clipped = pdf.splitTextToSize(value, Math.max(10, width - 23))[0] ?? ""
+        pdf.text(clipped, x + 23, y)
+        pdf.setDrawColor(130, 160, 185)
+        pdf.setLineWidth(0.25)
+        pdf.line(x, y + 2.2, x + width, y + 2.2)
+      }
+
+      // Outer frame and registration markers used by the camera alignment flow.
+      pdf.setDrawColor(...navy)
+      pdf.setLineWidth(0.45)
+      pdf.roundedRect(8, 8, 194, 281, 3, 3)
+      pdf.setFillColor(0, 0, 0)
+      ;[[11, 11], [191, 11], [11, 278], [191, 278]].forEach(([x, y]) => pdf.rect(x, y, 8, 8, "F"))
+
+      // Header, kept clear of the QR and information panels.
+      pdf.setFillColor(...navy)
+      pdf.roundedRect(21, 14, 168, 20, 2, 2, "F")
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFont("helvetica", "bold")
+      pdf.setFontSize(14.5)
+      pdf.text("CiTracker OMR ANSWER SHEET", 105, 22.5, { align: "center" })
+      pdf.setFont("helvetica", "normal")
+      pdf.setFontSize(6.8)
+      pdf.text(`${String(assessment.title).toUpperCase()}  |  ${itemCount} ITEMS  |  TEST ${assessment.test_id}`, 105, 28.7, { align: "center" })
+
+      // Student identity panel. The QR has its own separate box and can no longer be covered.
+      pdf.setFillColor(...pale)
+      pdf.setDrawColor(191, 216, 233)
+      pdf.roundedRect(18, 41, 136, 75, 2.5, 2.5, "FD")
+      pdf.setTextColor(...navy)
+      pdf.setFont("helvetica", "bold")
+      pdf.setFontSize(8.7)
+      pdf.text("STUDENT NUMBER (10 DIGITS)", 23, 49)
+      pdf.setFont("helvetica", "normal")
+      pdf.setFontSize(6)
+      pdf.setTextColor(...muted)
+      pdf.text("Shade one digit in every column using a dark pen or pencil.", 23, 54)
+
+      // Student-number grid. Coordinates intentionally remain identical to OmrScanner.
+      const studentX0 = 0.12857 * pageWidth
+      const studentDx = 0.03476 * pageWidth
+      const studentY0 = 0.20875 * pageHeight
+      const studentDy = 0.01717 * pageHeight
+      for (let column = 0; column < 10; column += 1) {
+        const x = studentX0 + column * studentDx
+        pdf.setFont("helvetica", "bold")
+        pdf.setFontSize(5.4)
+        pdf.setTextColor(...navy)
+        pdf.text(String(column + 1), x, studentY0 - 4.2, {
+          align: "center",
+          baseline: "middle",
+        })
+        for (let digit = 0; digit < 10; digit += 1) {
+          const y = studentY0 + digit * studentDy
+          pdf.setDrawColor(...line)
+          pdf.setLineWidth(0.35)
+          pdf.circle(x, y, 1.75)
+          pdf.setTextColor(18, 42, 64)
+          pdf.setFont("helvetica", "normal")
+          pdf.setFontSize(4.4)
+          pdf.text(String(digit), x, y, {
+            align: "center",
+            baseline: "middle",
+          })
+        }
+      }
+
+      drawLabelLine("NAME", "", 105, 68, 44)
+      drawLabelLine("SECTION", activityClass?.code ?? "", 105, 79, 44)
+      drawLabelLine("SUBJECT", activityClass?.subject ?? "", 105, 90, 44)
+      drawLabelLine("DESCRIPTION", String(assessment.description ?? activity.description ?? ""), 105, 101, 44)
+
+      // Dedicated official-code card placed completely outside the identity panel.
+      pdf.setFillColor(255, 255, 255)
+      pdf.setDrawColor(191, 216, 233)
+      pdf.roundedRect(159, 41, 33, 53, 2.5, 2.5, "FD")
+      pdf.addImage(qrDataUrl, "PNG", 163, 45, 25, 25, undefined, "FAST")
+      pdf.setFont("helvetica", "bold")
+      pdf.setFontSize(5.6)
+      pdf.setTextColor(...navy)
+      pdf.text("OFFICIAL PAPER", 175.5, 75, { align: "center" })
+      pdf.setFont("helvetica", "normal")
+      pdf.setFontSize(5.2)
+      pdf.text(`TEST ${assessment.test_id}`, 175.5, 80, { align: "center" })
+      pdf.setTextColor(...muted)
+      pdf.setFontSize(4.5)
+      pdf.text("Do not crop or cover", 175.5, 86, { align: "center" })
+      pdf.text("this QR code.", 175.5, 90, { align: "center" })
+
+      // Faculty workflow note. Students only answer and return the physical paper.
+      pdf.setFillColor(247, 250, 253)
+      pdf.setDrawColor(214, 226, 236)
+      pdf.roundedRect(159, 98, 33, 18, 2, 2, "FD")
+      pdf.setFont("helvetica", "bold")
+      pdf.setFontSize(5)
+      pdf.setTextColor(...navy)
+      pdf.text("PAPER WORKFLOW", 175.5, 103, { align: "center" })
+      pdf.setFont("helvetica", "normal")
+      pdf.setFontSize(4.35)
+      pdf.setTextColor(...muted)
+      pdf.text("Answer, then return", 175.5, 108, { align: "center" })
+      pdf.text("the paper to faculty.", 175.5, 112, { align: "center" })
+
+      // Answer area. Fixed normalized coordinates are retained so camera and import scans use one template.
+      const answerBlockX = [0.13810, 0.30810, 0.47810, 0.64810, 0.81810]
+      const answerStartY = 0.46465
+      const answerRowGap = 0.04040
+      const answerChoiceGap = 0.02476
+      const bubbleRadius = 0.00905 * pageWidth
+      const usedBlocks = Math.ceil(itemCount / 10)
+      const answerTop = 126
+      const answerBottom = 269
+      const answerCardRight = Math.min(194, 18 + usedBlocks * 35.7)
+
+      pdf.setFillColor(252, 254, 255)
+      pdf.setDrawColor(220, 230, 238)
+      pdf.roundedRect(18, answerTop, Math.max(36, answerCardRight - 18), answerBottom - answerTop, 2.5, 2.5, "FD")
+      pdf.setTextColor(...navy)
+      pdf.setFont("helvetica", "bold")
+      pdf.setFontSize(9.5)
+      pdf.text("ANSWERS", 20, 122.5)
+      pdf.setFont("helvetica", "normal")
+      pdf.setFontSize(5.4)
+      pdf.setTextColor(...muted)
+      pdf.text("Shade exactly one answer for each item.", 47, 122.5)
+
+      for (let block = 0; block < usedBlocks; block += 1) {
+        const firstItem = block * 10 + 1
+        const lastItem = Math.min(itemCount, firstItem + 9)
+        const blockX = answerBlockX[block] * pageWidth
+        pdf.setFillColor(...pale)
+        pdf.setDrawColor(220, 231, 239)
+        pdf.roundedRect(blockX - 8, 129, 33, 137, 2, 2, "FD")
+        pdf.setFont("helvetica", "bold")
+        pdf.setFontSize(5.2)
+        pdf.setTextColor(...navy)
+        pdf.text(`${firstItem}-${lastItem}`, blockX + 8, 134, { align: "center" })
+
+        for (let row = 0; row < 10; row += 1) {
+          const item = block * 10 + row + 1
+          if (item > itemCount) continue
+          const y = (answerStartY + row * answerRowGap) * pageHeight
+          pdf.setTextColor(...navy)
+          pdf.setFont("helvetica", "bold")
+          pdf.setFontSize(5.8)
+          pdf.text(String(item), blockX - 3, y, {
+            align: "right",
+            baseline: "middle",
+          })
+          for (let choice = 0; choice < 4; choice += 1) {
+            const x = (answerBlockX[block] + choice * answerChoiceGap) * pageWidth
+            pdf.setDrawColor(...line)
+            pdf.setLineWidth(0.35)
+            pdf.circle(x, y, bubbleRadius)
+            pdf.setTextColor(20, 49, 73)
+            pdf.setFont("helvetica", "normal")
+            pdf.setFontSize(4.8)
+            pdf.text(["A", "B", "C", "D"][choice], x, y, {
+              align: "center",
+              baseline: "middle",
+            })
+          }
+        }
+      }
+
+      // Use the unused right side for clear paper handling instructions on short assessments.
+      if (usedBlocks < 5) {
+        const instructionX = answerCardRight + 6
+        const instructionWidth = 192 - instructionX
+        if (instructionWidth >= 32) {
+          pdf.setFillColor(247, 250, 253)
+          pdf.setDrawColor(220, 230, 238)
+          pdf.roundedRect(instructionX, 129, instructionWidth, 72, 2.5, 2.5, "FD")
+          pdf.setFont("helvetica", "bold")
+          pdf.setFontSize(6.5)
+          pdf.setTextColor(...navy)
+          pdf.text("HOW TO ANSWER", instructionX + 5, 138)
+          pdf.setFont("helvetica", "normal")
+          pdf.setFontSize(5.2)
+          pdf.setTextColor(...muted)
+          const instructions = [
+            "1. Write your name.",
+            "2. Shade all 10 student-number digits.",
+            "3. Shade only one choice per item.",
+            "4. Erase changes completely.",
+            "5. Return the paper to the faculty.",
+          ]
+          instructions.forEach((text, index) => pdf.text(text, instructionX + 5, 147 + index * 9))
+          pdf.setFillColor(234, 246, 255)
+          pdf.setDrawColor(190, 218, 238)
+          pdf.roundedRect(instructionX + 4, 207, instructionWidth - 8, 30, 2, 2, "FD")
+          pdf.setFont("helvetica", "bold")
+          pdf.setFontSize(5.5)
+          pdf.setTextColor(...blue)
+          pdf.text("FACULTY EVALUATION", instructionX + 8, 215)
+          pdf.setFont("helvetica", "normal")
+          pdf.setFontSize(4.9)
+          pdf.setTextColor(...muted)
+          const facultyNote = pdf.splitTextToSize(
+            "The faculty scans, reviews, approves, exports, and publishes the result. Students do not upload this paper.",
+            instructionWidth - 16,
+          )
+          pdf.text(facultyNote, instructionX + 8, 222)
+        }
+      }
+
+      pdf.setFont("helvetica", "bold")
+      pdf.setFontSize(6.2)
+      pdf.setTextColor(0, 0, 0)
+      pdf.text("A4 PORTRAIT  |  PRINT AT 100% SCALE  |  FIT TO PAGE OFF", 105, 282, { align: "center" })
+      pdf.setFont("helvetica", "normal")
+      pdf.setFontSize(5.2)
+      pdf.text("Keep the QR code and all four corner squares visible. Return this physical paper to the faculty after answering.", 105, 286.3, { align: "center" })
+
+      const safeTitle = String(assessment.title ?? "OMR-assessment")
+        .trim()
+        .replace(/[^a-z0-9_-]+/gi, "-")
+        .replace(/^-+|-+$/g, "") || "OMR-assessment"
+      const safeClass = String(activityClass?.code ?? "class")
+        .trim()
+        .replace(/[^a-z0-9_-]+/gi, "-")
+        .replace(/^-+|-+$/g, "") || "class"
+      const fileName = `${safeTitle}-${safeClass}-Test-${assessment.test_id}-OMR.pdf`
+
+      pdf.save(fileName)
+      showToast(`${fileName} was downloaded. The faculty can print and distribute the paper.`)
+    } catch (reason) {
+      const problem = reason as { message?: string }
+      showToast(`Unable to generate OMR paper: ${problem.message ?? "Unknown error"}`, "error")
+    }
   }
 
   const deleteReminder = async () => {
@@ -4753,41 +5314,49 @@ const reminderFormValid = Boolean(
         <section className="concerns-section" aria-labelledby="concerns-title">
           <div className="concerns-heading">
             <div>
-              <p className="eyebrow">Student requests</p>
-              <h2 id="concerns-title">Student Concerns / Requests</h2>
+              <p className="eyebrow">Student support</p>
+              <h2 id="concerns-title">Student Concerns</h2>
             </div>
-            <span className="concerns-count">
-              {
-                studentConcerns.filter((concern) => concern.status === "Open")
-                  .length
-              }{" "}
-              open
-            </span>
-          </div>
-          <div className="request-category-filter" aria-label="Filter student requests">
-            {(["All", "Petition", "Request", "Concern"] as const).map((category) => (
+            <div className="concern-view-controls" role="group" aria-label="Concern view">
               <button
-                key={category}
                 type="button"
-                className={requestCategoryFilter === category ? "active" : ""}
-                aria-pressed={requestCategoryFilter === category}
-                onClick={() => setRequestCategoryFilter(category)}
+                className={concernView === "open" ? "active" : ""}
+                aria-pressed={concernView === "open"}
+                onClick={() => { setConcernView("open"); setExpandedConcernId(null) }}
               >
-                {category}
+                Open
+                <span>{studentConcerns.filter((concern) => concern.status === "Open").length}</span>
               </button>
-            ))}
+              <button
+                type="button"
+                className={concernView === "reviewed" ? "active" : ""}
+                aria-pressed={concernView === "reviewed"}
+                onClick={() => { setConcernView("reviewed"); setExpandedConcernId(null) }}
+              >
+                Reviewed
+                <span>{studentConcerns.filter((concern) => concern.status !== "Open").length}</span>
+              </button>
+            </div>
           </div>
           <div className="concerns-list">
             {studentConcernsLoading ? (
-              <p className="concerns-empty-state">Loading student requests...</p>
-            ) : studentConcerns.length === 0 ? (
+              <p className="concerns-empty-state">Loading student concerns...</p>
+            ) : studentConcerns.filter((concern) =>
+                concernView === "open" ? concern.status === "Open" : concern.status !== "Open",
+              ).length === 0 ? (
               <div className="concerns-empty-state">
                 <Icon name="clipboard" size={22} />
-                <strong>No student requests</strong>
-                <span>New petitions, requests, and concerns will appear here.</span>
+                <strong>{concernView === "open" ? "No open concerns" : "No reviewed concerns"}</strong>
+                <span>
+                  {concernView === "open"
+                    ? "Only concerns that still need faculty review appear here."
+                    : "Accepted and denied concerns will appear here after review."}
+                </span>
               </div>
             ) : studentConcerns
-                .filter((concern) => requestCategoryFilter === "All" || studentRequestCategoryLabel(concern.category) === requestCategoryFilter)
+                .filter((concern) =>
+                  concernView === "open" ? concern.status === "Open" : concern.status !== "Open",
+                )
                 .map((concern) => {
               const student = {
                 id: concern.studentId,
@@ -4811,12 +5380,18 @@ const reminderFormValid = Boolean(
                   <div className="concern-copy">
                     <div className="concern-meta">
                       <strong>{student.name}</strong>
-                      <span className={`request-category-badge ${normalizeStudentRequestCategory(concern.category)}`}>{studentRequestCategoryLabel(concern.category)}</span>
+                      {savedDraftIds[concern.id] && <span className="concern-draft-badge">Draft saved</span>}
                     </div>
                     <p>{concern.message}</p>
                     <small>
                       {concern.section} · {concern.submittedAt}
                     </small>
+                    {concern.status !== "Open" && concern.facultyReply && (
+                      <div className="reviewed-concern-reply">
+                        <span>Faculty response</span>
+                        <p>{concern.facultyReply}</p>
+                      </div>
+                    )}
                   </div>
                   <button
                     className={
@@ -4835,16 +5410,16 @@ const reminderFormValid = Boolean(
                     {concern.status === "Open"
                       ? isExpanded
                         ? "Close review"
-                        : "Review request"
+                        : savedDraftIds[concern.id] ? "Continue review" : "Review concern"
                       : concern.status}
                   </button>
                   {isExpanded && (
                     <div className="concern-review-panel">
                       <div className="concern-review-heading">
                         <div>
-                          <strong>Review request</strong>
+                          <strong>Review concern</strong>
                           <small>
-                            Select a decision and send a reply to {student.name}
+                            Save a draft or complete the review for {student.name}
                             .
                           </small>
                         </div>
@@ -4853,7 +5428,7 @@ const reminderFormValid = Boolean(
                       <div
                         className="concern-decision-buttons"
                         role="group"
-                        aria-label={`Decision for ${student.name}'s request`}
+                        aria-label={`Decision for ${student.name}'s concern`}
                       >
                         <button
                           className={
@@ -4870,7 +5445,7 @@ const reminderFormValid = Boolean(
                           }
                           aria-pressed={decision === "Accepted"}
                         >
-                          <Icon name="check" size={15} /> Accept request
+                          <Icon name="check" size={15} /> Accept concern
                         </button>
                         <button
                           className={
@@ -4885,7 +5460,7 @@ const reminderFormValid = Boolean(
                           }
                           aria-pressed={decision === "Denied"}
                         >
-                          <Icon name="minus" size={15} /> Deny request
+                          <Icon name="minus" size={15} /> Deny concern
                         </button>
                       </div>
                       <label className="concern-reply-field">
@@ -4909,17 +5484,16 @@ const reminderFormValid = Boolean(
                         >
                           Cancel
                         </button>
+                        <button className="secondary-button concern-save-draft" type="button" disabled={draftSavingId === concern.id} onClick={() => saveConcernDraft(concern)}>
+                          {draftSavingId === concern.id ? "Saving..." : savedDraftIds[concern.id] ? "Update draft" : "Save draft"}
+                        </button>
                         <button
                           className="primary-button"
                           type="button"
-                          disabled={
-                            reviewSavingId === concern.id ||
-                            !decision ||
-                            !concernReplies[concern.id]?.trim()
-                          }
+                          disabled={reviewSavingId === concern.id || !decision || !concernReplies[concern.id]?.trim()}
                           onClick={() => void submitRequestReview(concern)}
                         >
-                          {reviewSavingId === concern.id ? "Sending..." : "Send review"}
+                          {reviewSavingId === concern.id ? "Sending..." : "Complete review"}
                         </button>
                       </div>
                     </div>
@@ -4980,12 +5554,21 @@ const reminderFormValid = Boolean(
                       )}
                     </div>
                     <div className="reminder-card-actions">
+                      {a.omrAssessmentId && (a.type === "Quiz" || a.type === "Exam") && (
+                        <button
+                          type="button"
+                          className="reminder-print-omr-button"
+                          aria-label={`Download printable OMR PDF for ${a.title}`}
+                          onClick={() => void generatePrintableOmrPaper(a)}
+                        >
+                          <span>Print OMR</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         aria-label={`Edit ${a.title}`}
                         onClick={() => void openAssessmentEditor(a, i)}
                       >
-                        <Icon name="edit" size={15} />
                         Edit
                       </button>
                       <button
@@ -5571,6 +6154,7 @@ function NotificationsPage({ setPage }: { setPage: (page: string) => void }) {
     void load()
     const channel = supabase.channel("faculty-notifications-page")
       .on("postgres_changes", { event: "*", schema: "public", table: "student_requests" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "omr_submissions" }, load)
       .subscribe()
     return () => { void supabase.removeChannel(channel) }
   }, [])
@@ -5578,7 +6162,13 @@ function NotificationsPage({ setPage }: { setPage: (page: string) => void }) {
     <Header title="Notifications" onNotify={() => setPage("notifications")} onProfile={() => setPage("profile")} />
     <section className="notifications-page" aria-labelledby="notifications-title">
       <div className="section-heading"><div><p className="eyebrow">Teacher updates</p><h2 id="notifications-title">Notifications</h2></div><button onClick={() => void load()}>Refresh</button></div>
-      {loading ? <p className="notification-empty">Loading notifications...</p> : items.length === 0 ? <div className="empty-prompt"><span><Icon name="bell"/></span><h3>You’re all caught up</h3><p>New student petitions, requests, and concerns will appear here.</p></div> : <div className="notification-list">{items.map(item => <button key={item.id} className={`notification-item ${item.kind}`} onClick={() => setPage("activities")}><span className="notification-item-icon"><Icon name={item.kind === "concern" ? "users" : "clipboard"}/></span><span><strong>{item.title}</strong><small>{item.message}</small></span><Icon name="chevron" size={16}/></button>)}</div>}
+      {loading ? <p className="notification-empty">Loading notifications...</p> : items.length === 0 ? <div className="empty-prompt"><span><Icon name="bell"/></span><h3>You’re all caught up</h3><p>New OMR results and open student concerns will appear here.</p></div> : <div className="notification-list">{items.map(item => <button key={item.id} className={`notification-item ${item.kind}`} onClick={() => {
+        if (item.kind === "omr") {
+          if (item.classId) sessionStorage.setItem("records-target-class", item.classId)
+          sessionStorage.setItem("records-target-view", "summary")
+        }
+        setPage(item.targetPage ?? "activities")
+      }}><span className="notification-item-icon"><Icon name={item.kind === "omr" ? "scan" : item.kind === "concern" ? "users" : "clipboard"}/></span><span><strong>{item.title}</strong><small>{item.message}</small><time>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(item.createdAt))}</time></span><Icon name="chevron" size={16}/></button>)}</div>}
     </section>
   </>)
 }

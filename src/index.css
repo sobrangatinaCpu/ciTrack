@@ -4294,3 +4294,21 @@ a {
     box-shadow: 0 7px 22px rgba(24, 50, 74, .06);
   }
 }
+
+/* Unified student concerns workflow */
+.concern-draft-badge{display:inline-flex;align-items:center;min-height:25px;padding:4px 9px;border-radius:999px;color:#745b12!important;background:#fff4cf;font-size:12px!important;font-weight:800}
+.concern-review-actions .concern-save-draft{margin-left:auto;border-color:#abc9df;color:#1769aa;background:#f7fbff}
+.concern-review-actions .concern-save-draft:hover{border-color:#6fa8d1;background:#edf7ff}
+@media(max-width:620px){.concern-review-actions{display:grid;grid-template-columns:1fr 1fr}.concern-review-actions .secondary-button:first-child{grid-column:1/-1}.concern-review-actions .concern-save-draft{margin-left:0}}
+
+/* Open and reviewed concern views */
+.concern-view-controls{display:inline-flex;align-items:center;gap:6px;padding:4px;border:1px solid #d7e4ee;border-radius:12px;background:#fff}
+.concern-view-controls button{min-height:36px;display:inline-flex;align-items:center;gap:7px;padding:0 12px;border:0;border-radius:9px;color:#5a7186;background:transparent;font:inherit;font-size:12px;font-weight:800;cursor:pointer}
+.concern-view-controls button:hover{color:#1769aa;background:#f3f8fc}
+.concern-view-controls button.active{color:#1769aa;background:#eaf5ff}
+.concern-view-controls button span{min-width:22px;padding:3px 6px;border-radius:999px;color:#6c7f91;background:#eef3f7;font-size:10px;text-align:center}
+.concern-view-controls button.active span{color:#0c66ad;background:#fff}
+.reviewed-concern-reply{margin-top:11px;padding:10px 12px;border-left:3px solid #62a77b;border-radius:0 9px 9px 0;background:#f1faf4}
+.reviewed-concern-reply span{display:block;margin-bottom:4px;color:#4d7460;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
+.reviewed-concern-reply p{margin:0!important;color:#355445!important;font-size:12px!important;line-height:1.5}
+@media(max-width:620px){.concerns-heading{align-items:stretch;flex-direction:column}.concern-view-controls{width:100%}.concern-view-controls button{flex:1;justify-content:center}}
