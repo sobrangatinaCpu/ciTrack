@@ -5005,3 +5005,62 @@ a {
     left: auto !important;
   }
 }
+
+/* =========================================================
+   TEMPORARY ONLINE SYNC NOTICE
+   Show once after page load/refresh, then fade away.
+   Offline warnings remain visible.
+   ========================================================= */
+.connection-notice.online {
+  animation: connection-notice-once 5s ease forwards;
+  will-change: opacity, transform;
+}
+
+@keyframes connection-notice-once {
+  0%, 62% {
+    opacity: 1;
+    visibility: visible;
+  }
+  82% {
+    opacity: 0;
+    visibility: visible;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
+/* Preserve the mobile horizontal centering while fading. */
+@media (max-width: 600px) {
+  .connection-notice.online {
+    animation-name: connection-notice-once-mobile;
+  }
+
+  @keyframes connection-notice-once-mobile {
+    0%, 62% {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(-50%) translateY(0);
+    }
+    82% {
+      opacity: 0;
+      visibility: visible;
+      transform: translateX(-50%) translateY(7px);
+    }
+    100% {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(7px);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connection-notice.online {
+    animation-duration: 1ms;
+    animation-delay: 4s;
+  }
+}
