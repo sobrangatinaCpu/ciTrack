@@ -167,6 +167,17 @@ type ClassSchedule = {
   startTime: string
   endTime: string
   room: string
+  isDefault?: boolean
+}
+type ClassReschedule = {
+  id: string
+  originalDate: string
+  replacementDate: string
+  startTime: string
+  endTime: string
+  room: string
+  reason: string
+  mode: "moved" | "additional"
 }
 type ClassItem = {
   id: string
@@ -182,6 +193,7 @@ type ClassItem = {
   meetingDays: string[]
   accessCode?: string
   schedules?: ClassSchedule[]
+  reschedules?: ClassReschedule[]
 }
 
 const meetingDayOptions = [
@@ -785,9 +797,7 @@ const isClassScheduledNow = (item: ClassItem, now: Date) => {
 
   const today = dayCodeFromDate(now)
   const currentMinutes = now.getHours() * 60 + now.getMinutes()
-  const schedules = item.schedules?.length
-    ? item.schedules
-    : []
+  const schedules = classOccurrencesForDay(item, now)
 
   return schedules.some((schedule) => {
     const startMinutes = minutesFromTime(schedule.startTime)
@@ -802,17 +812,54 @@ const isClassScheduledNow = (item: ClassItem, now: Date) => {
   })
 }
 
+const localDateKeyFor = (date: Date) => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-")
+const classOccurrencesForDay = (item: ClassItem, date: Date) => {
+  const dateKey = localDateKeyFor(date)
+  const day = normalizeMeetingDay(dayCodeFromDate(date))
+  const temporary = (item.reschedules ?? []).filter((row) => row.replacementDate === dateKey)
+  const movedAway = (item.reschedules ?? []).some((row) => row.mode === "moved" && row.originalDate === dateKey)
+  // Every saved class schedule is a recurring occurrence. isDefault only
+  // identifies the primary schedule shown in summaries; it must not disable
+  // additional schedules that happen on the same or another day.
+  const recurring = movedAway ? [] : (item.schedules ?? []).filter((schedule) =>
+    normalizedMeetingDays(schedule.meetingDays).includes(day),
+  )
+  return [
+    ...temporary.map((row) => ({
+      id: `temporary-${row.id}`,
+      meetingDays: [day],
+      startTime: row.startTime,
+      endTime: row.endTime,
+      room: row.room,
+      isDefault: false,
+    })),
+    ...recurring,
+  ]
+}
+const occurrenceKeyForSchedule = (schedule: ClassSchedule, date: Date) => {
+  const dateKey = localDateKeyFor(date)
+  return String(schedule.id).startsWith("temporary-")
+    ? `${dateKey}:temporary:${String(schedule.id).replace("temporary-", "")}`
+    : `${dateKey}:default:${schedule.id}`
+}
+const currentOccurrenceForClass = (item: ClassItem, now = new Date()) => {
+  const minutes = now.getHours() * 60 + now.getMinutes()
+  return classOccurrencesForDay(item, now).find((schedule) => {
+    const start = minutesFromTime(schedule.startTime)
+    const end = minutesFromTime(schedule.endTime)
+    return start >= 0 && end >= 0 && minutes >= start && minutes <= end
+  }) ?? null
+}
+const isCurrentOccurrenceEnded = (item: ClassItem, endedKeys: string[], now = new Date()) => {
+  const occurrence = currentOccurrenceForClass(item, now)
+  return occurrence ? endedKeys.includes(`${item.id}:${occurrenceKeyForSchedule(occurrence, now)}`) : false
+}
+
 const isClassScheduledToday = (item: ClassItem, now = new Date()) => {
-  const localDate = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-")
+  const localDate = localDateKeyFor(now)
   if (item.semesterStart && localDate < item.semesterStart) return false
   if (item.semesterEnd && localDate > item.semesterEnd) return false
-  const today = normalizeMeetingDay(dayCodeFromDate(now))
-  const classDays = normalizedMeetingDays(item.meetingDays)
-  const schedules = item.schedules?.length ? item.schedules : [{ id: `legacy-${item.id}`, meetingDays: classDays, startTime: "", endTime: "", room: item.room }]
-  return schedules.some((schedule) => {
-    const scheduleDays = normalizedMeetingDays(schedule.meetingDays)
-    return (scheduleDays.length ? scheduleDays : classDays).includes(today)
-  })
+  return classOccurrencesForDay(item, now).length > 0
 }
 
 function ClassCard({
@@ -821,6 +868,8 @@ function ClassCard({
   ended,
   onEdit,
   onDelete,
+  onReschedule,
+  onCancelReschedule,
   activity,
 }: {
   item: ClassItem
@@ -828,6 +877,8 @@ function ClassCard({
   ended: boolean
   onEdit?: (item: ClassItem) => void
   onDelete?: (item: ClassItem) => void
+  onReschedule?: (item: ClassItem) => void
+  onCancelReschedule?: (item: ClassItem, row: ClassReschedule) => void
   activity?: ActivityItem
 }) {
   const [now, setNow] = useState(() => new Date())
@@ -899,6 +950,12 @@ function ClassCard({
       <Icon name="edit" size={15} />
       <span>Edit</span>
     </button>
+
+    {onReschedule && (
+      <button type="button" className="class-card-edit" aria-label={`Reschedule ${item.subject}`} onClick={() => onReschedule(item)}>
+        <Icon name="calendar" size={15} /><span>Reschedule</span>
+      </button>
+    )}
 
     {onDelete && (
       <button
@@ -1015,6 +1072,7 @@ function ClassCard({
                 >
                   <Icon name="calendar" size={15} />
                   {formatMeetingDays(schedule.meetingDays) || "Days to be set"}
+                  {schedule.isDefault && <small style={{ marginLeft: 6, color: "#0b6b52", fontWeight: 800 }}>Default</small>}
                 </strong>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
                   <Icon name="clock" size={15} />
@@ -1069,6 +1127,31 @@ function ClassCard({
             {formatActivityTime(activity.endTime)}
           </small>
         </div>
+      )}
+      {(item.reschedules?.length ?? 0) > 0 && (
+        <section className="class-temporary-schedules" style={{ marginTop: 12, padding: "13px 15px", border: "1px solid #f1cf8a", borderRadius: 12, background: "#fffaf0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 9 }}>
+            <strong style={{ color: "#8a5700" }}><Icon name="calendar" size={15} /> Temporary schedules</strong>
+            <small>{item.reschedules?.length} active</small>
+          </div>
+          <div style={{ display: "grid", gap: 9 }}>
+            {item.reschedules?.map((row) => (
+              <article key={row.id} style={{ padding: "10px 11px", border: "1px solid #f3dfb8", borderRadius: 10, background: "#fff" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+                      <strong>{new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }).format(new Date(`${row.replacementDate}T12:00:00`))}</strong>
+                      <span className="status-pill">{row.mode === "moved" ? "Moved" : "Additional"}</span>
+                    </div>
+                    <small style={{ display: "block", marginTop: 4 }}>{formatDatabaseTime(row.startTime)} - {formatDatabaseTime(row.endTime)} · {row.room || "Room to be confirmed"}</small>
+                    <small style={{ display: "block", marginTop: 3 }}>From {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${row.originalDate}T12:00:00`))}{row.reason ? ` · ${row.reason}` : ""}</small>
+                  </div>
+                  {onCancelReschedule && <button type="button" className="class-card-delete" onClick={() => onCancelReschedule(item, row)}>Cancel temporary schedule</button>}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
       <div className="class-footer">
         <div
@@ -1161,7 +1244,7 @@ function Dashboard({
 
       const { data, error } = await supabase
         .from("classes")
-        .select("*, class_schedules(id, meeting_days, start_time, end_time, room)")
+        .select("*, class_schedules(id, meeting_days, start_time, end_time, room, is_default), class_reschedules(id, original_date, replacement_date, start_time, end_time, room, reason, mode)")
         .eq("faculty_id", user.id)
         .order("created_at", { ascending: true })
 
@@ -1577,7 +1660,7 @@ function Dashboard({
                 key={item.id}
                 item={item}
                 onStart={onStart}
-                ended={endedClassIds.map(String).includes(String(item.id))}
+                ended={isCurrentOccurrenceEnded(item, endedClassIds)}
                 activity={selectedActivities.find((activity) => String(activity.classId) === String(item.id))}
               />
             ))
@@ -1785,6 +1868,7 @@ function AddClassModal({
     startTime: schedule?.startTime ?? "",
     endTime: schedule?.endTime ?? "",
     room: schedule?.room ?? "",
+    isDefault: schedule?.isDefault ?? true,
   })
   const legacySchedule = initialClass
     ? makeSchedule({
@@ -1812,13 +1896,16 @@ function AddClassModal({
   const updateForm = (field: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [field]: value }))
   const addSchedule = () =>
-    setSchedules((current) => [...current, makeSchedule()])
+    setSchedules((current) => [...current, makeSchedule({ isDefault: current.length === 0 })])
   const removeSchedule = (scheduleId: string) =>
-    setSchedules((current) =>
-      current.length === 1
-        ? current
-        : current.filter((schedule) => schedule.id !== scheduleId),
-    )
+    setSchedules((current) => {
+      if (current.length === 1) return current
+      const removedWasDefault = current.find((schedule) => schedule.id === scheduleId)?.isDefault
+      const remaining = current.filter((schedule) => schedule.id !== scheduleId)
+      return removedWasDefault
+        ? remaining.map((schedule, index) => ({ ...schedule, isDefault: index === 0 }))
+        : remaining
+    })
   const updateSchedule = (
     scheduleId: string,
     changes: Partial<ClassSchedule>,
@@ -1828,6 +1915,8 @@ function AddClassModal({
         schedule.id === scheduleId ? { ...schedule, ...changes } : schedule,
       ),
     )
+  const setDefaultSchedule = (scheduleId: string) =>
+    setSchedules((current) => current.map((schedule) => ({ ...schedule, isDefault: schedule.id === scheduleId })))
   const selectScheduleDay = (scheduleId: string, day: string) =>
     setSchedules((current) =>
       current.map((schedule) =>
@@ -1839,7 +1928,7 @@ function AddClassModal({
 
   const submitClass = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const schedulesAreValid = schedules.every(
+    const schedulesAreValid = schedules.filter((schedule) => schedule.isDefault).length === 1 && schedules.every(
       (schedule) =>
         schedule.meetingDays.length > 0 &&
         schedule.startTime &&
@@ -1856,7 +1945,7 @@ function AddClassModal({
       form.semesterEnd < form.semesterStart ||
       !schedulesAreValid
     ) {
-      showMessage("Complete all required class and schedule information. Each schedule needs at least one day and a valid start and end time.")
+      showMessage("Complete all required class and schedule information. Each schedule needs a day and valid times, and exactly one schedule must be set as the default.")
       return
     }
     const { data: { user }, error: userError } = await supabase.auth.getUser()
@@ -1920,6 +2009,7 @@ function AddClassModal({
       start_time: schedule.startTime,
       end_time: schedule.endTime,
       room: schedule.room.trim() || null,
+      is_default: schedule.isDefault === true,
     }))
     const { data: savedScheduleRows, error: scheduleError } = await supabase
       .from("class_schedules")
@@ -1937,9 +2027,10 @@ function AddClassModal({
         startTime: schedule.start_time ?? "",
         endTime: schedule.end_time ?? "",
         room: schedule.room ?? "",
+        isDefault: schedule.is_default !== false,
       }),
     )
-    const firstSchedule = savedSchedules[0] ?? schedules[0]
+    const firstSchedule = savedSchedules.find((schedule) => schedule.isDefault) ?? savedSchedules[0] ?? schedules[0]
     onSave({
       id: savedClass.id,
       subject: savedClass.subject,
@@ -1954,6 +2045,7 @@ function AddClassModal({
       meetingDays: firstSchedule.meetingDays,
       accessCode: savedClass.access_code ?? studentAccessCode,
       schedules: savedSchedules,
+      reschedules: initialClass?.reschedules ?? [],
     })
     setSaving(false)
     if (!initialClass) {
@@ -1995,8 +2087,15 @@ function AddClassModal({
           <div className="schedule-list">
             {schedules.map((schedule, index) => (
               <section className="schedule-form-card" key={schedule.id} style={{ border: "1px solid #dbe6f0", borderRadius: 12, padding: 16, marginBottom: 14, fontFamily: "inherit" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <strong>Schedule {index + 1}</strong>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <strong>Schedule {index + 1}</strong>
+                    {schedule.isDefault ? (
+                      <span className="status-pill" style={{ color: "#0b6b52", background: "#e9f8f2" }}><Icon name="check" size={13} /> Default schedule</span>
+                    ) : (
+                      <button type="button" className="secondary-button compact" onClick={() => setDefaultSchedule(schedule.id)}><Icon name="check" size={14} /> Set as default</button>
+                    )}
+                  </div>
                   {schedules.length > 1 && <button type="button" className="class-card-delete" style={{ fontFamily: "inherit" }} onClick={() => removeSchedule(schedule.id)}>Remove</button>}
                 </div>
                 <fieldset className="meeting-days">
@@ -2063,6 +2162,31 @@ function AddClassModal({
   )
 }
 
+function RescheduleClassModal({ item, onClose, onSaved }: { item: ClassItem; onClose: () => void; onSaved: (row: ClassReschedule) => void }) {
+  const [form, setForm] = useState({ originalDate: "", replacementDate: "", startTime: "", endTime: "", room: "", reason: "", mode: "moved" as "moved" | "additional" })
+  const [saving, setSaving] = useState(false)
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!form.originalDate || !form.replacementDate || !form.startTime || !form.endTime || form.endTime <= form.startTime) {
+      showMessage("Choose the original date, temporary date, and a valid start and end time.")
+      return
+    }
+    if (form.replacementDate < item.semesterStart || form.replacementDate > item.semesterEnd) {
+      showMessage("The temporary schedule must be within the class semester dates.")
+      return
+    }
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    setSaving(true)
+    const { data, error } = await supabase.from("class_reschedules").insert({ class_id: item.id, faculty_id: user.id, original_date: form.originalDate, replacement_date: form.replacementDate, start_time: form.startTime, end_time: form.endTime, room: form.room.trim() || null, reason: form.reason.trim() || null, mode: form.mode }).select().single()
+    setSaving(false)
+    if (error) { showMessage(`Unable to save temporary schedule: ${error.message}`); return }
+    onSaved({ id: String(data.id), originalDate: data.original_date, replacementDate: data.replacement_date, startTime: data.start_time, endTime: data.end_time, room: data.room ?? "", reason: data.reason ?? "", mode: data.mode })
+    showToast("Temporary schedule saved.")
+  }
+  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="reschedule-title"><button className="modal-close" onClick={onClose}>×</button><p className="eyebrow">Temporary schedule</p><h2 id="reschedule-title">Reschedule {item.subject}</h2><p>The default weekly schedule stays unchanged. Choose Moved to cancel the original occurrence, or Additional to keep both.</p><form className="class-form" onSubmit={save}><div className="class-form-grid"><label>Original occurrence <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.originalDate} onChange={(e) => setForm({...form, originalDate:e.target.value})}/></label><label>Temporary date <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.replacementDate} onChange={(e) => setForm({...form, replacementDate:e.target.value})}/></label></div><label>Reschedule type<select value={form.mode} onChange={(e) => setForm({...form, mode:e.target.value as "moved"|"additional"})}><option value="moved">Moved, cancel original occurrence</option><option value="additional">Additional, keep original occurrence</option></select></label><div className="class-form-grid class-time-fields"><label>Start time <em>Required</em><input type="time" value={form.startTime} onChange={(e) => setForm({...form,startTime:e.target.value})}/></label><label>End time <em>Required</em><input type="time" min={form.startTime} value={form.endTime} onChange={(e) => setForm({...form,endTime:e.target.value})}/></label><label>Room / virtual space<input value={form.room} onChange={(e) => setForm({...form,room:e.target.value})}/></label></div><label>Reason<textarea value={form.reason} onChange={(e) => setForm({...form,reason:e.target.value})} placeholder="Example: Campus event or make-up class"/></label><div className="class-form-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save temporary schedule"}</button></div></form></section></div>
+}
+
 function ClassesPage({
   onStart,
   setPage,
@@ -2074,7 +2198,14 @@ function ClassesPage({
 }) {
   const [classList, setClassList] = useState<ClassItem[]>([])
   const [classToDelete, setClassToDelete] = useState<ClassItem | null>(null)
+  const [classToReschedule, setClassToReschedule] = useState<ClassItem | null>(null)
   const [classDeleting, setClassDeleting] = useState(false)
+  const cancelTemporarySchedule = async (classItem: ClassItem, row: ClassReschedule) => {
+    const { error } = await supabase.from("class_reschedules").delete().eq("id", row.id)
+    if (error) { showMessage(`Unable to cancel temporary schedule: ${error.message}`); return }
+    setClassList((current) => current.map((item) => item.id === classItem.id ? { ...item, reschedules: (item.reschedules ?? []).filter((entry) => entry.id !== row.id) } : item))
+    showToast("Temporary schedule cancelled.")
+  }
 
   const deleteClass = async () => {
     if (!classToDelete || classDeleting) return
@@ -2119,7 +2250,7 @@ useEffect(() => {
 
     const { data, error } = await supabase
       .from("classes")
-      .select("*, class_schedules(id, meeting_days, start_time, end_time, room)")
+      .select("*, class_schedules(id, meeting_days, start_time, end_time, room, is_default), class_reschedules(id, original_date, replacement_date, start_time, end_time, room, reason, mode)")
       .eq("faculty_id", user.id)
       .order("created_at", { ascending: true })
 
@@ -2148,8 +2279,7 @@ useEffect(() => {
   const currentMinutes = classesPageNow.getHours() * 60 + classesPageNow.getMinutes()
   const todaySchedule = classList
     .flatMap((item) =>
-      (item.schedules ?? [])
-        .filter((schedule) => schedule.meetingDays.includes(todayDayCode))
+      classOccurrencesForDay(item, classesPageNow)
         .map((schedule) => ({ item, schedule })),
     )
     .sort(
@@ -2226,7 +2356,7 @@ useEffect(() => {
   key={item.id}
   item={item}
   onStart={onStart}
-  ended={endedClassIds.includes(String(item.id))}
+  ended={isCurrentOccurrenceEnded(item, endedClassIds)}
   onEdit={(classToEdit) => {
     setEditingClass(classToEdit)
     setIsAddingClass(true)
@@ -2234,6 +2364,8 @@ useEffect(() => {
   onDelete={(classToDelete) => {
     setClassToDelete(classToDelete)
   }}
+  onReschedule={(classItem) => setClassToReschedule(classItem)}
+  onCancelReschedule={(classItem, row) => void cancelTemporarySchedule(classItem, row)}
 />
         ))}
       </div>
@@ -2263,6 +2395,16 @@ useEffect(() => {
             </div>
           </section>
         </div>
+      )}
+      {classToReschedule && (
+        <RescheduleClassModal
+          item={classToReschedule}
+          onClose={() => setClassToReschedule(null)}
+          onSaved={(row) => {
+            setClassList((current) => current.map((item) => item.id === classToReschedule.id ? { ...item, reschedules: [...(item.reschedules ?? []), row] } : item))
+            setClassToReschedule(null)
+          }}
+        />
       )}
       {isAddingClass && (
         <AddClassModal
@@ -6289,6 +6431,7 @@ function NotificationsPage({ setPage }: { setPage: (page: string) => void }) {
 
 function ActiveClass({
   item,
+  activeOccurrence,
   onClose,
   onEnd,
   onMinimize,
@@ -6298,6 +6441,7 @@ function ActiveClass({
   scheduledToday,
 }: {
   item: ClassItem
+  activeOccurrence: ClassSchedule | null
   onClose: () => void
   onEnd: (attendanceSessionId: string | null) => void
   onMinimize: (startedAt: number) => void
@@ -6882,10 +7026,10 @@ function ActiveClass({
               ? `Live session · ${startedAt ? formatSessionDuration(startedAt, sessionNow) : "00:00"}`
               : "Ready to begin"}
         </div>
-        <p className="eyebrow">Today · {item.time}</p>
+        <p className="eyebrow">Today · {activeOccurrence ? `${formatDatabaseTime(activeOccurrence.startTime)} - ${formatDatabaseTime(activeOccurrence.endTime)}` : item.time}</p>
         <h2 id="session-title">{item.subject}</h2>
         <p>
-          {item.code} · {item.room}
+          {item.code} · {activeOccurrence?.room || item.room}
         </p>
         {started && (
           <div className="session-attendance-stats" aria-label="Session attendance summary">
@@ -7670,6 +7814,7 @@ export default function App() {
   const [activities, setActivities] =
     useState<ActivityItem[]>(initialActivities)
   const [activeClass, setActiveClass] = useState<ClassItem | null>(null)
+  const [activeOccurrence, setActiveOccurrence] = useState<ClassSchedule | null>(null)
   const [activeSessionStartedAt, setActiveSessionStartedAt] =
     useState<number | null>(null)
   const [minimizedSession, setMinimizedSession] = useState<{
@@ -7706,7 +7851,7 @@ export default function App() {
       }
       const { data, error } = await supabase
         .from("class_session_status")
-        .select("class_id")
+        .select("class_id, occurrence_key")
         .eq("faculty_id", user.id)
         .eq("session_date", localDateKey())
         .eq("status", "ended")
@@ -7715,7 +7860,7 @@ export default function App() {
         console.error("Unable to synchronize ended classes:", error)
         return
       }
-      setEndedClassIds([...(new Set((data ?? []).map((row: any) => String(row.class_id))))])
+      setEndedClassIds([...(new Set((data ?? []).map((row: any) => `${String(row.class_id)}:${String(row.occurrence_key ?? "legacy")}`)))])
     }
 
     void loadEndedClasses()
@@ -7737,7 +7882,8 @@ export default function App() {
 
   const endClassAcrossDevices = async (
     displayedClassId: string,
-    attendanceSessionId?: string | null,
+    attendanceSessionId: string | null,
+    occurrenceKey: string,
   ) => {
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) {
@@ -7800,11 +7946,12 @@ export default function App() {
           class_id: realClassId,
           faculty_id: user.id,
           session_date: localDateKey(),
+          occurrence_key: occurrenceKey,
           status: "ended",
           ended_at: timestamp,
           updated_at: timestamp,
         },
-        { onConflict: "class_id,session_date" },
+        { onConflict: "class_id,session_date,occurrence_key" },
       )
 
     if (error) {
@@ -7816,9 +7963,8 @@ export default function App() {
       return false
     }
 
-    setEndedClassIds((ids) =>
-      ids.includes(realClassId) ? ids : [...ids, realClassId],
-    )
+    const endedKey = `${realClassId}:${occurrenceKey}`
+    setEndedClassIds((ids) => ids.includes(endedKey) ? ids : [...ids, endedKey])
     return true
   }
 
@@ -7932,13 +8078,18 @@ export default function App() {
 
     if (isOpeningMinimizedClass) {
       setActiveClass(minimizedSession.item)
+      setActiveOccurrence(currentOccurrenceForClass(minimizedSession.item, new Date()))
       setActiveSessionStartedAt(minimizedSession.startedAt)
       setMinimizedSession(null)
       return
     }
 
-    // Opening another class must not redirect to the minimized live class.
-    // The minimized session stays available in the tray after this class closes.
+    const occurrence = currentOccurrenceForClass(item, new Date())
+    if (!occurrence) {
+      showMessage("This class does not have an active schedule at the current time.", "info", "Class is outside its scheduled time")
+      return
+    }
+    setActiveOccurrence(occurrence)
     setActiveSessionStartedAt(null)
     setActiveClass(item)
   }
@@ -8037,22 +8188,29 @@ export default function App() {
       {activeClass && (
         <ActiveClass
           item={activeClass}
-          scheduledToday={isClassScheduledToday(activeClass)}
+          activeOccurrence={activeOccurrence}
+          scheduledToday={Boolean(activeOccurrence)}
           viewOnly={
-            endedClassIds.includes(String(activeClass.id)) ||
+            isCurrentOccurrenceEnded(activeClass, endedClassIds) ||
             hasSemesterEnded(activeClass)
           }
           initialStarted={activeSessionStartedAt !== null}
           initialStartedAt={activeSessionStartedAt ?? undefined}
           onClose={() => {
             setActiveClass(null)
+            setActiveOccurrence(null)
             setActiveSessionStartedAt(null)
           }}
           onEnd={(attendanceSessionId) => {
             const displayedClassId = String(activeClass.id)
+            const occurrenceNow = new Date()
+            const occurrenceKey = activeOccurrence
+              ? occurrenceKeyForSchedule(activeOccurrence, occurrenceNow)
+              : `${localDateKey()}:manual`
             void endClassAcrossDevices(
               displayedClassId,
               attendanceSessionId,
+              occurrenceKey,
             ).then((saved) => {
               if (!saved) return
               setActiveClass(null)
