@@ -802,6 +802,19 @@ const isClassScheduledNow = (item: ClassItem, now: Date) => {
   })
 }
 
+const isClassScheduledToday = (item: ClassItem, now = new Date()) => {
+  const localDate = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-")
+  if (item.semesterStart && localDate < item.semesterStart) return false
+  if (item.semesterEnd && localDate > item.semesterEnd) return false
+  const today = normalizeMeetingDay(dayCodeFromDate(now))
+  const classDays = normalizedMeetingDays(item.meetingDays)
+  const schedules = item.schedules?.length ? item.schedules : [{ id: `legacy-${item.id}`, meetingDays: classDays, startTime: "", endTime: "", room: item.room }]
+  return schedules.some((schedule) => {
+    const scheduleDays = normalizedMeetingDays(schedule.meetingDays)
+    return (scheduleDays.length ? scheduleDays : classDays).includes(today)
+  })
+}
+
 function ClassCard({
   item,
   onStart,
@@ -6282,6 +6295,7 @@ function ActiveClass({
   initialStarted = false,
   initialStartedAt,
   viewOnly = false,
+  scheduledToday,
 }: {
   item: ClassItem
   onClose: () => void
@@ -6290,6 +6304,7 @@ function ActiveClass({
   initialStarted?: boolean
   initialStartedAt?: number
   viewOnly?: boolean
+  scheduledToday: boolean
 }) {
   const [started, setStarted] = useState(initialStarted)
   const [startedAt, setStartedAt] = useState(initialStartedAt)
@@ -6360,6 +6375,10 @@ function ActiveClass({
   }
 
   const openMobileNfcSession = async () => {
+    if (!scheduledToday) {
+      showMessage("This class has no meeting scheduled for today. A live attendance session can only be started on an assigned meeting day.", "info", "No class scheduled today")
+      return null
+    }
     setNfcSessionState("opening")
 
     try {
@@ -7195,6 +7214,10 @@ function ActiveClass({
                 if (closed) onEnd(attendanceSessionId)
               })
             } else {
+              if (!scheduledToday) {
+                showMessage("This class has no meeting scheduled for today. Choose a class assigned to today before starting attendance.", "info", "No class scheduled today")
+                return
+              }
               // Start Web NFC from this user gesture. Session creation continues in parallel.
               void startNfcScanner()
               void openMobileNfcSession().then((sessionId) => {
@@ -7205,7 +7228,7 @@ function ActiveClass({
               })
             }
           }}
-          disabled={nfcSessionState === "opening" || nfcSessionState === "closing"}
+          disabled={nfcSessionState === "opening" || nfcSessionState === "closing" || (!viewOnly && !started && !scheduledToday)}
         >
           {viewOnly ? (
             "Close overview"
@@ -7215,6 +7238,8 @@ function ActiveClass({
             "Closing attendance..."
           ) : started ? (
             "End class"
+          ) : !scheduledToday ? (
+            "No class scheduled today"
           ) : (
             <>
               <Icon name="play" /> Start class session
@@ -8012,6 +8037,7 @@ export default function App() {
       {activeClass && (
         <ActiveClass
           item={activeClass}
+          scheduledToday={isClassScheduledToday(activeClass)}
           viewOnly={
             endedClassIds.includes(String(activeClass.id)) ||
             hasSemesterEnded(activeClass)
