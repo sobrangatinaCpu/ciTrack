@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { saveStudentScore } from "./lib/studentScores"
 import { QRCodeCanvas } from "qrcode.react"
 import { jsPDF } from "jspdf"
 import QRCode from "qrcode"
@@ -406,9 +407,17 @@ const recordSections: RecordSectionOption[] = []
 
 type RecordAssessmentColumn = {
   id: string
+  assessmentId?: string
   label: string
   type: "Quiz" | "Hands On" | "Activities" | "Exam" | "Attendance" | "Recitation"
   term?: "Midterm" | "Final"
+  maxScore?: number
+}
+
+const maxScoreForColumn = (column: RecordAssessmentColumn) => {
+  const value = Number(column.maxScore)
+  if (Number.isFinite(value) && value > 0) return value
+  return column.type === "Attendance" || column.type === "Recitation" ? 10 : 100
 }
 
 const initialRecordAssessmentColumns: RecordAssessmentColumn[] = [
@@ -2516,6 +2525,8 @@ function RecordsPage({
   const [recordPublicationStatus, setRecordPublicationStatus] = useState<"Draft" | "Published">("Draft")
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null)
   const localDraftValuesRef = useRef<Record<string, Record<string, number | "">>>({})
+  const scoreSaveTimersRef = useRef<Record<string, number>>({})
+  const assessmentIdByColumnRef = useRef<Record<string, string>>({})
   const [publishingRecords, setPublishingRecords] = useState(false)
   const publishOmrRecords = async () => {
     if (!selectedSectionId || publishingRecords) return
@@ -2821,8 +2832,17 @@ function RecordsPage({
       setAssessmentColumns((current) => {
         // Supabase is authoritative for Quiz and Exam columns. Keeping previous
         // Quiz/Exam columns here caused deleted reminders to remain in Records.
+        const databaseAssessmentIds = new Set(
+          databaseAssessments.map((row: any) =>
+            String(row.gradebook_assessment_id || row.id),
+          ),
+        )
         const next = current
-          .filter((column) => column.type !== "Quiz" && column.type !== "Exam")
+          .filter((column) =>
+            column.type !== "Quiz" && column.type !== "Exam"
+              ? true
+              : !databaseAssessmentIds.has(String(column.assessmentId ?? column.id)),
+          )
           .map((column) => ({ ...column }))
 
         databaseAssessments.forEach((row: any) => {
@@ -2831,9 +2851,16 @@ function RecordsPage({
           const title = String(row.title ?? `${type} ${assessmentNumber(row)}`)
           const linkedGradebookId = String(row.gradebook_assessment_id ?? "")
 
-          // Use the OMR assessment UUID as the stable Records column ID.
-          const columnId = String(row.id)
-          next.push({ id: columnId, label: title, type, term })
+          // One gradebook cell uses assessments.id. OMR is only an input source.
+          const columnId = linkedGradebookId || String(row.id)
+          next.push({
+            id: columnId,
+            assessmentId: linkedGradebookId || undefined,
+            label: title,
+            type,
+            term,
+            maxScore: Number(row.item_count) * Number(row.points_per_item) || 100,
+          })
           resolvedColumnByAssessment.set(String(row.id), columnId)
           if (linkedGradebookId) resolvedColumnByAssessment.set(linkedGradebookId, columnId)
         })
@@ -2866,18 +2893,92 @@ function RecordsPage({
               const columnId = resolvedColumnByAssessment.get(String(submission.assessment_id))
               const score = Number(submission.final_score ?? submission.proposed_score)
               if (!studentNumber || !columnId || !Number.isFinite(score)) return
-              const localStudentDraft = localDraftValuesRef.current[studentNumber]
-              if (localStudentDraft && Object.prototype.hasOwnProperty.call(localStudentDraft, columnId)) return
-              next[studentNumber] = { ...next[studentNumber], [columnId]: score }
+              // Manual assessment_scores and the current gradebook value take
+              // precedence. OMR is only a fallback input for an empty quiz cell.
+              const currentStudentValues = next[studentNumber]
+              if (
+                currentStudentValues &&
+                Object.prototype.hasOwnProperty.call(currentStudentValues, columnId)
+              ) return
+              next[studentNumber] = { ...currentStudentValues, [columnId]: score }
             })
             return next
           })
         }
       }
 
-      setRecordSectionOptions((current) => current.map((section) =>
-        section.id === selectedSectionId ? { ...section, assessmentCount: databaseAssessments.length } : section,
-      ))
+      // Load the authoritative manual gradebook through a SECURITY DEFINER RPC.
+      // This avoids browser RLS hiding manual quizzes such as Final Quiz 1.
+      const { data: gradebookData, error: gradebookError } = await supabase.rpc(
+        "comptech_faculty_load_gradebook",
+        { p_class_id: selectedSectionId },
+      )
+
+      if (!active) return
+      if (gradebookError) {
+        console.error("Unable to load saved gradebook:", gradebookError)
+      } else {
+        const payload = (gradebookData ?? {}) as {
+          assessments?: any[]
+          scores?: any[]
+        }
+        const savedAssessments = Array.isArray(payload.assessments) ? payload.assessments : []
+        const savedScores = Array.isArray(payload.scores) ? payload.scores : []
+
+        savedAssessments.forEach((row: any) => {
+          const assessmentId = String(row.id)
+          assessmentIdByColumnRef.current[assessmentId] = assessmentId
+        })
+
+        setAssessmentColumns((current) => {
+          const next = current.map((column) => ({ ...column }))
+          savedAssessments.forEach((row: any) => {
+            const assessmentId = String(row.id)
+            const rawType = String(row.assessment_type ?? "").trim().toLowerCase()
+            const type: RecordAssessmentColumn["type"] =
+              rawType === "quiz" ? "Quiz" :
+              rawType === "exam" ? "Exam" :
+              rawType === "recitation" ? "Recitation" :
+              rawType === "attendance" ? "Attendance" : "Activities"
+            const term: RecordAssessmentColumn["term"] =
+              String(row.term).trim().toLowerCase() === "final" ? "Final" : "Midterm"
+            const column: RecordAssessmentColumn = {
+              id: assessmentId,
+              assessmentId,
+              label: String(row.title),
+              type,
+              term,
+              maxScore: Number(row.max_score) || 100,
+            }
+            const index = next.findIndex((item) =>
+              String(item.id) === assessmentId || item.assessmentId === assessmentId,
+            )
+            if (index >= 0) next[index] = { ...next[index], ...column }
+            else next.push(column)
+          })
+          return next
+        })
+
+        setRecordValues((current) => {
+          const next = { ...current }
+          savedScores.forEach((row: any) => {
+            const studentNumber = String(row.student_number ?? "").trim()
+            const assessmentId = String(row.assessment_id ?? "").trim()
+            const score = Number(row.score)
+            if (!studentNumber || !assessmentId || !Number.isFinite(score)) return
+            next[studentNumber] = { ...next[studentNumber], [assessmentId]: score }
+          })
+          localDraftValuesRef.current = next
+          return next
+        })
+
+        setRecordSectionOptions((current) => current.map((section) =>
+          section.id === selectedSectionId
+            ? { ...section, assessmentCount: Math.max(databaseAssessments.length, savedAssessments.length) }
+            : section,
+        ))
+      }
+
     }
 
     void loadDatabaseGradebook()
@@ -3482,9 +3583,7 @@ function RecordsPage({
           columns.reduce(
             (total, column) =>
               total +
-              (column.type === "Attendance" || column.type === "Recitation"
-                ? 10
-                : 100),
+              maxScoreForColumn(column),
             0,
           )) *
         100
@@ -3542,11 +3641,7 @@ function RecordsPage({
           className="record-score-input"
           type="number"
           min="0"
-          max={
-            column.type === "Attendance" || column.type === "Recitation"
-              ? "10"
-              : "100"
-          }
+          max={maxScoreForColumn(column)}
           value={recordValue(
             student,
             column.id,
@@ -3557,9 +3652,7 @@ function RecordsPage({
               student.id,
               column.id,
               event.target.value,
-              column.type === "Attendance" || column.type === "Recitation"
-                ? 10
-                : 100,
+              maxScoreForColumn(column),
             )
           }
           aria-label={`Edit ${column.label} score for ${student.name}`}
@@ -3576,6 +3669,7 @@ function RecordsPage({
   ) => {
     const nextValue =
       value === "" ? "" : Math.min(maximum, Math.max(0, Number(value)))
+
     setRecordValues((current) => {
       const nextValues = {
         ...current,
@@ -3600,6 +3694,79 @@ function RecordsPage({
       setDraftSavedAt(savedAt)
       return nextValues
     })
+
+    if (nextValue === "" || !selectedSectionId) return
+
+    const column = assessmentColumns.find((item) => String(item.id) === String(columnId))
+    if (!column) return
+
+    const saveKey = `${studentId}:${columnId}`
+    const previousTimer = scoreSaveTimersRef.current[saveKey]
+    if (previousTimer) window.clearTimeout(previousTimer)
+
+    scoreSaveTimersRef.current[saveKey] = window.setTimeout(async () => {
+      const typeMap: Record<RecordAssessmentColumn["type"], "exam" | "quiz" | "project" | "recitation" | "attendance"> = {
+        Exam: "exam",
+        Quiz: "quiz",
+        "Hands On": "project",
+        Activities: "project",
+        Recitation: "recitation",
+        Attendance: "attendance",
+      }
+
+      try {
+        const savedAssessmentId = await saveStudentScore({
+          classId: selectedSectionId,
+          studentNumber: studentId,
+          title: column.label,
+          type: typeMap[column.type],
+          term: column.term === "Final" ? "final" : "midterm",
+          maxScore: maximum,
+          score: Number(nextValue),
+          status: "draft",
+          // Never send an OMR assessment UUID to comptech_faculty_save_score.
+          // The RPC expects public.assessments.id. If an OMR quiz is not linked
+          // yet, send null so the RPC creates/resolves the gradebook assessment.
+          assessmentId:
+            assessmentIdByColumnRef.current[String(column.id)] ??
+            column.assessmentId ??
+            undefined,
+        })
+
+        assessmentIdByColumnRef.current[String(column.id)] = savedAssessmentId
+        assessmentIdByColumnRef.current[savedAssessmentId] = savedAssessmentId
+
+        if (String(column.id) !== savedAssessmentId) {
+          setRecordValues((current) => {
+            const next = { ...current }
+            Object.keys(next).forEach((studentNumber) => {
+              const values = next[studentNumber]
+              if (Object.prototype.hasOwnProperty.call(values ?? {}, String(column.id))) {
+                next[studentNumber] = {
+                  ...values,
+                  [savedAssessmentId]: values[String(column.id)],
+                }
+                delete next[studentNumber][String(column.id)]
+              }
+            })
+            localDraftValuesRef.current = next
+            return next
+          })
+        }
+
+        setAssessmentColumns((current) => current.map((item) =>
+          item.id === column.id
+            ? { ...item, id: savedAssessmentId, assessmentId: savedAssessmentId }
+            : item,
+        ))
+        showToast(`${column.label} score saved.`)
+      } catch (error) {
+        console.error("Unable to save score:", error)
+        showToast(error instanceof Error ? error.message : "Unable to save score.", "error")
+      } finally {
+        delete scoreSaveTimersRef.current[saveKey]
+      }
+    }, 600)
   }
 
   return (

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "./lib/supabase"
 import { jsPDF } from "jspdf"
 import jsQR from "jsqr"
-import { saveStudentScore } from "./lib/teacher-grade-service"
+import { saveStudentScore } from "./lib/studentScores"
 import "./omr-manager.css"
 
 type Choice = "A" | "B" | "C" | "D"
