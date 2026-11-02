@@ -23,15 +23,35 @@ const formatDatabaseTime = (value: string) => {
 }
 
 function TimePicker12({ value, onChange, required, label }: { value: string; onChange: (value: string) => void; required?: boolean; label: string }) {
-  const [h = "", m = ""] = value.split(":"); const hour24 = Number(h); const valid = /^\d{2}:\d{2}$/.test(value)
-  const hour12 = valid ? String(hour24 % 12 || 12) : ""; const minute = valid ? m : ""; const period = valid && hour24 >= 12 ? "PM" : "AM"
-  const commit = (nh: string, nm: string, np: string) => { if (!nh || !nm) { onChange(""); return }; onChange(`${String(Number(nh) % 12 + (np === "PM" ? 12 : 0)).padStart(2, "0")}:${nm}`) }
-  return <div className="time-picker-12" role="group" aria-label={label}>
-    <select aria-label={`${label} hour`} value={hour12} onChange={e => commit(e.target.value, minute || "00", period)} required={required}><option value="">Hour</option>{Array.from({length:12},(_,i)=>String(i+1)).map(x=><option key={x}>{x}</option>)}</select><span>:</span>
-    <select aria-label={`${label} minute`} value={minute} onChange={e => commit(hour12 || "12", e.target.value, period)} required={required}><option value="">Min</option>{Array.from({length:60},(_,i)=>String(i).padStart(2,"0")).map(x=><option key={x}>{x}</option>)}</select>
-    <select aria-label={`${label} AM or PM`} value={period} onChange={e => commit(hour12 || "12", minute || "00", e.target.value)}><option>AM</option><option>PM</option></select>
-  </div>
+  const [hours24 = "", minutes = ""] = value.split(":")
+  const valid = /^\d{2}:\d{2}$/.test(value)
+  const hourNumber = Number(hours24)
+  const hour12 = valid ? String(hourNumber % 12 || 12) : ""
+  const minute = valid ? minutes : ""
+  const period = valid && hourNumber >= 12 ? "PM" : "AM"
+  const update = (nextHour: string, nextMinute: string, nextPeriod: string) => {
+    if (!nextHour || !nextMinute) { onChange(""); return }
+    const next24 = Number(nextHour) % 12 + (nextPeriod === "PM" ? 12 : 0)
+    onChange(`${String(next24).padStart(2, "0")}:${nextMinute}`)
+  }
+  return (
+    <div className="time-picker-12" role="group" aria-label={label}>
+      <select value={hour12} aria-label={`${label} hour`} required={required} onChange={(e) => update(e.target.value, minute || "00", period)}>
+        <option value="">Hour</option>
+        {Array.from({ length: 12 }, (_, i) => String(i + 1)).map((hour) => <option key={hour} value={hour}>{hour}</option>)}
+      </select>
+      <span aria-hidden="true">:</span>
+      <select value={minute} aria-label={`${label} minute`} required={required} onChange={(e) => update(hour12 || "12", e.target.value, period)}>
+        <option value="">Min</option>
+        {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0")).map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+      <select value={period} aria-label={`${label} AM or PM`} onChange={(e) => update(hour12 || "12", minute || "00", e.target.value)}>
+        <option value="AM">AM</option><option value="PM">PM</option>
+      </select>
+    </div>
+  )
 }
+
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     home: (
@@ -6346,7 +6366,7 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
 
 
 
-    <button type="button" className="profile-mobile-logout" onClick={onLogout}><Icon name="logout" size={18}/> Log out</button>
+    <button type="button" className="profile-mobile-logout" onClick={onLogout}><Icon name="logout" size={18} /> Log out</button>
     </main>
 
     {activePanel && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setActivePanel(null)}><section className="profile-settings-modal" role="dialog" aria-modal="true" aria-labelledby="profile-settings-title">

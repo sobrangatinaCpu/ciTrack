@@ -5145,6 +5145,132 @@ a {
 /* Drag minimized live class from any non-action area */
 .live-session-tray{cursor:grab;touch-action:none;user-select:none}.live-session-tray:active{cursor:grabbing}.live-session-tray .live-tray-resume{cursor:pointer;touch-action:manipulation}
 
-/* Final phone usability overrides */
-.time-picker-12{width:100%;margin-top:6px;display:grid;grid-template-columns:minmax(70px,1fr) auto minmax(76px,1fr) minmax(72px,.85fr);align-items:center;gap:7px}.time-picker-12 select{width:100%;min-width:0;height:48px;padding:0 9px;border:1px solid var(--line);border-radius:9px;color:var(--ink);background:#fff;font:inherit}.time-picker-12>span{text-align:center;font-weight:800}
-@media(max-width:600px){.profile-page-compact{padding-bottom:18px}.profile-mobile-logout{display:inline-flex!important;width:100%;min-height:52px;margin:18px 0 calc(12px + env(safe-area-inset-bottom));align-items:center;justify-content:center;gap:9px;border:1px solid #e7aeb4;border-radius:13px;color:#b63f49;background:#fff7f8;font-size:15px;font-weight:800}.modal-backdrop:has(.class-form-modal){z-index:100;align-items:end;overflow:hidden}.class-form-modal{position:relative!important;inset:auto!important;width:100%!important;height:94dvh;max-height:94dvh!important;padding:24px 18px 0!important;display:flex;flex-direction:column;overflow:hidden!important;border-radius:24px 24px 0 0!important}.class-form-modal>.class-form{min-height:0;margin-top:14px;padding:0 2px calc(96px + env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}.class-form-actions{position:sticky!important;z-index:8;bottom:0!important;margin:22px -2px 0!important;padding:12px 0 calc(12px + env(safe-area-inset-bottom))!important;display:grid!important;grid-template-columns:1fr 1.35fr;gap:9px;border-top:1px solid #dce5ed;background:#fffffff8;box-shadow:0 -12px 22px #0d2d4514}.class-form-actions button{width:100%;min-width:0;min-height:50px}.time-picker-12 select{min-height:52px;font-size:16px!important}}
+
+/* Definitive phone fixes: profile logout, 12-hour time controls, and visible form submit */
+.time-picker-12 {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(64px, 1fr) auto minmax(70px, 1fr) minmax(68px, .85fr);
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.time-picker-12 select {
+  width: 100%;
+  min-width: 0;
+  height: 48px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+}
+.time-picker-12 > span { text-align: center; font-weight: 800; color: #61758a; }
+
+@media screen and (max-width: 600px) {
+  .profile-page-compact { padding-bottom: calc(110px + env(safe-area-inset-bottom)) !important; }
+  .profile-page-compact .profile-mobile-logout {
+    display: flex !important;
+    width: 100% !important;
+    min-height: 54px;
+    margin: 20px 0 0 !important;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    border: 1px solid #e6aeb4;
+    border-radius: 13px;
+    color: #b63e49;
+    background: #fff7f8;
+    font-size: 15px;
+    font-weight: 800;
+  }
+
+  body:has(.class-form-modal) { overflow: hidden; }
+  .modal-backdrop:has(.class-form-modal) {
+    z-index: 12000 !important;
+    padding: 0 !important;
+    align-items: flex-end !important;
+    overflow: hidden !important;
+  }
+  .modal-backdrop .class-form-modal {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: 94dvh !important;
+    max-height: 94dvh !important;
+    padding: 22px 18px 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    border-radius: 24px 24px 0 0 !important;
+  }
+  .modal-backdrop .class-form-modal > .class-form {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    margin-top: 12px !important;
+    padding: 0 2px calc(24px + env(safe-area-inset-bottom)) !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .modal-backdrop .class-form-modal .class-form-actions {
+    position: sticky !important;
+    z-index: 50 !important;
+    bottom: 0 !important;
+    margin: 24px -2px 0 !important;
+    padding: 12px 0 calc(12px + env(safe-area-inset-bottom)) !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1.35fr !important;
+    gap: 9px !important;
+    border-top: 1px solid #dce5ed !important;
+    background: #fff !important;
+    box-shadow: 0 -14px 24px rgba(13,45,69,.10) !important;
+  }
+  .modal-backdrop .class-form-modal .class-form-actions button {
+    display: inline-flex !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 52px !important;
+    visibility: visible !important;
+  }
+  .time-picker-12 select { min-height: 52px; font-size: 16px !important; }
+}
+
+/* Desktop/tablet correction for the 12-hour schedule controls */
+@media screen and (min-width: 601px) {
+  .class-form-modal .class-time-fields {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+    gap: 12px !important;
+    align-items: start !important;
+  }
+
+  .class-form-modal .class-time-fields > label {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .class-form-modal .class-time-fields > label:last-child {
+    grid-column: 1 / -1 !important;
+  }
+
+  .class-form-modal .time-picker-12 {
+    width: 100% !important;
+    min-width: 0 !important;
+    grid-template-columns: minmax(58px, 0.8fr) auto minmax(64px, 0.9fr) minmax(66px, 0.9fr) !important;
+    gap: 5px !important;
+  }
+
+  .class-form-modal .time-picker-12 select {
+    width: 100% !important;
+    min-width: 0 !important;
+    padding-inline: 7px !important;
+    font-size: 13px !important;
+  }
+
+  .class-form-modal .schedule-form-card {
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+}
