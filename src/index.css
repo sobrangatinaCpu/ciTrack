@@ -5325,3 +5325,87 @@ a {
     margin-bottom: 10px !important;
   }
 }
+
+/* Compact phone-only pre-class sheet. Desktop and tablet remain unchanged. */
+@media screen and (max-width: 600px) {
+  .modal-backdrop:has(.session-modal) {
+    align-items: flex-end !important;
+    padding: 0 12px calc(86px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .modal-backdrop > .session-modal {
+    width: 100% !important;
+    height: auto !important;
+    max-height: min(72dvh, 620px) !important;
+    padding: 20px 18px 16px !important;
+    overflow-y: auto !important;
+    border-radius: 22px !important;
+    box-shadow: 0 22px 60px rgba(4, 28, 48, .34) !important;
+  }
+
+  .session-modal .live-badge {
+    margin-bottom: 12px !important;
+  }
+
+  .session-modal > .eyebrow {
+    margin-top: 4px !important;
+    font-size: 11px !important;
+    letter-spacing: .08em !important;
+  }
+
+  .session-modal > h2 {
+    margin: 7px 0 3px !important;
+    font-size: 28px !important;
+    line-height: 1.15 !important;
+  }
+
+  .session-modal > p:not(.eyebrow) {
+    margin: 0 !important;
+    font-size: 13px !important;
+  }
+
+  .session-modal .session-attendance-stats {
+    margin: 18px 0 0 !important;
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .session-modal .session-attendance-stats > div {
+    min-width: 0 !important;
+    padding: 13px 7px !important;
+    border-radius: 14px !important;
+  }
+
+  .session-modal .session-attendance-stats strong {
+    font-size: 17px !important;
+  }
+
+  .session-modal .session-attendance-stats small {
+    font-size: 9px !important;
+    line-height: 1.25 !important;
+  }
+
+  .modal-backdrop > .session-modal > .session-button,
+  .modal-backdrop > .session-modal > .danger-button:last-child {
+    position: static !important;
+    min-height: 50px !important;
+    margin-top: 16px !important;
+    border-radius: 13px !important;
+    box-shadow: 0 8px 18px rgba(17, 92, 166, .2) !important;
+  }
+}
+
+/* Use a taller scrollable sheet only after the live session has started. */
+@media screen and (max-width: 600px) {
+  .modal-backdrop > .session-modal:has(.session-live-layout) {
+    max-height: 82dvh !important;
+    border-radius: 22px 22px 0 0 !important;
+    margin-bottom: calc(-86px - env(safe-area-inset-bottom)) !important;
+  }
+
+  .modal-backdrop > .session-modal:has(.session-live-layout) > .danger-button:last-child {
+    position: sticky !important;
+    bottom: 0 !important;
+  }
+}
