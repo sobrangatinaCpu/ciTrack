@@ -5140,3 +5140,7 @@ a {
     margin-top: 4px !important;
   }
 }
+
+
+/* Drag minimized live class from any non-action area */
+.live-session-tray{cursor:grab;touch-action:none;user-select:none}.live-session-tray:active{cursor:grabbing}.live-session-tray .live-tray-resume{cursor:pointer;touch-action:manipulation}

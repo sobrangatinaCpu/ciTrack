@@ -1612,7 +1612,7 @@ function QuickActionsFab({
     setQuickActionsOpen(false)
     setPage(page)
   }
-  const startDragging = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const startDragging = (event: React.PointerEvent<HTMLElement>) => {
     const fabRect = event.currentTarget.getBoundingClientRect()
     event.currentTarget.setPointerCapture(event.pointerId)
     dragState.current = {
@@ -1627,7 +1627,7 @@ function QuickActionsFab({
       moved: false,
     }
   }
-  const drag = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const drag = (event: React.PointerEvent<HTMLElement>) => {
     const activeDrag = dragState.current
     if (!activeDrag || event.pointerId !== activeDrag.pointerId) return
     const deltaX = event.clientX - activeDrag.startX
@@ -1644,7 +1644,7 @@ function QuickActionsFab({
       ),
     })
   }
-  const stopDragging = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const stopDragging = (event: React.PointerEvent<HTMLElement>) => {
     const activeDrag = dragState.current
     if (!activeDrag || event.pointerId !== activeDrag.pointerId) return
     suppressNextFabClick.current = activeDrag.moved
@@ -6012,8 +6012,6 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
   const [savingProfile, setSavingProfile] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [activePanel, setActivePanel] = useState<ProfilePanel>(null)
-  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
-  const [loggingOut, setLoggingOut] = useState(false)
   const [notifications, setNotifications] = useState({ classStarts: true, studentRequests: true, attendance: true, reminders: true })
   const [attendanceSettings, setAttendanceSettings] = useState({ lateMinutes: 15, closeMinutes: 30, allowExcused: true })
 
@@ -6180,22 +6178,10 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
         <button onClick={() => setActivePanel("attendance")}>Attendance settings<Icon name="chevron" /></button>
       </section>
     </div>
-    <button type="button" className="profile-mobile-logout" onClick={() => setLogoutConfirmOpen(true)}>
-      <Icon name="logout" size={18} /> Log out
-    </button>
-    </main>
 
-    {logoutConfirmOpen && <div className="modal-backdrop profile-logout-backdrop" onMouseDown={event => event.target === event.currentTarget && !loggingOut && setLogoutConfirmOpen(false)}>
-      <section className="profile-logout-confirm" role="alertdialog" aria-modal="true" aria-labelledby="profile-logout-title" aria-describedby="profile-logout-description">
-        <span className="profile-logout-icon" aria-hidden="true"><Icon name="logout" size={21} /></span>
-        <h2 id="profile-logout-title">Log out?</h2>
-        <p id="profile-logout-description">You will return to the faculty sign-in page on this device.</p>
-        <div className="profile-logout-actions">
-          <button type="button" className="secondary-button" onClick={() => setLogoutConfirmOpen(false)} disabled={loggingOut}>Cancel</button>
-          <button type="button" className="danger-button" disabled={loggingOut} onClick={async () => { setLoggingOut(true); try { await onLogout() } finally { setLoggingOut(false) } }}>{loggingOut ? "Logging out..." : "Log out"}</button>
-        </div>
-      </section>
-    </div>}
+
+
+    </main>
 
     {activePanel && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setActivePanel(null)}><section className="profile-settings-modal" role="dialog" aria-modal="true" aria-labelledby="profile-settings-title">
       <button className="modal-close" onClick={() => setActivePanel(null)} aria-label="Close">×</button><p className="eyebrow">Profile settings</p><h2 id="profile-settings-title">{panelTitle[activePanel as Exclude<ProfilePanel, null>]}</h2>
@@ -7352,8 +7338,12 @@ function MinimizedSession({
       className={`live-session-tray live-session-tray-larger ${className}`}
       style={{ transform: `translate(${position.x}px, ${position.y}px)` }}
       aria-label={`Live class: ${item.subject}`}
+      onPointerDown={startDragging}
+      onPointerMove={drag}
+      onPointerUp={stopDragging}
+      onPointerCancel={stopDragging}
     >
-      <button className="live-tray-resume" type="button" onClick={onRestore}>
+      <button className="live-tray-resume" type="button" onClick={onRestore} onPointerDown={(event) => event.stopPropagation()}>
         <span className="live-tray-status live-tray-status-custom">
           <i /> Live class
         </span>
@@ -7371,10 +7361,6 @@ function MinimizedSession({
       <button
         className="live-tray-drag-handle"
         type="button"
-        onPointerDown={startDragging}
-        onPointerMove={drag}
-        onPointerUp={stopDragging}
-        onPointerCancel={stopDragging}
         aria-label="Drag live class"
         title="Drag to move"
       >
