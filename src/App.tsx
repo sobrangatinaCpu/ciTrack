@@ -2511,6 +2511,34 @@ function RecordsPage({
   const [sectionMenuOpen, setSectionMenuOpen] = useState(false)
   const [enrolledStudentsLoading, setEnrolledStudentsLoading] = useState(false)
   const [enrolledStudentsError, setEnrolledStudentsError] = useState("")
+  const [recordPublicationStatus, setRecordPublicationStatus] = useState<"Draft" | "Published">("Draft")
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null)
+  const localDraftValuesRef = useRef<Record<string, Record<string, number | "">>>({})
+  const [publishingRecords, setPublishingRecords] = useState(false)
+  const publishOmrRecords = async () => {
+    if (!selectedSectionId || publishingRecords) return
+    setPublishingRecords(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setPublishingRecords(false)
+      showMessage("Your session expired. Please sign in again.")
+      return
+    }
+    const now = new Date().toISOString()
+    const { error } = await supabase
+      .from("omr_submissions")
+      .update({ status: "published", published_at: now })
+      .eq("class_id", selectedSectionId)
+      .eq("faculty_id", user.id)
+      .in("status", ["approved", "draft"])
+    setPublishingRecords(false)
+    if (error) {
+      showToast(`Unable to publish OMR grades: ${error.message}`, "error")
+      return
+    }
+    setRecordPublicationStatus("Published")
+    showToast("OMR grades published. Students may now view the released scores.")
+  }
 
   useEffect(() => {
     let active = true
@@ -2609,6 +2637,7 @@ function RecordsPage({
 
   useEffect(() => {
     if (selectedSectionId) localStorage.setItem("cit-portal:records-section", selectedSectionId)
+    setRecordPublicationStatus("Draft")
   }, [selectedSectionId])
 
   useEffect(() => {
@@ -2822,7 +2851,7 @@ function RecordsPage({
           .from("omr_submissions")
           .select("assessment_id, detected_student_number, final_score, proposed_score, status, created_at")
           .in("assessment_id", assessmentIds)
-          .in("status", ["approved", "published"])
+          .in("status", ["draft", "approved", "pending", "published"])
           .order("created_at", { ascending: true })
 
         if (!active) return
@@ -2835,6 +2864,8 @@ function RecordsPage({
               const columnId = resolvedColumnByAssessment.get(String(submission.assessment_id))
               const score = Number(submission.final_score ?? submission.proposed_score)
               if (!studentNumber || !columnId || !Number.isFinite(score)) return
+              const localStudentDraft = localDraftValuesRef.current[studentNumber]
+              if (localStudentDraft && Object.prototype.hasOwnProperty.call(localStudentDraft, columnId)) return
               next[studentNumber] = { ...next[studentNumber], [columnId]: score }
             })
             return next
@@ -3012,7 +3043,7 @@ function RecordsPage({
         .replace(/^(midterm|final)\s+/, "")
         .replace(/\s+/g, " ")
 
-    const handlePublishedOmrScore = (event: Event) => {
+    const handleDraftOmrScore = (event: Event) => {
       const detail = (event as CustomEvent<{
         assessmentId: string
         classId: string
@@ -3079,8 +3110,8 @@ function RecordsPage({
       })
     }
 
-    window.addEventListener("cit-portal:gradebook-score-published", handlePublishedOmrScore)
-    return () => window.removeEventListener("cit-portal:gradebook-score-published", handlePublishedOmrScore)
+    window.addEventListener("cit-portal:gradebook-score-drafted", handleDraftOmrScore)
+    return () => window.removeEventListener("cit-portal:gradebook-score-drafted", handleDraftOmrScore)
   }, [selectedSectionId])
 
   useEffect(() => {
@@ -3092,6 +3123,10 @@ function RecordsPage({
       if (Array.isArray(parsed.students) && parsed.students.length > 0) setRecordStudents(parsed.students)
       if (parsed.statuses && typeof parsed.statuses === "object") setStudentStatuses(parsed.statuses)
       if (parsed.remarks && typeof parsed.remarks === "object") setDailyRemarks(parsed.remarks)
+      if (["Draft", "Published"].includes(parsed.publicationStatus)) {
+        setRecordPublicationStatus(parsed.publicationStatus)
+      }
+      if (typeof parsed.savedAt === "string") setDraftSavedAt(parsed.savedAt)
 
       // Quiz and Exam columns come only from Supabase. This permanently clears
       // deleted Quiz 5/Quiz 6 columns left behind by older localStorage data.
@@ -3104,13 +3139,10 @@ function RecordsPage({
       const savedValues = parsed.values && typeof parsed.values === "object"
         ? parsed.values as Record<string, Record<string, number | "">>
         : {}
-      const cleanedValues: Record<string, Record<string, number | "">> = {}
-
-      Object.entries(savedValues).forEach(([studentNumber, values]) => {
-        cleanedValues[studentNumber] = Object.fromEntries(
-          Object.entries(values).filter(([columnId]) => preservedIds.has(columnId)),
-        )
-      })
+      // Keep all locally edited score values, including Quiz and Exam drafts.
+      // The previous filter removed those values on every refresh.
+      const cleanedValues: Record<string, Record<string, number | "">> = savedValues
+      localDraftValuesRef.current = cleanedValues
 
       setAssessmentColumns((current) => [
         ...preservedColumns,
@@ -3142,10 +3174,14 @@ function RecordsPage({
         statuses: studentStatuses,
         columns: assessmentColumns,
         remarks: dailyRemarks,
+        publicationStatus: recordPublicationStatus,
+        selectedSectionId,
+        savedAt: new Date().toISOString(),
       }))
+      setDraftSavedAt(new Date().toISOString())
     }, 250)
     return () => window.clearTimeout(timer)
-  }, [recordStudents, recordValues, studentStatuses, assessmentColumns, dailyRemarks])
+  }, [recordStudents, recordValues, studentStatuses, assessmentColumns, dailyRemarks, recordPublicationStatus, selectedSectionId])
 
   const normalizeCsvHeader = (value: string) =>
     value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")
@@ -3538,13 +3574,30 @@ function RecordsPage({
   ) => {
     const nextValue =
       value === "" ? "" : Math.min(maximum, Math.max(0, Number(value)))
-    setRecordValues((current) => ({
-      ...current,
-      [studentId]: {
-        ...current[studentId],
-        [columnId]: nextValue,
-      },
-    }))
+    setRecordValues((current) => {
+      const nextValues = {
+        ...current,
+        [studentId]: {
+          ...current[studentId],
+          [columnId]: nextValue,
+        },
+      }
+      const savedAt = new Date().toISOString()
+      localStorage.setItem("cit-portal:gradebook", JSON.stringify({
+        students: recordStudents,
+        values: nextValues,
+        statuses: studentStatuses,
+        columns: assessmentColumns,
+        remarks: dailyRemarks,
+        publicationStatus: recordPublicationStatus,
+        selectedSectionId,
+        savedAt,
+      }))
+      localDraftValuesRef.current = nextValues
+      setRecordPublicationStatus("Draft")
+      setDraftSavedAt(savedAt)
+      return nextValues
+    })
   }
 
   return (
@@ -3784,13 +3837,27 @@ function RecordsPage({
             <span>Record status</span>
             <select
               className="record-publication-select"
-              defaultValue="Draft"
+              value={recordPublicationStatus}
               aria-label="Set record publication status"
+              onChange={(event) => setRecordPublicationStatus(event.target.value as "Draft" | "Published")}
             >
-              <option>Pending</option>
               <option>Draft</option>
               <option>Published</option>
             </select>
+            <button
+              type="button"
+              className="primary-button compact record-publish-button"
+              disabled={publishingRecords || recordPublicationStatus === "Published" || !selectedSectionId}
+              onClick={() => void publishOmrRecords()}
+            >
+              <Icon name="check" size={15} />
+              {publishingRecords ? "Publishing..." : recordPublicationStatus === "Published" ? "Published" : "Publish"}
+            </button>
+            <small>
+              {recordPublicationStatus === "Published"
+                ? "Visible to students"
+                : `Private to instructor · Draft saved${draftSavedAt ? ` at ${new Date(draftSavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`}
+            </small>
           </div>
           <div className="records-assessment-actions">
             <button

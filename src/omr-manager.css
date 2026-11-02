@@ -31,3 +31,287 @@
 
 /* Assessment-bound OMR paper restriction */
 .omr-paper-code-status{display:grid;gap:6px;margin-top:14px;padding:12px 14px;border:1px solid #c9dfef;border-radius:12px;background:#f3f9fd}.omr-paper-code-status strong{color:#173b59;font-size:12px}.omr-paper-code-status code{display:block;max-width:100%;padding:8px 10px;overflow-wrap:anywhere;border-radius:8px;color:#155d98;background:#fff;font:700 11px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.omr-paper-code-status small{color:#61798d;font-size:11px;line-height:1.45}
+
+/* Complete OMR light mode, including capture preview and empty-state panels */
+.omr-shell {
+  background: rgba(35, 53, 72, .22) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.omr-panel,
+.omr-header,
+.omr-card,
+.omr-step-card,
+.omr-step-section,
+.omr-selection-card,
+.omr-capture-card,
+.omr-result-frame,
+.omr-result-summary,
+.omr-result-counts > div,
+.omr-report-sheet,
+.omr-result-item {
+  color: #17324d !important;
+  background: #ffffff !important;
+  border-color: #c9d9e6 !important;
+}
+
+.omr-panel {
+  box-shadow: 0 24px 64px rgba(8, 31, 50, .25) !important;
+}
+
+.omr-header {
+  border-bottom: 1px solid #dae5ed !important;
+}
+
+.omr-header h1,
+.omr-header h2,
+.omr-header h3,
+.omr-panel h1,
+.omr-panel h2,
+.omr-panel h3,
+.omr-panel h4,
+.omr-section-heading {
+  color: #17324d !important;
+}
+
+.omr-eyebrow { color: #176ee8 !important; }
+.omr-header p,
+.omr-panel p,
+.omr-panel small { color: #60788c !important; }
+.omr-panel label,
+.omr-panel legend,
+.omr-panel strong { color: #294a63 !important; }
+
+.omr-panel input,
+.omr-panel select,
+.omr-panel textarea {
+  color: #17324d !important;
+  background: #ffffff !important;
+  border-color: #aFC5d7 !important;
+}
+
+.omr-icon-button {
+  color: #36566f !important;
+  background: #eef3f7 !important;
+  border: 1px solid #d1dde7 !important;
+}
+
+/* The dark rectangle seen in the capture step */
+.omr-capture-preview,
+.omr-capture-stage,
+.omr-capture-placeholder,
+.omr-drop-zone,
+.omr-scan-preview,
+.omr-preview-frame {
+  color: #49677f !important;
+  background: #eef5fb !important;
+  border-color: #9fbdd4 !important;
+}
+
+.omr-capture-preview *,
+.omr-capture-stage *,
+.omr-capture-placeholder *,
+.omr-drop-zone * {
+  color: #49677f !important;
+}
+
+.omr-capture-preview img,
+.omr-capture-stage img,
+.omr-scan-preview img,
+.omr-preview-frame img {
+  background: #ffffff !important;
+  border: 1px solid #b5c9da !important;
+  box-shadow: 0 7px 20px rgba(20, 52, 78, .12) !important;
+}
+
+.omr-score-card {
+  color: #075ca8 !important;
+  background: #eaf4ff !important;
+  border-color: #bfd8ee !important;
+}
+
+.omr-result-actions {
+  background: rgba(255, 255, 255, .98) !important;
+  border-color: #cad9e4 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .omr-panel,
+  .omr-header,
+  .omr-card,
+  .omr-step-card,
+  .omr-step-section,
+  .omr-selection-card,
+  .omr-capture-card,
+  .omr-result-frame,
+  .omr-result-summary,
+  .omr-result-counts > div,
+  .omr-report-sheet,
+  .omr-result-item {
+    color: #17324d !important;
+    background: #ffffff !important;
+    border-color: #c9d9e6 !important;
+  }
+
+  .omr-capture-preview,
+  .omr-capture-stage,
+  .omr-capture-placeholder,
+  .omr-drop-zone,
+  .omr-scan-preview,
+  .omr-preview-frame {
+    color: #49677f !important;
+    background: #eef5fb !important;
+    border-color: #9fbdd4 !important;
+  }
+}
+
+/* Close button matching the small white square reference */
+.omr-icon-button {
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  padding: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  border: 1px solid #d5e0e9 !important;
+  border-radius: 9px !important;
+  color: #4d667b !important;
+  background: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(20, 48, 70, .08) !important;
+  font-size: 20px !important;
+  font-weight: 500 !important;
+  line-height: 1 !important;
+}
+
+.omr-icon-button:hover {
+  color: #173d5c !important;
+  background: #f4f8fb !important;
+  border-color: #bdcedb !important;
+}
+
+/* Final override: every OMR scanner section uses light mode */
+.omr-scan-empty,
+.omr-scan-preview,
+.omr-scan-preview > div,
+.omr-preview-actions,
+.omr-required-code,
+.omr-paper-code,
+.omr-scanner-note {
+  color: #294a63 !important;
+  background: #eef5fb !important;
+  border-color: #a9c2d6 !important;
+}
+
+.omr-scan-empty {
+  border-style: dashed !important;
+}
+
+.omr-scan-preview {
+  border: 1px solid #b8cddd !important;
+  box-shadow: 0 8px 22px rgba(20, 52, 78, .10) !important;
+}
+
+.omr-scan-preview > div {
+  align-self: stretch !important;
+  padding: 16px !important;
+  border-radius: 10px !important;
+}
+
+.omr-scan-preview span,
+.omr-scan-preview p,
+.omr-scan-preview strong,
+.omr-scan-preview small,
+.omr-scan-empty,
+.omr-scan-empty * {
+  color: #49677f !important;
+  opacity: 1 !important;
+}
+
+.omr-scan-preview img {
+  background: #ffffff !important;
+  border: 1px solid #b5c9da !important;
+  box-shadow: 0 6px 18px rgba(20, 52, 78, .12) !important;
+}
+
+/* Secondary scanner actions must also be light. */
+.omr-panel .omr-secondary,
+.omr-panel .omr-preview-actions .omr-secondary,
+.omr-panel .omr-capture-buttons .omr-secondary {
+  color: #17324d !important;
+  background: #ffffff !important;
+  border-color: #9fb7ca !important;
+}
+
+.omr-panel .omr-secondary:hover,
+.omr-panel .omr-preview-actions .omr-secondary:hover,
+.omr-panel .omr-capture-buttons .omr-secondary:hover {
+  color: #0d5798 !important;
+  background: #edf6ff !important;
+  border-color: #72a8d5 !important;
+}
+
+.omr-required-code,
+.omr-paper-code {
+  padding: 12px !important;
+  border: 1px solid #b8cddd !important;
+  border-radius: 10px !important;
+}
+
+.omr-required-code code,
+.omr-paper-code code {
+  color: #075ca8 !important;
+  background: #ffffff !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .omr-scan-empty,
+  .omr-scan-preview,
+  .omr-scan-preview > div,
+  .omr-preview-actions,
+  .omr-required-code,
+  .omr-paper-code,
+  .omr-scanner-note {
+    color: #294a63 !important;
+    background: #eef5fb !important;
+    border-color: #a9c2d6 !important;
+  }
+
+  .omr-panel .omr-secondary,
+  .omr-panel .omr-preview-actions .omr-secondary,
+  .omr-panel .omr-capture-buttons .omr-secondary {
+    color: #17324d !important;
+    background: #ffffff !important;
+    border-color: #9fb7ca !important;
+  }
+}
+
+/* Small soft-square OMR close button matching the supplied reference */
+.omr-header .omr-icon-button,
+.omr-panel .omr-icon-button {
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  padding: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  color: #60788c !important;
+  background: #eef3f7 !important;
+  box-shadow: none !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+}
+
+.omr-header .omr-icon-button:hover,
+.omr-header .omr-icon-button:focus-visible,
+.omr-panel .omr-icon-button:hover,
+.omr-panel .omr-icon-button:focus-visible {
+  color: #173d5c !important;
+  background: #e2ebf2 !important;
+  outline: 2px solid #b9d2e4 !important;
+  outline-offset: 1px !important;
+}

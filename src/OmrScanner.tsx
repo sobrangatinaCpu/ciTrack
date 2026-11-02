@@ -468,8 +468,46 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
         image_path: imagePath, status: "approved", reviewed_by: facultyId, reviewed_at: new Date().toISOString(),
       })
       if (saveError) { await supabase.storage.from("omr-scans").remove([imagePath]); throw saveError }
-      setMessage("Result approved and saved. Publish it to the gradebook from the review workflow.")
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to approve the OMR result.") }
+      const draftAssessmentId = await saveStudentScore({
+        classId,
+        studentNumber: result.studentNumber.trim(),
+        title: selectedAssessment.title,
+        type: selectedAssessment.assessment_type,
+        term: selectedAssessment.academic_term,
+        maxScore: result.maxScore,
+        score: result.score,
+        assessmentId: gradebookAssessmentId || selectedAssessment.gradebook_assessment_id || undefined,
+      })
+      const { error: linkError } = await supabase
+        .from("omr_assessments")
+        .update({ gradebook_assessment_id: draftAssessmentId })
+        .eq("id", selectedAssessment.id)
+        .eq("faculty_id", facultyId)
+      if (linkError) throw linkError
+      setGradebookAssessmentId(draftAssessmentId)
+      window.dispatchEvent(new CustomEvent("cit-portal:gradebook-score-drafted", {
+        detail: {
+          assessmentId: draftAssessmentId,
+          classId,
+          studentNumber: result.studentNumber.trim(),
+          title: selectedAssessment.title,
+          type: selectedAssessment.assessment_type,
+          term: selectedAssessment.academic_term,
+          maxScore: result.maxScore,
+          score: result.score,
+          status: "draft",
+        },
+      }))
+      setMessage("Result accepted and saved as a Draft in the gradebook. Students cannot see it until Publish is selected.")
+    } catch (reason) {
+      console.error("Unable to approve the OMR result:", reason)
+      const message = reason instanceof Error
+        ? reason.message
+        : typeof reason === "object" && reason && "message" in reason
+          ? String((reason as { message?: unknown }).message || "Unknown database error")
+          : String(reason || "Unknown error")
+      setError(`Unable to approve the OMR result. ${message}`)
+    }
     finally { setSaving(false) }
   }
 
@@ -699,8 +737,15 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
         }),
       )
 
+      const { error: submissionPublishError } = await supabase
+        .from("omr_submissions")
+        .update({ status: "published", published_at: new Date().toISOString() })
+        .eq("assessment_id", selectedAssessment.id)
+        .eq("faculty_id", facultyId)
+        .eq("detected_student_number", studentNumber)
+      if (submissionPublishError) throw submissionPublishError
       setMessage(
-        `${selectedAssessment.title} was added to the Gradebook and the score was published.`,
+        `${selectedAssessment.title} was published. Students may now view the released score.`,
       )
     } catch (reason) {
       console.error("Gradebook publication failed:", reason)
