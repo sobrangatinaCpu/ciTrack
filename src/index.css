@@ -5536,3 +5536,9 @@ a {
     width: 100% !important;
   }
 }
+
+
+/* Final Quick Actions overlap fix: the component is portaled to body. */
+body > .summary-speed-dial { z-index: 20000 !important; }
+body > .summary-speed-dial .summary-menu { position: relative; z-index: 20001 !important; }
+body > .summary-speed-dial .summary-fab { position: relative; z-index: 20002 !important; }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { QRCodeCanvas } from "qrcode.react"
 import { jsPDF } from "jspdf"
 import QRCode from "qrcode"
@@ -1777,7 +1778,7 @@ function QuickActionsFab({
     dragState.current = null
   }
 
-  return (
+  return createPortal(
     <div
       className={`summary-speed-dial ${quickActionsOpen ? "open" : ""}`}
       style={{
@@ -1856,7 +1857,8 @@ function QuickActionsFab({
       >
         <Icon name="plus" size={25} />
       </button>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
