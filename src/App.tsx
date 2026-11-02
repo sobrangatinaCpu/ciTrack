@@ -22,6 +22,16 @@ const formatDatabaseTime = (value: string) => {
   return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")} ${meridiem}`
 }
 
+function TimePicker12({ value, onChange, required, label }: { value: string; onChange: (value: string) => void; required?: boolean; label: string }) {
+  const [h = "", m = ""] = value.split(":"); const hour24 = Number(h); const valid = /^\d{2}:\d{2}$/.test(value)
+  const hour12 = valid ? String(hour24 % 12 || 12) : ""; const minute = valid ? m : ""; const period = valid && hour24 >= 12 ? "PM" : "AM"
+  const commit = (nh: string, nm: string, np: string) => { if (!nh || !nm) { onChange(""); return }; onChange(`${String(Number(nh) % 12 + (np === "PM" ? 12 : 0)).padStart(2, "0")}:${nm}`) }
+  return <div className="time-picker-12" role="group" aria-label={label}>
+    <select aria-label={`${label} hour`} value={hour12} onChange={e => commit(e.target.value, minute || "00", period)} required={required}><option value="">Hour</option>{Array.from({length:12},(_,i)=>String(i+1)).map(x=><option key={x}>{x}</option>)}</select><span>:</span>
+    <select aria-label={`${label} minute`} value={minute} onChange={e => commit(hour12 || "12", e.target.value, period)} required={required}><option value="">Min</option>{Array.from({length:60},(_,i)=>String(i).padStart(2,"0")).map(x=><option key={x}>{x}</option>)}</select>
+    <select aria-label={`${label} AM or PM`} value={period} onChange={e => commit(hour12 || "12", minute || "00", e.target.value)}><option>AM</option><option>PM</option></select>
+  </div>
+}
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     home: (
@@ -2119,10 +2129,10 @@ function AddClassModal({
                 </fieldset>
                 <div className="class-form-grid class-time-fields">
                   <label>Start time <em>Required</em>
-                    <input type="time" value={schedule.startTime} onChange={(event) => updateSchedule(schedule.id, { startTime: event.target.value })} required />
+                    <TimePicker12 label={`Schedule ${index + 1} start time`} value={schedule.startTime} onChange={(value) => updateSchedule(schedule.id, { startTime: value })} required />
                   </label>
                   <label>End time <em>Required</em>
-                    <input type="time" min={schedule.startTime} value={schedule.endTime} onChange={(event) => updateSchedule(schedule.id, { endTime: event.target.value })} required />
+                    <TimePicker12 label={`Schedule ${index + 1} end time`} value={schedule.endTime} onChange={(value) => updateSchedule(schedule.id, { endTime: value })} required />
                   </label>
                   <label>Room / virtual space
                     <input value={schedule.room} onChange={(event) => updateSchedule(schedule.id, { room: event.target.value })} placeholder="e.g. Lab 3" />
@@ -2184,7 +2194,7 @@ function RescheduleClassModal({ item, onClose, onSaved }: { item: ClassItem; onC
     onSaved({ id: String(data.id), originalDate: data.original_date, replacementDate: data.replacement_date, startTime: data.start_time, endTime: data.end_time, room: data.room ?? "", reason: data.reason ?? "", mode: data.mode })
     showToast("Temporary schedule saved.")
   }
-  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="reschedule-title"><button className="modal-close" onClick={onClose}>×</button><p className="eyebrow">Temporary schedule</p><h2 id="reschedule-title">Reschedule {item.subject}</h2><p>The default weekly schedule stays unchanged. Choose Moved to cancel the original occurrence, or Additional to keep both.</p><form className="class-form" onSubmit={save}><div className="class-form-grid"><label>Original occurrence <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.originalDate} onChange={(e) => setForm({...form, originalDate:e.target.value})}/></label><label>Temporary date <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.replacementDate} onChange={(e) => setForm({...form, replacementDate:e.target.value})}/></label></div><label>Reschedule type<select value={form.mode} onChange={(e) => setForm({...form, mode:e.target.value as "moved"|"additional"})}><option value="moved">Moved, cancel original occurrence</option><option value="additional">Additional, keep original occurrence</option></select></label><div className="class-form-grid class-time-fields"><label>Start time <em>Required</em><input type="time" value={form.startTime} onChange={(e) => setForm({...form,startTime:e.target.value})}/></label><label>End time <em>Required</em><input type="time" min={form.startTime} value={form.endTime} onChange={(e) => setForm({...form,endTime:e.target.value})}/></label><label>Room / virtual space<input value={form.room} onChange={(e) => setForm({...form,room:e.target.value})}/></label></div><label>Reason<textarea value={form.reason} onChange={(e) => setForm({...form,reason:e.target.value})} placeholder="Example: Campus event or make-up class"/></label><div className="class-form-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save temporary schedule"}</button></div></form></section></div>
+  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="reschedule-title"><button className="modal-close" onClick={onClose}>×</button><p className="eyebrow">Temporary schedule</p><h2 id="reschedule-title">Reschedule {item.subject}</h2><p>The default weekly schedule stays unchanged. Choose Moved to cancel the original occurrence, or Additional to keep both.</p><form className="class-form" onSubmit={save}><div className="class-form-grid"><label>Original occurrence <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.originalDate} onChange={(e) => setForm({...form, originalDate:e.target.value})}/></label><label>Temporary date <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.replacementDate} onChange={(e) => setForm({...form, replacementDate:e.target.value})}/></label></div><label>Reschedule type<select value={form.mode} onChange={(e) => setForm({...form, mode:e.target.value as "moved"|"additional"})}><option value="moved">Moved, cancel original occurrence</option><option value="additional">Additional, keep original occurrence</option></select></label><div className="class-form-grid class-time-fields"><label>Start time <em>Required</em><TimePicker12 label="Temporary schedule start time" value={form.startTime} onChange={(value) => setForm({...form,startTime:value})} required/></label><label>End time <em>Required</em><TimePicker12 label="Temporary schedule end time" value={form.endTime} onChange={(value) => setForm({...form,endTime:value})} required/></label><label>Room / virtual space<input value={form.room} onChange={(e) => setForm({...form,room:e.target.value})}/></label></div><label>Reason<textarea value={form.reason} onChange={(e) => setForm({...form,reason:e.target.value})} placeholder="Example: Campus event or make-up class"/></label><div className="class-form-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save temporary schedule"}</button></div></form></section></div>
 }
 
 function ClassesPage({
@@ -6336,6 +6346,7 @@ function ProfilePage({ setPage, onLogout }: { setPage: (page: string) => void; o
 
 
 
+    <button type="button" className="profile-mobile-logout" onClick={onLogout}><Icon name="logout" size={18}/> Log out</button>
     </main>
 
     {activePanel && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setActivePanel(null)}><section className="profile-settings-modal" role="dialog" aria-modal="true" aria-labelledby="profile-settings-title">
