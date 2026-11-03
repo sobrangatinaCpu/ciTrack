@@ -67,7 +67,7 @@ function expectedPaperCode(assessment: Assessment) {
 }
 function csvEscape(value: unknown) { const text = String(value ?? ""); return `"${text.replace(/"/g, '""')}"` }
 
-export default function OmrScanner({ onClose }: { onClose: () => void }) {
+export default function OmrScanner(_: { onClose: () => void }) {
   const [facultyId, setFacultyId] = useState("")
   const [classes, setClasses] = useState<FacultyClass[]>([])
   const [assessments, setAssessments] = useState<Assessment[]>([])
@@ -104,12 +104,17 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
       setFacultyId(userData.user.id)
 
       const [{ data: classRows, error: classError }, { data: assessmentRows, error: assessmentError }] = await Promise.all([
-        supabase.from("classes").select("*").eq("faculty_id", userData.user.id).order("created_at", { ascending: false }),
+        supabase.from("classes").select("*").eq("faculty_id", userData.user.id).neq("status", "Archived").order("created_at", { ascending: false }),
         supabase.from("omr_assessments").select("id, class_id, title, item_count, points_per_item, test_id, status, assessment_type, academic_term, gradebook_assessment_id, omr_answer_keys(answers)").eq("faculty_id", userData.user.id).order("created_at", { ascending: false }),
       ])
       if (classError) throw classError
       if (assessmentError) throw assessmentError
-      setClasses((classRows ?? []).map(classDetails))
+      const activeClasses = (classRows ?? []).filter(
+        (row: any) => String(row.status ?? "").trim().toLowerCase() !== "archived",
+      )
+      const activeClassIds = new Set(activeClasses.map((row: any) => String(row.id)))
+      setClasses(activeClasses.map(classDetails))
+      setClassId((current) => activeClassIds.has(current) ? current : "")
       setAssessments((assessmentRows ?? []).map((row: any) => {
         const key = Array.isArray(row.omr_answer_keys) ? row.omr_answer_keys[0] : row.omr_answer_keys
         return { ...row, item_count: Number(row.item_count), points_per_item: Number(row.points_per_item), academic_term: row.academic_term === "final" ? "final" : "midterm", gradebook_assessment_id: row.gradebook_assessment_id ?? null, answerKey: Array.isArray(key?.answers) ? key.answers : [] }
@@ -476,6 +481,7 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
         term: selectedAssessment.academic_term,
         maxScore: result.maxScore,
         score: result.score,
+        status: "draft",
         assessmentId: gradebookAssessmentId || selectedAssessment.gradebook_assessment_id || undefined,
       })
       const { error: linkError } = await supabase
@@ -790,9 +796,9 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="omr-shell" role="dialog" aria-modal="true" aria-labelledby="omr-scanner-title">
-      <div className="omr-panel omr-scanner-only-panel">
-        <header className="omr-header"><div><p className="omr-eyebrow">Faculty OMR scanner</p><h2 id="omr-scanner-title">{result ? "OMR scan result" : "Scan answer sheet"}</h2><p>{result ? "Review every missed, wrong, or multiple-mark item before approval." : "Select the class and saved assessment, then capture or import the paper."}</p></div><button className="omr-icon-button" type="button" onClick={() => { stopCamera(); onClose() }}>X</button></header>
+    <section className="omr-page" aria-labelledby="omr-scanner-title">
+      <div className="omr-page-content">
+        <header className="omr-header"><div><p className="omr-eyebrow">Faculty OMR scanner</p><h2 id="omr-scanner-title">{result ? "OMR scan result" : "Scan answer sheet"}</h2><p>{result ? "Review every missed, wrong, or multiple-mark item before approval." : "Select the class and saved assessment, then capture or import the paper."}</p></div></header>
         {error && <div className="omr-alert omr-alert-error" role="alert">{error}</div>}{message && <div className="omr-alert omr-alert-success">{message}</div>}
 
         {!result ? <section className="omr-scanner-only-content">
@@ -822,6 +828,6 @@ export default function OmrScanner({ onClose }: { onClose: () => void }) {
           <footer className="omr-result-actions"><button type="button" className="omr-secondary" onClick={() => setResult(null)}>Back to image</button><button type="button" className="omr-secondary" onClick={exportCsv}>Export CSV</button><button type="button" className="omr-secondary" onClick={() => void exportPdf()}>Export PDF</button><button type="button" className="omr-secondary" onClick={() => void publishToGradebook()} disabled={publishing || saving}>{publishing ? "Publishing..." : "Publish to gradebook"}</button><button type="button" className="omr-primary" onClick={() => void approveResult()} disabled={saving || publishing}>{saving ? "Saving..." : "Approve result"}</button></footer>
         </section>}
       </div>
-    </div>
+    </section>
   )
 }

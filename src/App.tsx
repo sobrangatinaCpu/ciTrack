@@ -475,6 +475,7 @@ const initialRecordAssessmentColumns: RecordAssessmentColumn[] = [
 
 const navItems: { id: string; label: string; icon: IconName }[] = [
   { id: "home", label: "Home", icon: "home" },
+  { id: "scanner", label: "OMR Scanner", icon: "scan" },
   { id: "classes", label: "Classes", icon: "book" },
   { id: "records", label: "Records", icon: "chart" },
   { id: "activities", label: "Activities", icon: "calendar" },
@@ -1738,157 +1739,6 @@ function Dashboard({
   )
 }
 
-function QuickActionsFab({
-  setPage,
-  onScanAnswer,
-}: {
-  setPage: (page: string) => void
-  onScanAnswer: () => void
-}) {
-  const [quickActionsOpen, setQuickActionsOpen] = useState(false)
-  const [quickActionsPosition, setQuickActionsPosition] = useState({
-    x: 0,
-    y: 0,
-  })
-  const dragState = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    position: { x: number; y: number };
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-    moved: boolean;
-  } | null>(null)
-  const suppressNextFabClick = useRef(false)
-  const openQuickAction = (page: string) => {
-    setQuickActionsOpen(false)
-    setPage(page)
-  }
-  const startDragging = (event: React.PointerEvent<HTMLElement>) => {
-    const fabRect = event.currentTarget.getBoundingClientRect()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    dragState.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      position: quickActionsPosition,
-      minX: -(fabRect.left - quickActionsPosition.x),
-      maxX: window.innerWidth - (fabRect.right - quickActionsPosition.x),
-      minY: -(fabRect.top - quickActionsPosition.y),
-      maxY: window.innerHeight - (fabRect.bottom - quickActionsPosition.y),
-      moved: false,
-    }
-  }
-  const drag = (event: React.PointerEvent<HTMLElement>) => {
-    const activeDrag = dragState.current
-    if (!activeDrag || event.pointerId !== activeDrag.pointerId) return
-    const deltaX = event.clientX - activeDrag.startX
-    const deltaY = event.clientY - activeDrag.startY
-    if (Math.abs(deltaX) + Math.abs(deltaY) > 4) activeDrag.moved = true
-    setQuickActionsPosition({
-      x: Math.min(
-        activeDrag.maxX,
-        Math.max(activeDrag.minX, activeDrag.position.x + deltaX),
-      ),
-      y: Math.min(
-        activeDrag.maxY,
-        Math.max(activeDrag.minY, activeDrag.position.y + deltaY),
-      ),
-    })
-  }
-  const stopDragging = (event: React.PointerEvent<HTMLElement>) => {
-    const activeDrag = dragState.current
-    if (!activeDrag || event.pointerId !== activeDrag.pointerId) return
-    suppressNextFabClick.current = activeDrag.moved
-    dragState.current = null
-  }
-
-  return createPortal(
-    <div
-      className={`summary-speed-dial ${quickActionsOpen ? "open" : ""}`}
-      style={{
-        transform: `translate(${quickActionsPosition.x}px, ${quickActionsPosition.y}px)`,
-      }}
-    >
-      <div
-        id="quick-actions-menu"
-        className="summary-menu"
-        role="menu"
-        aria-label="Quick actions"
-      >
-        <div className="summary-menu-heading">
-          <span className="summary-menu-eyebrow">Tools</span>
-          <strong className="summary-menu-title">Quick actions</strong>
-        </div>
-        <button role="menuitem" onClick={() => openQuickAction("classes")}>
-          <span className="summary-icon green">
-            <Icon name="plus" />
-          </span>
-          <span>
-            <strong className="summary-action-title">Create section</strong>
-            <small className="summary-action-description">
-              Add a class section
-            </small>
-          </span>
-        </button>
-        <button
-          role="menuitem"
-          onClick={() => {
-            setQuickActionsOpen(false)
-            onScanAnswer()
-          }}
-        >
-          <span className="summary-icon amber">
-            <Icon name="scan" />
-          </span>
-          <span>
-            <strong className="summary-action-title">Scan answer</strong>
-            <small className="summary-action-description">
-              Open the OMR scanner
-            </small>
-          </span>
-        </button>
-        <button role="menuitem" onClick={() => openQuickAction("records")}>
-          <span className="summary-icon blue">
-            <Icon name="chart" />
-          </span>
-          <span>
-            <strong className="summary-action-title">Open grade book</strong>
-            <small className="summary-action-description">
-              Review class records
-            </small>
-          </span>
-        </button>
-      </div>
-      <button
-        className="summary-fab"
-        onPointerDown={startDragging}
-        onPointerMove={drag}
-        onPointerUp={stopDragging}
-        onPointerCancel={stopDragging}
-        onClick={() => {
-          if (suppressNextFabClick.current) {
-            suppressNextFabClick.current = false
-            return
-          }
-          setQuickActionsOpen((open) => !open)
-        }}
-        aria-expanded={quickActionsOpen}
-        aria-controls="quick-actions-menu"
-        aria-label={
-          quickActionsOpen ? "Close quick actions" : "Open quick actions"
-        }
-        title="Drag to move or click to open quick actions"
-      >
-        <Icon name="plus" size={25} />
-      </button>
-    </div>,
-    document.body,
-  )
-}
-
 const createClientId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID()
@@ -3081,6 +2931,8 @@ function RecordsPage({
             const type: RecordAssessmentColumn["type"] =
               rawType === "quiz" ? "Quiz" :
               rawType === "exam" ? "Exam" :
+              rawType === "project" || rawType === "hands on" || rawType === "hands_on" || rawType === "activity"
+                ? "Hands On" :
               rawType === "recitation" ? "Recitation" :
               rawType === "attendance" ? "Attendance" : "Activities"
             const term: RecordAssessmentColumn["term"] =
@@ -3094,10 +2946,17 @@ function RecordsPage({
               maxScore: Number(row.max_score) || 100,
             }
             const index = next.findIndex((item) =>
-              String(item.id) === assessmentId || item.assessmentId === assessmentId,
+              String(item.id) === assessmentId ||
+              item.assessmentId === assessmentId ||
+              sameAssessmentSlot(item, column),
             )
-            if (index >= 0) next[index] = { ...next[index], ...column }
-            else next.push(column)
+            if (index >= 0) {
+              const previousId = String(next[index].id)
+              next[index] = { ...next[index], ...column }
+              assessmentIdByColumnRef.current[previousId] = assessmentId
+            } else {
+              next.push(column)
+            }
           })
           return next
         })
@@ -3109,7 +2968,11 @@ function RecordsPage({
             const assessmentId = String(row.assessment_id ?? "").trim()
             const score = Number(row.score)
             if (!studentNumber || !assessmentId || !Number.isFinite(score)) return
-            next[studentNumber] = { ...next[studentNumber], [assessmentId]: score }
+            const values = { ...next[studentNumber], [assessmentId]: score }
+            Object.entries(assessmentIdByColumnRef.current).forEach(([columnId, savedId]) => {
+              if (savedId === assessmentId) values[columnId] = score
+            })
+            next[studentNumber] = values
           })
           localDraftValuesRef.current = next
           return next
@@ -5332,6 +5195,39 @@ function ActivitiesPage({
   const [reminderDeleting, setReminderDeleting] = useState(false)
   const [quizOpenStates, setQuizOpenStates] = useState<Record<string, boolean>>({})
   const [quizStatusSavingId, setQuizStatusSavingId] = useState<string | null>(null)
+  const [assessmentRoster, setAssessmentRoster] = useState<Array<{ id: string; name: string; studentNumber: string }>>([])
+  const [assessmentRosterLoading, setAssessmentRosterLoading] = useState(false)
+  const [assessmentRosterOpen, setAssessmentRosterOpen] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    const loadAssessmentRoster = async () => {
+      if (!draft.classId || editing === null) {
+        if (active) setAssessmentRoster([])
+        return
+      }
+      setAssessmentRosterLoading(true)
+      const { data, error } = await supabase
+        .from("class_students")
+        .select("*")
+        .eq("class_id", String(draft.classId))
+      if (!active) return
+      if (error) {
+        console.error("Unable to load assessment roster:", error)
+        setAssessmentRoster([])
+      } else {
+        setAssessmentRoster((data ?? []).map((row: any, index: number) => ({
+          id: String(row.student_id ?? row.profile_id ?? row.user_id ?? row.id ?? index),
+          name: String(row.student_name ?? row.full_name ?? row.name ?? "Student"),
+          studentNumber: String(row.student_number ?? row.student_no ?? row.school_id ?? row.student_code ?? ""),
+        })).sort((a, b) => a.name.localeCompare(b.name)))
+      }
+      setAssessmentRosterLoading(false)
+    }
+    void loadAssessmentRoster()
+    setAssessmentRosterOpen(false)
+    return () => { active = false }
+  }, [draft.classId, editing])
 
   const mapReminderRow = (row: any): ActivityItem => ({
     id: String(row.id),
@@ -5789,6 +5685,9 @@ function ActivitiesPage({
     setEditing(index)
   }
 
+  const assessmentClassLocked = editing !== -1 && Boolean(draft.omrAssessmentId)
+  const omrEligible = (draft.type === "Quiz" || draft.type === "Exam") && draft.participation === "Individual"
+
   const saveReminder = async () => {
     if (!draft.title.trim()) {
       showToast("Enter a reminder title.", "error")
@@ -5818,7 +5717,7 @@ function ActivitiesPage({
       showToast("Points per item must be greater than zero.", "error")
       return
     }
-    const requiresAnswerKey = draft.type === "Quiz" || draft.type === "Exam"
+    const requiresAnswerKey = omrEligible
     const completedAnswers = draft.answerKey.slice(0, draft.itemCount).filter(Boolean).length
     if (requiresAnswerKey && completedAnswers !== draft.itemCount) {
       showToast(`Complete all ${draft.itemCount} answer-key items before saving.`, "error")
@@ -5833,8 +5732,36 @@ function ActivitiesPage({
 
     setReminderSaving(true)
     setReminderNotice("")
+
+    if (assessmentClassLocked && draft.omrAssessmentId) {
+      const { data: originalAssessment, error: originalAssessmentError } = await supabase
+        .from("omr_assessments")
+        .select("class_id")
+        .eq("id", draft.omrAssessmentId)
+        .eq("faculty_id", user.id)
+        .maybeSingle()
+
+      if (originalAssessmentError || !originalAssessment) {
+        setReminderSaving(false)
+        showToast(
+          originalAssessmentError?.message ?? "The original assessment could not be verified.",
+          "error",
+        )
+        return
+      }
+
+      if (String(originalAssessment.class_id) !== String(draft.classId)) {
+        setReminderSaving(false)
+        showToast(
+          "The subject and section are locked after an assessment is created. Create a new assessment for another class.",
+          "error",
+        )
+        return
+      }
+    }
+
     let omrAssessmentId = draft.omrAssessmentId
-    const isOmrAssessment = draft.type === "Quiz" || draft.type === "Exam"
+    const isOmrAssessment = omrEligible
     const canonicalAssessmentTitle = isOmrAssessment
       ? `${draft.type} ${draft.assessmentIndex}`
       : draft.title.trim()
@@ -6880,7 +6807,7 @@ const reminderFormValid = Boolean(
                 ))}
               </select>
             </label>
-            {(draft.type === "Quiz" || draft.type === "Exam") && (
+            {omrEligible && (
               <div className="reminder-fields omr-activity-settings">
                 <label>
                   <span className="reminder-field-label">Number of items <em>Required</em></span>
@@ -6912,8 +6839,11 @@ const reminderFormValid = Boolean(
             )}
             <label>
               <span className="reminder-field-label">Class <em>Required</em></span>
-              <select required
+              <select
+                required
                 value={draft.classId}
+                disabled={assessmentClassLocked}
+                aria-describedby={assessmentClassLocked ? "assessment-class-lock-note" : undefined}
                 onChange={(e) =>
                   setDraft({ ...draft, classId: e.target.value })
                 }
@@ -6925,22 +6855,46 @@ const reminderFormValid = Boolean(
                   </option>
                 ))}
               </select>
-              {reminderClasses.length === 0 ? (
+              {assessmentClassLocked ? (
+                <small id="assessment-class-lock-note" className="reminder-field-hint">
+                  Subject and section are locked after the assessment is created. Create a new assessment to use another class.
+                </small>
+              ) : reminderClasses.length === 0 ? (
                 <small className="reminder-field-error">No database classes are available. Create a class first.</small>
               ) : !draft.classId ? (
                 <small className="reminder-field-error">Select a class.</small>
               ) : null}
             </label>
+            {draft.classId && (
+              <section className="assessment-roster-summary" aria-label="Assessment student roster">
+                <div>
+                  <strong>{assessmentRosterLoading ? "Loading roster..." : `${assessmentRoster.length} enrolled ${assessmentRoster.length === 1 ? "student" : "students"}`}</strong>
+                  <small>Students currently eligible for this assessment.</small>
+                </div>
+                <button type="button" className="secondary-button compact" onClick={() => setAssessmentRosterOpen((open) => !open)} disabled={assessmentRosterLoading || assessmentRoster.length === 0}>
+                  {assessmentRosterOpen ? "Hide roster" : "View roster"}
+                </button>
+                {assessmentRosterOpen && (
+                  <div className="assessment-roster-list">
+                    {assessmentRoster.map((student) => (
+                      <div key={student.id}><span>{student.name}</span><small>{student.studentNumber || "No student number"}</small></div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
             <label>
               <span className="reminder-field-label">Participation <em>Required</em></span>
               <select required
                 value={draft.participation}
+                disabled={assessmentClassLocked}
                 onChange={(e) => {
                   const participation = e.target.value
                   setDraft({
                     ...draft,
                     participation,
                     groups: participation === "Group" ? draft.groups : [],
+                    answerKey: participation === "Group" ? Array.from({ length: 50 }, () => "") : draft.answerKey,
                   })
                   setActiveGroupId(null)
                 }}
@@ -6948,6 +6902,8 @@ const reminderFormValid = Boolean(
                 <option value="Individual">Individual</option>
                 <option value="Group">Group</option>
               </select>
+              {assessmentClassLocked && <small className="reminder-field-hint">Participation is locked because this assessment already has an OMR answer key.</small>}
+              {draft.participation === "Group" && (draft.type === "Quiz" || draft.type === "Exam") && <small className="reminder-field-hint">OMR scanning is available only for individual quizzes and exams. Group assessments use group scoring instead.</small>}
             </label>
             {draft.participation === "Group" && (
               <section
@@ -7041,7 +6997,7 @@ const reminderFormValid = Boolean(
                 )}
               </section>
             )}
-            {(draft.type === "Quiz" || draft.type === "Exam") && (
+            {omrEligible && (
               <section className="activity-answer-key" aria-labelledby="activity-answer-key-title">
                 <div className="activity-answer-key-heading">
                   <div>
@@ -8903,7 +8859,6 @@ export default function App() {
     x: 0,
     y: 0,
   })
-  const [omrScannerOpen, setOmrScannerOpen] = useState(false)
   const [omrDraftScores, setOmrDraftScores] = useState<Record<string, number>>(
     {},
   )
@@ -9196,6 +9151,8 @@ export default function App() {
           setReminders={setActivities}
         />
       )
+    if (page === "scanner")
+      return <OmrScanner onClose={() => setPage("home")} />
     if (page === "profile")
       return <ProfilePage setPage={setPage} onLogout={logout} />
     if (page === "notifications") return <NotificationsPage setPage={setPage} />
@@ -9247,13 +9204,6 @@ export default function App() {
         {renderPage()}
       </main>
       <BottomNav page={page} setPage={setPage} />
-      <QuickActionsFab
-        setPage={setPage}
-        onScanAnswer={() => setOmrScannerOpen(true)}
-      />
-      {omrScannerOpen && (
-        <OmrScanner onClose={() => setOmrScannerOpen(false)} />
-      )}
       {minimizedSession && !activeClass && (
         <MinimizedSession
           {...minimizedSession}
