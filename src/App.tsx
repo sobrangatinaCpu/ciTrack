@@ -10,6 +10,7 @@ import {loginFaculty, registerFaculty,} from "./lib/auth"
 import OmrScanner from "./OmrScanner"
 import "./notifications.css"
 import "./assessment-actions.css"
+import "./assessment-column-delete.css"
 
 const citLogo = `${import.meta.env.BASE_URL}cit.png`
 const citBuilding = `${import.meta.env.BASE_URL}citbuild.jpg` 
@@ -419,6 +420,16 @@ const maxScoreForColumn = (column: RecordAssessmentColumn) => {
   if (Number.isFinite(value) && value > 0) return value
   return column.type === "Attendance" || column.type === "Recitation" ? 10 : 100
 }
+const assessmentColumnIndex = (column: Pick<RecordAssessmentColumn, "label">) => {
+  const match = String(column.label ?? "").match(/\d+/)
+  return match ? Number(match[0]) : Number.NaN
+}
+const sameAssessmentSlot = (
+  left: Pick<RecordAssessmentColumn, "label" | "type" | "term">,
+  right: Pick<RecordAssessmentColumn, "label" | "type" | "term">,
+) => left.type === right.type && left.term === right.term &&
+  Number.isFinite(assessmentColumnIndex(left)) &&
+  assessmentColumnIndex(left) === assessmentColumnIndex(right)
 
 const initialRecordAssessmentColumns: RecordAssessmentColumn[] = [
   { id: "quiz-1", label: "Midterm Quiz 1", type: "Quiz", term: "Midterm" },
@@ -907,18 +918,20 @@ function ClassCard({
   onStart,
   ended,
   onEdit,
-  onDelete,
-  onReschedule,
+  onArchive,
+  onMakeUpClass,
   onCancelReschedule,
+  onView,
   activity,
 }: {
   item: ClassItem
   onStart: (item: ClassItem) => void
   ended: boolean
   onEdit?: (item: ClassItem) => void
-  onDelete?: (item: ClassItem) => void
-  onReschedule?: (item: ClassItem) => void
+  onArchive?: (item: ClassItem) => void
+  onMakeUpClass?: (item: ClassItem) => void
   onCancelReschedule?: (item: ClassItem, row: ClassReschedule) => void
+  onView?: (item: ClassItem) => void
   activity?: ActivityItem
 }) {
   const [now, setNow] = useState(() => new Date())
@@ -991,20 +1004,20 @@ function ClassCard({
       <span>Edit</span>
     </button>
 
-    {onReschedule && (
-      <button type="button" className="class-card-edit" aria-label={`Reschedule ${item.subject}`} onClick={() => onReschedule(item)}>
-        <Icon name="calendar" size={15} /><span>Reschedule</span>
+    {onMakeUpClass && (
+      <button type="button" className="class-card-edit" aria-label={`Add make-up class for ${item.subject}`} onClick={() => onMakeUpClass(item)}>
+        <Icon name="calendar" size={15} /><span>Make-up class</span>
       </button>
     )}
 
-    {onDelete && (
+    {onArchive && (
       <button
         type="button"
         className="class-card-delete"
-        aria-label={`Delete ${item.subject}`}
-        onClick={() => onDelete(item)}
+        aria-label={`Archive ${item.subject}`}
+        onClick={() => onArchive(item)}
       >
-        Delete
+        Archive
       </button>
     )}
   </div>
@@ -1208,10 +1221,10 @@ function ClassCard({
               ? "primary-button compact"
               : "secondary-button compact class-view-button"
           }
-          onClick={() => onStart(item)}
+          onClick={() => canStartNow ? onStart(item) : (onView ? onView(item) : onStart(item))}
         >
-          {canStartNow ? <Icon name="play" size={16} /> : null}
-          {canStartNow ? "Start class" : "View class"}
+          {canStartNow ? <Icon name="play" size={16} /> : <Icon name="eye" size={16} />}
+          {canStartNow ? "Start class" : "View details"}
         </button>
       </div>
     </article>
@@ -1294,7 +1307,11 @@ function Dashboard({
         setDashboardClasses([])
         setDashboardClassesError(error.message)
       } else {
-        setDashboardClasses((data ?? []).map(mapDatabaseClass))
+        setDashboardClasses(
+          (data ?? [])
+            .filter((row: any) => String(row.status ?? "").trim().toLowerCase() !== "archived")
+            .map(mapDatabaseClass),
+        )
       }
       setDashboardClassesLoading(false)
     }
@@ -2203,8 +2220,8 @@ function AddClassModal({
   )
 }
 
-function RescheduleClassModal({ item, onClose, onSaved }: { item: ClassItem; onClose: () => void; onSaved: (row: ClassReschedule) => void }) {
-  const [form, setForm] = useState({ originalDate: "", replacementDate: "", startTime: "", endTime: "", room: "", reason: "", mode: "moved" as "moved" | "additional" })
+function MakeUpClassModal({ item, onClose, onSaved }: { item: ClassItem; onClose: () => void; onSaved: (row: ClassReschedule) => void }) {
+  const [form, setForm] = useState({ originalDate: "", replacementDate: "", startTime: "", endTime: "", room: "", reason: "", mode: "additional" as "additional" })
   const [saving, setSaving] = useState(false)
   const save = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -2223,9 +2240,9 @@ function RescheduleClassModal({ item, onClose, onSaved }: { item: ClassItem; onC
     setSaving(false)
     if (error) { showMessage(`Unable to save temporary schedule: ${error.message}`); return }
     onSaved({ id: String(data.id), originalDate: data.original_date, replacementDate: data.replacement_date, startTime: data.start_time, endTime: data.end_time, room: data.room ?? "", reason: data.reason ?? "", mode: data.mode })
-    showToast("Temporary schedule saved.")
+    showToast("Make-up class saved.")
   }
-  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="reschedule-title"><button className="modal-close" onClick={onClose}>×</button><p className="eyebrow">Temporary schedule</p><h2 id="reschedule-title">Reschedule {item.subject}</h2><p>The default weekly schedule stays unchanged. Choose Moved to cancel the original occurrence, or Additional to keep both.</p><form className="class-form" onSubmit={save}><div className="class-form-grid"><label>Original occurrence <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.originalDate} onChange={(e) => setForm({...form, originalDate:e.target.value})}/></label><label>Temporary date <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.replacementDate} onChange={(e) => setForm({...form, replacementDate:e.target.value})}/></label></div><label>Reschedule type<select value={form.mode} onChange={(e) => setForm({...form, mode:e.target.value as "moved"|"additional"})}><option value="moved">Moved, cancel original occurrence</option><option value="additional">Additional, keep original occurrence</option></select></label><div className="class-form-grid class-time-fields"><label>Start time <em>Required</em><TimePicker12 label="Temporary schedule start time" value={form.startTime} onChange={(value) => setForm({...form,startTime:value})} required/></label><label>End time <em>Required</em><TimePicker12 label="Temporary schedule end time" value={form.endTime} onChange={(value) => setForm({...form,endTime:value})} required/></label><label>Room / virtual space<input value={form.room} onChange={(e) => setForm({...form,room:e.target.value})}/></label></div><label>Reason<textarea value={form.reason} onChange={(e) => setForm({...form,reason:e.target.value})} placeholder="Example: Campus event or make-up class"/></label><div className="class-form-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save temporary schedule"}</button></div></form></section></div>
+  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="reschedule-title"><button className="modal-close" onClick={onClose}>×</button><p className="eyebrow">Additional meeting</p><h2 id="reschedule-title">Make-up class for {item.subject}</h2><p>Add a one-time class meeting without changing or cancelling the regular weekly schedule.</p><form className="class-form" onSubmit={save}><div className="class-form-grid"><label>Original occurrence <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.originalDate} onChange={(e) => setForm({...form, originalDate:e.target.value})}/></label><label>Temporary date <em>Required</em><input type="date" min={item.semesterStart} max={item.semesterEnd} value={form.replacementDate} onChange={(e) => setForm({...form, replacementDate:e.target.value})}/></label></div><input type="hidden" value="additional" /><div className="class-form-grid class-time-fields"><label>Start time <em>Required</em><TimePicker12 label="Temporary schedule start time" value={form.startTime} onChange={(value) => setForm({...form,startTime:value})} required/></label><label>End time <em>Required</em><TimePicker12 label="Temporary schedule end time" value={form.endTime} onChange={(value) => setForm({...form,endTime:value})} required/></label><label>Room / virtual space<input value={form.room} onChange={(e) => setForm({...form,room:e.target.value})}/></label></div><label>Reason<textarea value={form.reason} onChange={(e) => setForm({...form,reason:e.target.value})} placeholder="Example: Replacement lesson after a suspension"/></label><div className="class-form-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save make-up class"}</button></div></form></section></div>
 }
 
 function ClassesPage({
@@ -2238,9 +2255,16 @@ function ClassesPage({
   endedClassIds: string[]
 }) {
   const [classList, setClassList] = useState<ClassItem[]>([])
-  const [classToDelete, setClassToDelete] = useState<ClassItem | null>(null)
-  const [classToReschedule, setClassToReschedule] = useState<ClassItem | null>(null)
-  const [classDeleting, setClassDeleting] = useState(false)
+  const [archivedClassList, setArchivedClassList] = useState<ClassItem[]>([])
+  const [classView, setClassView] = useState<"active" | "archived">("active")
+  const [restoringClassId, setRestoringClassId] = useState<string | null>(null)
+  const [classToArchive, setClassToArchive] = useState<ClassItem | null>(null)
+  const [classToMakeUp, setClassToMakeUp] = useState<ClassItem | null>(null)
+  const [classToView, setClassToView] = useState<ClassItem | null>(null)
+  const [classArchiving, setClassArchiving] = useState(false)
+  const [classesPageNow, setClassesPageNow] = useState(() => new Date())
+  const [isAddingClass, setIsAddingClass] = useState(false)
+  const [editingClass, setEditingClass] = useState<ClassItem | null>(null)
   const cancelTemporarySchedule = async (classItem: ClassItem, row: ClassReschedule) => {
     const { error } = await supabase.from("class_reschedules").delete().eq("id", row.id)
     if (error) { showMessage(`Unable to cancel temporary schedule: ${error.message}`); return }
@@ -2248,68 +2272,84 @@ function ClassesPage({
     showToast("Temporary schedule cancelled.")
   }
 
-  const deleteClass = async () => {
-    if (!classToDelete || classDeleting) return
-    setClassDeleting(true)
-
+  const archiveClass = async () => {
+    if (!classToArchive || classArchiving) return
+    setClassArchiving(true)
     const { error } = await supabase
       .from("classes")
-      .delete()
-      .eq("id", String(classToDelete.id))
-
-    setClassDeleting(false)
+      .update({ status: "Archived" })
+      .eq("id", String(classToArchive.id))
+    setClassArchiving(false)
     if (error) {
-      console.error("Unable to delete class:", error)
-      showMessage(`Unable to delete class: ${error.message}`, "error", "Class was not deleted")
+      console.error("Unable to archive class:", error)
+      showMessage(`Unable to archive class: ${error.message}`, "error", "Class was not archived")
       return
     }
-
-    setClassList((current) =>
-      current.filter((classItem) => String(classItem.id) !== String(classToDelete.id)),
-    )
-    setClassToDelete(null)
-    showToast("Class deleted successfully.")
+    setClassList((current) => current.filter((item) => String(item.id) !== String(classToArchive.id)))
+    setArchivedClassList((current) => [
+      { ...classToArchive, status: "Archived" },
+      ...current.filter((item) => String(item.id) !== String(classToArchive.id)),
+    ])
+    setClassToArchive(null)
+    showToast("Class archived. Its schedules, students, records, and activities were preserved.")
   }
-useEffect(() => {
-  async function loadClasses() {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser()
-
-    if (userError) {
-      console.error("Unable to get signed-in faculty:", userError)
-      setClassList([])
-      return
-    }
-
-    if (!user) {
-      console.log("No faculty account is currently signed in.")
-      setClassList([])
-      return
-    }
-
-    const { data, error } = await supabase
+  const restoreArchivedClass = async (item: ClassItem) => {
+    const classId = String(item.id)
+    if (restoringClassId) return
+    setRestoringClassId(classId)
+    const { error } = await supabase
       .from("classes")
-      .select("*, class_schedules(id, meeting_days, start_time, end_time, room, is_default), class_reschedules(id, original_date, replacement_date, start_time, end_time, room, reason, mode)")
-      .eq("faculty_id", user.id)
-      .order("created_at", { ascending: true })
-
+      .update({ status: "Scheduled" })
+      .eq("id", classId)
+    setRestoringClassId(null)
     if (error) {
-      console.error("Unable to load classes:", error)
+      console.error("Unable to restore class:", error)
+      showMessage(`Unable to restore class: ${error.message}`, "error", "Class was not restored")
       return
     }
-
-    const loadedClasses: ClassItem[] = (data ?? []).map(mapDatabaseClass)
-
-    setClassList(loadedClasses)
+    const restored = { ...item, status: "Scheduled" }
+    setArchivedClassList((current) => current.filter((row) => String(row.id) !== classId))
+    setClassList((current) => [restored, ...current.filter((row) => String(row.id) !== classId)])
+    showToast("Class restored to active classes.")
   }
 
-  loadClasses()
-}, [])
-  const [isAddingClass, setIsAddingClass] = useState(false)
-  const [editingClass, setEditingClass] = useState<ClassItem | null>(null)
-  const [classesPageNow, setClassesPageNow] = useState(() => new Date())
+  useEffect(() => {
+    let active = true
+
+    async function loadClasses() {
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (!active) return
+      if (userError || !user) {
+        console.error("Unable to get signed-in faculty:", userError)
+        setClassList([])
+        return
+      }
+
+      const { data, error } = await supabase
+        .from("classes")
+        .select("*, class_schedules(id, meeting_days, start_time, end_time, room, is_default), class_reschedules(id, original_date, replacement_date, start_time, end_time, room, reason, mode)")
+        .eq("faculty_id", user.id)
+        .order("created_at", { ascending: true })
+
+      if (!active) return
+      if (error) {
+        console.error("Unable to load classes:", error)
+        showMessage(`Unable to load classes: ${error.message}`, "error", "Classes could not be loaded")
+        return
+      }
+
+      const mappedClasses = (data ?? []).map(mapDatabaseClass)
+      setClassList(
+        mappedClasses.filter((row) => String(row.status ?? "").trim().toLowerCase() !== "archived"),
+      )
+      setArchivedClassList(
+        mappedClasses.filter((row) => String(row.status ?? "").trim().toLowerCase() === "archived"),
+      )
+    }
+
+    void loadClasses()
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     const timer = window.setInterval(() => setClassesPageNow(new Date()), 60_000)
@@ -2381,71 +2421,137 @@ useEffect(() => {
           <h2>Class schedule</h2>
           <p>Manage sessions, attendance, and learning activities.</p>
         </div>
-        <button
-          className="primary-button"
-          onClick={() => {
-            setEditingClass(null)
-            setIsAddingClass(true)
-          }}
-        >
-          <Icon name="plus" size={17} /> Add class
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className={classView === "archived" ? "primary-button" : "secondary-button"}
+            onClick={() => setClassView((current) => current === "active" ? "archived" : "active")}
+          >
+            <Icon name="clipboard" size={17} />
+            {classView === "active" ? `Archived classes (${archivedClassList.length})` : "Back to active classes"}
+          </button>
+          {classView === "active" && (
+            <button
+              className="primary-button"
+              onClick={() => {
+                setEditingClass(null)
+                setIsAddingClass(true)
+              }}
+            >
+              <Icon name="plus" size={17} /> Add class
+            </button>
+          )}
+        </div>
       </div>
+      {classView === "archived" && (
+        <div style={{ marginBottom: 18 }}>
+          <p className="eyebrow">Stored safely</p>
+          <h3>Archived classes</h3>
+          <p>Archived classes keep their students, attendance, activities, schedules, assessments, and grade records.</p>
+        </div>
+      )}
       <div className="class-grid page-grid">
-        {classList.map((item) => (
-      <ClassCard
-  key={item.id}
-  item={item}
-  onStart={onStart}
-  ended={isCurrentOccurrenceEnded(item, endedClassIds)}
-  onEdit={(classToEdit) => {
-    setEditingClass(classToEdit)
-    setIsAddingClass(true)
-  }}
-  onDelete={(classToDelete) => {
-    setClassToDelete(classToDelete)
-  }}
-  onReschedule={(classItem) => setClassToReschedule(classItem)}
-  onCancelReschedule={(classItem, row) => void cancelTemporarySchedule(classItem, row)}
-/>
+        {(classView === "active" ? classList : archivedClassList).map((item) => (
+          <div key={item.id} style={{ display: "grid", gap: 10 }}>
+            <ClassCard
+              item={item}
+              onStart={onStart}
+              ended={classView === "archived" ? true : isCurrentOccurrenceEnded(item, endedClassIds)}
+              onEdit={classView === "active" ? (classToEdit) => {
+                setEditingClass(classToEdit)
+                setIsAddingClass(true)
+              } : undefined}
+              onArchive={classView === "active" ? (classItem) => setClassToArchive(classItem) : undefined}
+              onMakeUpClass={classView === "active" ? (classItem) => setClassToMakeUp(classItem) : undefined}
+              onView={(classItem) => setClassToView(classItem)}
+              onCancelReschedule={classView === "active" ? (classItem, row) => void cancelTemporarySchedule(classItem, row) : undefined}
+            />
+            {classView === "archived" && (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void restoreArchivedClass(item)}
+                disabled={restoringClassId === String(item.id)}
+              >
+                <Icon name="arrow" size={16} />
+                {restoringClassId === String(item.id) ? "Restoring..." : "Restore class"}
+              </button>
+            )}
+          </div>
         ))}
       </div>
-      <div className="empty-prompt" aria-live="polite">
-        <span>
-          <Icon name={activeScheduleToday ? "clock" : endedClassesToday.length > 0 ? "check" : "calendar"} />
-        </span>
-        <h3>{scheduleStatus.title}</h3>
-        <p>{scheduleStatus.message}</p>
-      </div>
-      {classToDelete && (
+      {(classView === "active" ? classList : archivedClassList).length === 0 && (
+        <div className="empty-prompt" aria-live="polite">
+          <span><Icon name={classView === "archived" ? "clipboard" : "calendar"} /></span>
+          <h3>{classView === "archived" ? "No archived classes" : "No active classes"}</h3>
+          <p>{classView === "archived" ? "Classes you archive will appear here and can be restored later." : "Add a class to begin managing schedules and attendance."}</p>
+        </div>
+      )}
+      {classView === "active" && classList.length > 0 && (
+        <div className="empty-prompt" aria-live="polite">
+          <span>
+            <Icon name={activeScheduleToday ? "clock" : endedClassesToday.length > 0 ? "check" : "calendar"} />
+          </span>
+          <h3>{scheduleStatus.title}</h3>
+          <p>{scheduleStatus.message}</p>
+        </div>
+      )}
+      {classToArchive && (
         <div className="modal-backdrop class-confirm-backdrop" onMouseDown={(event) => {
-          if (event.target === event.currentTarget && !classDeleting) setClassToDelete(null)
+          if (event.target === event.currentTarget && !classArchiving) setClassToArchive(null)
         }}>
-          <section className="class-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-class-title" aria-describedby="delete-class-description">
-            <button type="button" className="class-confirm-close" onClick={() => setClassToDelete(null)} disabled={classDeleting} aria-label="Close delete class dialog">×</button>
+          <section className="class-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="archive-class-title" aria-describedby="archive-class-description">
+            <button type="button" className="class-confirm-close" onClick={() => setClassToArchive(null)} disabled={classArchiving} aria-label="Close archive class dialog">×</button>
             <div className="class-confirm-header">
-              <span className="class-confirm-icon" aria-hidden="true"><Icon name="minus" size={18} /></span>
+              <span className="class-confirm-icon" aria-hidden="true"><Icon name="clipboard" size={18} /></span>
               <div>
-                <h2 id="delete-class-title">Delete class?</h2>
-                <p id="delete-class-description"><strong>{classToDelete.subject}</strong> ({classToDelete.code}) will be permanently removed, including connected schedules. This action cannot be undone.</p>
+                <h2 id="archive-class-title">Archive class?</h2>
+                <p id="archive-class-description"><strong>{classToArchive.subject}</strong> ({classToArchive.code}) will be removed from active classes, but schedules, students, attendance, activities, and grade records will remain stored.</p>
               </div>
             </div>
             <div className="class-confirm-actions">
-              <button type="button" className="secondary-button" onClick={() => setClassToDelete(null)} disabled={classDeleting}>Cancel</button>
-              <button type="button" className="danger-button" onClick={() => void deleteClass()} disabled={classDeleting}>{classDeleting ? "Deleting..." : "Delete class"}</button>
+              <button type="button" className="secondary-button" onClick={() => setClassToArchive(null)} disabled={classArchiving}>Cancel</button>
+              <button type="button" className="primary-button" onClick={() => void archiveClass()} disabled={classArchiving}>{classArchiving ? "Archiving..." : "Archive class"}</button>
             </div>
           </section>
         </div>
       )}
-      {classToReschedule && (
-        <RescheduleClassModal
-          item={classToReschedule}
-          onClose={() => setClassToReschedule(null)}
+      {classToMakeUp && (
+        <MakeUpClassModal
+          item={classToMakeUp}
+          onClose={() => setClassToMakeUp(null)}
           onSaved={(row) => {
-            setClassList((current) => current.map((item) => item.id === classToReschedule.id ? { ...item, reschedules: [...(item.reschedules ?? []), row] } : item))
-            setClassToReschedule(null)
+            setClassList((current) => current.map((item) => item.id === classToMakeUp.id ? { ...item, reschedules: [...(item.reschedules ?? []), row] } : item))
+            setClassToMakeUp(null)
           }}
         />
+      )}
+      {classToView && (
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setClassToView(null)}>
+          <section className="class-form-modal" role="dialog" aria-modal="true" aria-labelledby="class-details-title">
+            <button className="modal-close" onClick={() => setClassToView(null)} aria-label="Close class details">×</button>
+            <p className="eyebrow">Class details</p>
+            <h2 id="class-details-title">{classToView.subject}</h2>
+            <p><strong>{classToView.code}</strong> · {classToView.status}</p>
+            <div className="class-schedule-overview" style={{ display: "grid", gap: 14, marginTop: 18, padding: 18, border: "1px solid #dbe5ef", borderRadius: 12, background: "#f8fbff" }}>
+              <p><strong>Class code:</strong> {classToView.accessCode || "Unavailable"}</p>
+              <p><strong>Semester:</strong> {formatSemesterDate(classToView.semesterStart)} - {formatSemesterDate(classToView.semesterEnd)}</p>
+              <p><strong>Student capacity:</strong> {classToView.attendance}</p>
+              {(classToView.schedules ?? []).map((schedule, index) => (
+                <article key={schedule.id} style={{ padding: 12, background: "white", border: "1px solid #e4ebf3", borderRadius: 10 }}>
+                  <strong>Schedule {index + 1}{schedule.isDefault ? " · Default" : ""}</strong>
+                  <p>{formatMeetingDays(schedule.meetingDays) || "Days not set"}</p>
+                  <p>{formatDatabaseTime(schedule.startTime)} - {formatDatabaseTime(schedule.endTime)} · {schedule.room || "Room to be confirmed"}</p>
+                </article>
+              ))}
+              {(classToView.reschedules?.length ?? 0) > 0 && <p><strong>Make-up classes:</strong> {classToView.reschedules?.length}</p>}
+            </div>
+            <div className="class-form-actions">
+              <button type="button" className="secondary-button" onClick={() => setClassToView(null)}>Close</button>
+              <button type="button" className="primary-button" onClick={() => { setEditingClass(classToView); setClassToView(null); setIsAddingClass(true) }}><Icon name="edit" size={15} /> Edit class</button>
+            </div>
+          </section>
+        </div>
       )}
       {isAddingClass && (
         <AddClassModal
@@ -2569,7 +2675,7 @@ function RecordsPage({
 
       const { data: classRows, error: classError } = await supabase
         .from("classes")
-        .select("id, subject, code, semester_start, semester_end, class_schedules(meeting_days, start_time, end_time, room)")
+        .select("id, subject, code, status, semester_start, semester_end, class_schedules(meeting_days, start_time, end_time, room)")
         .eq("faculty_id", user.id)
         .order("created_at", { ascending: true })
 
@@ -2581,7 +2687,10 @@ function RecordsPage({
         return
       }
 
-      const classIds = (classRows ?? []).map((item: any) => String(item.id))
+      const activeClassRows = (classRows ?? []).filter(
+        (item: any) => String(item.status ?? "").trim().toLowerCase() !== "archived",
+      )
+      const classIds = activeClassRows.map((item: any) => String(item.id))
       let enrollmentCounts: Record<string, number> = {}
       if (classIds.length > 0) {
         const { data: enrollmentRows, error: enrollmentError } = await supabase
@@ -2597,7 +2706,7 @@ function RecordsPage({
         }
       }
 
-      const sections = (classRows ?? []).map((item: any) => {
+      const sections = activeClassRows.map((item: any) => {
         const schedule = Array.isArray(item.class_schedules) ? item.class_schedules[0] : null
         const days = normalizedMeetingDays(schedule?.meeting_days)
           .map((day) => meetingDayOptions.find((option) => option.value === day)?.label ?? day)
@@ -2851,16 +2960,32 @@ function RecordsPage({
           const title = String(row.title ?? `${type} ${assessmentNumber(row)}`)
           const linkedGradebookId = String(row.gradebook_assessment_id ?? "")
 
-          // One gradebook cell uses assessments.id. OMR is only an input source.
-          const columnId = linkedGradebookId || String(row.id)
-          next.push({
-            id: columnId,
+          // Quiz/Exam identity is term + type + assessment index. An OMR
+          // assessment enriches the existing Gradebook column at the same index
+          // instead of adding a second column such as “Quiz 4: Fundamentals”.
+          const index = assessmentNumber(row)
+          const targetSlot: RecordAssessmentColumn = {
+            id: linkedGradebookId || String(row.id),
             assessmentId: linkedGradebookId || undefined,
-            label: title,
+            label: `${type} ${index}`,
             type,
             term,
             maxScore: Number(row.item_count) * Number(row.points_per_item) || 100,
-          })
+          }
+          const existingIndex = next.findIndex((column) => sameAssessmentSlot(column, targetSlot))
+          const existingColumn = existingIndex >= 0 ? next[existingIndex] : null
+          const columnId = linkedGradebookId || existingColumn?.assessmentId || existingColumn?.id || String(row.id)
+          const mergedColumn: RecordAssessmentColumn = {
+            ...(existingColumn ?? {} as RecordAssessmentColumn),
+            id: columnId,
+            assessmentId: linkedGradebookId || existingColumn?.assessmentId,
+            label: existingColumn?.label || `${type} ${index}`,
+            type,
+            term,
+            maxScore: Number(row.item_count) * Number(row.points_per_item) || existingColumn?.maxScore || 100,
+          }
+          if (existingIndex >= 0) next[existingIndex] = mergedColumn
+          else next.push(mergedColumn)
           resolvedColumnByAssessment.set(String(row.id), columnId)
           if (linkedGradebookId) resolvedColumnByAssessment.set(linkedGradebookId, columnId)
         })
@@ -3099,16 +3224,21 @@ function RecordsPage({
       const columnType: RecordAssessmentColumn["type"] = detail.type === "exam" ? "Exam" : "Quiz"
       const columnTerm: RecordAssessmentColumn["term"] = detail.term === "final" ? "Final" : "Midterm"
       const normalizedTitle = normalizeAssessmentLabel(detail.title)
+      const detailIndex = Number(detail.title.match(/\d+/)?.[0])
 
       setAssessmentColumns((current) => {
-        const existing = current.find((column) =>
-          column.id === detail.assessmentId ||
-          (
-            column.type === columnType &&
-            column.term === columnTerm &&
-            normalizeAssessmentLabel(column.label) === normalizedTitle
-          ),
-        )
+        const existing = current.find((column) => {
+          const columnIndex = Number(column.label.match(/\d+/)?.[0])
+          return column.id === detail.assessmentId ||
+            (
+              column.type === columnType &&
+              column.term === columnTerm &&
+              (
+                normalizeAssessmentLabel(column.label) === normalizedTitle ||
+                (Number.isFinite(detailIndex) && detailIndex > 0 && columnIndex === detailIndex)
+              )
+            )
+        })
 
         if (existing) {
           return current.map((column) =>
@@ -3468,7 +3598,10 @@ function RecordsPage({
     setDatePickerOpen(false)
   }
 
-  const quizColumns = assessmentColumns.filter(
+  const deduplicatedAssessmentColumns = assessmentColumns.filter((column, index, columns) =>
+    columns.findIndex((candidate) => sameAssessmentSlot(candidate, column)) === index,
+  )
+  const quizColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Quiz",
   )
   const midtermQuizColumns = quizColumns.filter(
@@ -3479,22 +3612,22 @@ function RecordsPage({
   )
   const midtermQuizCount = midtermQuizColumns.length
   const finalQuizCount = finalQuizColumns.length
-  const midtermProjectColumns = assessmentColumns.filter(
+  const midtermProjectColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Hands On" && column.term === "Midterm",
   )
-  const finalProjectColumns = assessmentColumns.filter(
+  const finalProjectColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Hands On" && column.term === "Final",
   )
-  const midtermRecitationColumns = assessmentColumns.filter(
+  const midtermRecitationColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Recitation" && column.term === "Midterm",
   )
-  const finalRecitationColumns = assessmentColumns.filter(
+  const finalRecitationColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Recitation" && column.term === "Final",
   )
-  const midtermAttendanceColumns = assessmentColumns.filter(
+  const midtermAttendanceColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Attendance" && column.term === "Midterm",
   )
-  const finalAttendanceColumns = assessmentColumns.filter(
+  const finalAttendanceColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Attendance" && column.term === "Final",
   )
 
@@ -3627,6 +3760,49 @@ function RecordsPage({
       attendancePercentage * 0.1,
     ))
   }
+
+  const deleteAssessmentColumn = async (column: RecordAssessmentColumn) => {
+    const confirmed = window.confirm(`Delete ${column.label}? This removes the column and its saved scores. This action cannot be undone.`)
+    if (!confirmed) return
+
+    const assessmentId = column.assessmentId ?? (/^[0-9a-f-]{36}$/i.test(String(column.id)) ? String(column.id) : undefined)
+    if (assessmentId) {
+      const { error } = await supabase.from("assessments").delete().eq("id", assessmentId)
+      if (error) {
+        showToast(`Unable to delete ${column.label}: ${error.message}`, "error")
+        return
+      }
+    }
+
+    const duplicateIds = assessmentColumns
+      .filter((item) => sameAssessmentSlot(item, column))
+      .map((item) => String(item.id))
+    setAssessmentColumns((current) => current.filter((item) => !sameAssessmentSlot(item, column)))
+    setRecordValues((current) => {
+      const next: Record<string, Record<string, number | "">> = {}
+      Object.entries(current).forEach(([studentNumber, values]) => {
+        const studentValues = { ...values }
+        duplicateIds.forEach((id) => delete studentValues[id])
+        next[studentNumber] = studentValues
+      })
+      localDraftValuesRef.current = next
+      return next
+    })
+    showToast(`${column.label} deleted.`)
+  }
+
+  const renderAssessmentHeader = (column: RecordAssessmentColumn) => (
+    <th key={column.id} scope="col" className="assessment-column-heading">
+      <span>{column.label}</span>
+      <button
+        type="button"
+        className="assessment-column-delete"
+        onClick={() => void deleteAssessmentColumn(column)}
+        aria-label={`Delete ${column.label}`}
+        title={`Delete ${column.label}`}
+      >×</button>
+    </th>
+  )
 
   const renderAssessmentScore = (
     student: typeof students[number],
@@ -4240,50 +4416,106 @@ function RecordsPage({
                   </th>
                 ))}
                 {midtermQuizColumns.map((column) => (
-                  <th scope="col" key={column.id}>
-                    {column.label.replace("Midterm ", "").replace("Final ", "")}
+                  <th scope="col" key={column.id} className="assessment-column-heading">
+                    <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                    <button
+                      type="button"
+                      className="assessment-column-delete"
+                      onClick={() => void deleteAssessmentColumn(column)}
+                      aria-label={`Delete ${column.label}`}
+                      title={`Delete ${column.label}`}
+                    >×</button>
                   </th>
                 ))}
                 <th scope="col">Total</th>
                 {finalQuizColumns.map((column) => (
-                  <th scope="col" key={column.id}>
-                    {column.label.replace("Midterm ", "").replace("Final ", "")}
+                  <th scope="col" key={column.id} className="assessment-column-heading">
+                    <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                    <button
+                      type="button"
+                      className="assessment-column-delete"
+                      onClick={() => void deleteAssessmentColumn(column)}
+                      aria-label={`Delete ${column.label}`}
+                      title={`Delete ${column.label}`}
+                    >×</button>
                   </th>
                 ))}
                 <th scope="col">Total</th>
                 {midtermProjectColumns.map((column) => (
-                  <th scope="col" key={column.id}>
-                    {column.label.replace("Midterm ", "").replace("Final ", "")}
+                  <th scope="col" key={column.id} className="assessment-column-heading">
+                    <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                    <button
+                      type="button"
+                      className="assessment-column-delete"
+                      onClick={() => void deleteAssessmentColumn(column)}
+                      aria-label={`Delete ${column.label}`}
+                      title={`Delete ${column.label}`}
+                    >×</button>
                   </th>
                 ))}
                 <th scope="col">Total</th>
                 {finalProjectColumns.map((column) => (
-                  <th scope="col" key={column.id}>
-                    {column.label.replace("Midterm ", "").replace("Final ", "")}
+                  <th scope="col" key={column.id} className="assessment-column-heading">
+                    <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                    <button
+                      type="button"
+                      className="assessment-column-delete"
+                      onClick={() => void deleteAssessmentColumn(column)}
+                      aria-label={`Delete ${column.label}`}
+                      title={`Delete ${column.label}`}
+                    >×</button>
                   </th>
                 ))}
                 <th scope="col">Total</th>
                 {midtermRecitationColumns.map((column) => (
-                  <th scope="col" key={column.id}>
-                    {column.label.replace("Midterm Recitation ", "R")}
+                  <th scope="col" key={column.id} className="assessment-column-heading">
+                    <span>{column.label.replace("Midterm Recitation ", "R")}</span>
+                    <button
+                      type="button"
+                      className="assessment-column-delete"
+                      onClick={() => void deleteAssessmentColumn(column)}
+                      aria-label={`Delete ${column.label}`}
+                      title={`Delete ${column.label}`}
+                    >×</button>
                   </th>
                 ))}
                 <th scope="col">Total</th>
                 {finalRecitationColumns.map((column) => (
-                  <th scope="col" key={column.id}>
-                    {column.label.replace("Final Recitation ", "R")}
+                  <th scope="col" key={column.id} className="assessment-column-heading">
+                    <span>{column.label.replace("Final Recitation ", "R")}</span>
+                    <button
+                      type="button"
+                      className="assessment-column-delete"
+                      onClick={() => void deleteAssessmentColumn(column)}
+                      aria-label={`Delete ${column.label}`}
+                      title={`Delete ${column.label}`}
+                    >×</button>
                   </th>
                 ))}
                 <th scope="col">Total</th>
                 {midtermAttendanceColumns.map((column) => (
-                  <th scope="col" key={column.id}>
-                    {column.label.replace("Midterm Attendance ", "A")}
+                  <th scope="col" key={column.id} className="assessment-column-heading">
+                    <span>{column.label.replace("Midterm Attendance ", "A")}</span>
+                    <button
+                      type="button"
+                      className="assessment-column-delete"
+                      onClick={() => void deleteAssessmentColumn(column)}
+                      aria-label={`Delete ${column.label}`}
+                      title={`Delete ${column.label}`}
+                    >×</button>
                   </th>
                 ))}
                 <th scope="col">Total</th>
                 {finalAttendanceColumns.map((column) => (
-                  <th scope="col" key={column.id}>
-                    {column.label.replace("Final Attendance ", "A")}
+                  <th scope="col" key={column.id} className="assessment-column-heading">
+                    <span>{column.label.replace("Final Attendance ", "A")}</span>
+                    <button
+                      type="button"
+                      className="assessment-column-delete"
+                      onClick={() => void deleteAssessmentColumn(column)}
+                      aria-label={`Delete ${column.label}`}
+                      title={`Delete ${column.label}`}
+                    >×</button>
                   </th>
                 ))}
                 <th scope="col">Total</th>
