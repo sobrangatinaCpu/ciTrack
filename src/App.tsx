@@ -8233,6 +8233,7 @@ function LandingPage({
   const [authMode, setAuthMode] = useState<"signIn" | "signUp">("signIn")
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmation, setShowConfirmation] = useState(false)
+  const [authFormErrors, setAuthFormErrors] = useState<string[]>([])
   const isSignUp = authMode === "signUp"
 
   return (
@@ -8307,7 +8308,7 @@ function LandingPage({
       className={!isSignUp ? "active" : ""}
       role="tab"
       aria-selected={!isSignUp}
-      onClick={() => setAuthMode("signIn")}
+      onClick={() => { setAuthMode("signIn"); setAuthFormErrors([]) }}
     >
       Sign in
     </button>
@@ -8315,7 +8316,7 @@ function LandingPage({
       className={isSignUp ? "active" : ""}
       role="tab"
       aria-selected={isSignUp}
-      onClick={() => setAuthMode("signUp")}
+      onClick={() => { setAuthMode("signUp"); setAuthFormErrors([]) }}
     >
       Create account
     </button>
@@ -8324,6 +8325,7 @@ function LandingPage({
   {/* 3. Form Fields */}
   <form
     className="sign-in-form"
+    onInput={() => authFormErrors.length > 0 && setAuthFormErrors([])}
     onSubmit={async (event) => {
   event.preventDefault()
 
@@ -8332,6 +8334,9 @@ function LandingPage({
 
   const email = String(formData.get("email") ?? "")
   const password = String(formData.get("password") ?? "")
+  const passwordConfirmation = String(formData.get("passwordConfirmation") ?? "")
+
+  setAuthFormErrors([])
 
   try {
     if (isSignUp) {
@@ -8342,9 +8347,37 @@ function LandingPage({
       const department = String(
         formData.get("department") ?? ""
       )
+      const normalizedEmail = email.trim().toLowerCase()
+
+      const validationErrors: string[] = []
+      if (!/^[^\s@]+@ms\.bulsu\.edu\.ph$/i.test(normalizedEmail)) {
+        validationErrors.push("Use your @ms.bulsu.edu.ph email address.")
+      }
+
+      const passwordsDoNotMatch = passwordConfirmation !== password
+      const passwordMeetsRequirements =
+        password.length >= 8 &&
+        /[A-Z]/.test(password) &&
+        /[a-z]/.test(password) &&
+        /[0-9]/.test(password) &&
+        /[^A-Za-z0-9]/.test(password)
+
+      // When confirmation does not match, show only the mismatch message for
+      // the password fields. This prevents two password errors appearing together.
+      if (passwordsDoNotMatch) {
+        validationErrors.push("Passwords do not match.")
+      } else if (!passwordMeetsRequirements) {
+        validationErrors.push(
+          "Password must contain at least 8 characters, one uppercase letter, one lowercase letter, one number, and one special character.",
+        )
+      }
+      if (validationErrors.length > 0) {
+        setAuthFormErrors(validationErrors)
+        return
+      }
 
       await registerFaculty({
-        email,
+        email: normalizedEmail,
         password,
         fullName,
         facultyNumber,
@@ -8372,13 +8405,21 @@ function LandingPage({
       onSignIn()
     }
   } catch (error) {
-    const message =
+    const rawMessage =
       error instanceof Error
         ? error.message
         : "Authentication failed."
 
+    const message = /password/i.test(rawMessage)
+      ? "Use 6+ characters with 1 uppercase letter and 1 number."
+      : rawMessage
+
     console.error("Faculty authentication error:", error)
-    showMessage(message)
+    if (isSignUp) {
+      setAuthFormErrors([message])
+    } else {
+      showMessage(message)
+    }
   }
 }}
   >
@@ -8451,6 +8492,16 @@ function LandingPage({
             </button>
           </span>
         </label>
+        {authFormErrors.length > 0 && (
+          <div className="auth-validation-errors" role="alert" aria-live="polite" style={{ display: "grid", gap: 8, width: "100%", marginTop: 10, marginBottom: 8 }}>
+            {authFormErrors.map((errorMessage) => (
+              <div className="auth-inline-error" key={errorMessage} style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", boxSizing: "border-box", padding: "10px 12px", border: "1px solid #f1b7b7", borderRadius: 10, background: "#fff5f5", color: "#a32929", fontSize: 13, lineHeight: 1.45 }}>
+                <span aria-hidden="true" style={{ display: "grid", placeItems: "center", flex: "0 0 20px", width: 20, height: 20, borderRadius: "50%", background: "#d74747", color: "white", fontWeight: 700 }}>!</span>
+                <span>{errorMessage}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <label className="terms-agreement">
           <input type="checkbox" required />
           <span>
