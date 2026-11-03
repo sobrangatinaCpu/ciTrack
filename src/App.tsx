@@ -370,6 +370,7 @@ const formatActivityTime = (value: string) => {
 type RecordStudent = {
   name: string
   id: string
+  userId?: string
   score: number
   attendance: string
 }
@@ -922,6 +923,8 @@ function ClassCard({
   onMakeUpClass,
   onCancelReschedule,
   onView,
+  onRestore,
+  restoring = false,
   activity,
 }: {
   item: ClassItem
@@ -932,6 +935,8 @@ function ClassCard({
   onMakeUpClass?: (item: ClassItem) => void
   onCancelReschedule?: (item: ClassItem, row: ClassReschedule) => void
   onView?: (item: ClassItem) => void
+  onRestore?: (item: ClassItem) => void
+  restoring?: boolean
   activity?: ActivityItem
 }) {
   const [now, setNow] = useState(() => new Date())
@@ -1215,17 +1220,31 @@ function ClassCard({
           <span>AR</span>
           <span>+{item.attendance - 2}</span>
         </div>
-        <button
-          className={
-            canStartNow
-              ? "primary-button compact"
-              : "secondary-button compact class-view-button"
-          }
-          onClick={() => canStartNow ? onStart(item) : (onView ? onView(item) : onStart(item))}
-        >
-          {canStartNow ? <Icon name="play" size={16} /> : <Icon name="eye" size={16} />}
-          {canStartNow ? "Start class" : "View details"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+          <button
+            className={
+              canStartNow
+                ? "primary-button compact"
+                : "secondary-button compact class-view-button"
+            }
+            onClick={() => canStartNow ? onStart(item) : (onView ? onView(item) : onStart(item))}
+          >
+            {canStartNow ? <Icon name="play" size={16} /> : <Icon name="eye" size={16} />}
+            {canStartNow ? "Start class" : "View details"}
+          </button>
+          {onRestore && (
+            <button
+              type="button"
+              className="primary-button compact"
+              style={{ minWidth: 138, whiteSpace: "nowrap" }}
+              onClick={() => onRestore(item)}
+              disabled={restoring}
+            >
+              <Icon name="arrow" size={16} />
+              {restoring ? "Restoring..." : "Restore class"}
+            </button>
+          )}
+        </div>
       </div>
     </article>
   )
@@ -2452,7 +2471,16 @@ function ClassesPage({
       )}
       <div className="class-grid page-grid">
         {(classView === "active" ? classList : archivedClassList).map((item) => (
-          <div key={item.id} style={{ display: "grid", gap: 10 }}>
+          <div
+            key={item.id}
+            style={{
+              display: "grid",
+              gap: 10,
+              alignSelf: "start",
+              alignContent: "start",
+              gridTemplateRows: "max-content max-content",
+            }}
+          >
             <ClassCard
               item={item}
               onStart={onStart}
@@ -2464,19 +2492,11 @@ function ClassesPage({
               onArchive={classView === "active" ? (classItem) => setClassToArchive(classItem) : undefined}
               onMakeUpClass={classView === "active" ? (classItem) => setClassToMakeUp(classItem) : undefined}
               onView={(classItem) => setClassToView(classItem)}
+              onRestore={classView === "archived" ? (classItem) => void restoreArchivedClass(classItem) : undefined}
+              restoring={classView === "archived" && restoringClassId === String(item.id)}
               onCancelReschedule={classView === "active" ? (classItem, row) => void cancelTemporarySchedule(classItem, row) : undefined}
             />
-            {classView === "archived" && (
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => void restoreArchivedClass(item)}
-                disabled={restoringClassId === String(item.id)}
-              >
-                <Icon name="arrow" size={16} />
-                {restoringClassId === String(item.id) ? "Restoring..." : "Restore class"}
-              </button>
-            )}
+
           </div>
         ))}
       </div>
@@ -2598,6 +2618,8 @@ function RecordsPage({
     ),
   )
   const [assessmentMenuOpen, setAssessmentMenuOpen] = useState(false)
+  const [assessmentToDelete, setAssessmentToDelete] = useState<RecordAssessmentColumn | null>(null)
+  const [assessmentDeleting, setAssessmentDeleting] = useState(false)
   const [gradebookView, setGradebookView] = useState<"summary" | "daily">(() => {
     const requestedView = sessionStorage.getItem("records-target-view")
     if (requestedView === "summary") {
@@ -2629,36 +2651,13 @@ function RecordsPage({
   const [enrolledStudentsLoading, setEnrolledStudentsLoading] = useState(false)
   const [enrolledStudentsError, setEnrolledStudentsError] = useState("")
   const [recordPublicationStatus, setRecordPublicationStatus] = useState<"Draft" | "Published">("Draft")
+  const [lastPublishedAt, setLastPublishedAt] = useState<string | null>(null)
+  const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false)
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null)
   const localDraftValuesRef = useRef<Record<string, Record<string, number | "">>>({})
   const scoreSaveTimersRef = useRef<Record<string, number>>({})
   const assessmentIdByColumnRef = useRef<Record<string, string>>({})
   const [publishingRecords, setPublishingRecords] = useState(false)
-  const publishOmrRecords = async () => {
-    if (!selectedSectionId || publishingRecords) return
-    setPublishingRecords(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      setPublishingRecords(false)
-      showMessage("Your session expired. Please sign in again.")
-      return
-    }
-    const now = new Date().toISOString()
-    const { error } = await supabase
-      .from("omr_submissions")
-      .update({ status: "published", published_at: now })
-      .eq("class_id", selectedSectionId)
-      .eq("faculty_id", user.id)
-      .in("status", ["approved", "draft"])
-    setPublishingRecords(false)
-    if (error) {
-      showToast(`Unable to publish OMR grades: ${error.message}`, "error")
-      return
-    }
-    setRecordPublicationStatus("Published")
-    showToast("OMR grades published. Students may now view the released scores.")
-  }
-
   useEffect(() => {
     let active = true
 
@@ -2758,8 +2757,28 @@ function RecordsPage({
   }, [assessmentColumns.length])
 
   useEffect(() => {
-    if (selectedSectionId) localStorage.setItem("cit-portal:records-section", selectedSectionId)
-    setRecordPublicationStatus("Draft")
+    if (!selectedSectionId) return
+    localStorage.setItem("cit-portal:records-section", selectedSectionId)
+    let active = true
+    void supabase
+      .from("student_grades")
+      .select("status, published_at, updated_at")
+      .eq("class_id", selectedSectionId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!active) return
+        if (error) {
+          console.error("Unable to load grade publication status:", error)
+          setRecordPublicationStatus("Draft")
+          setLastPublishedAt(null)
+          return
+        }
+        setRecordPublicationStatus(String(data?.status ?? "draft").toLowerCase() === "published" ? "Published" : "Draft")
+        setLastPublishedAt(data?.published_at ?? null)
+      })
+    return () => { active = false }
   }, [selectedSectionId])
 
   useEffect(() => {
@@ -2843,6 +2862,7 @@ function RecordsPage({
         const enrollmentStatus = readFirst(enrollment, ["status", "enrollment_status"])
         return {
           id: studentNumber,
+          userId: authStudentId || undefined,
           name: fullName,
           score: 0,
           attendance: enrollmentStatus.toLowerCase() === "inactive" ? "Absent" : "Present",
@@ -3635,9 +3655,10 @@ function RecordsPage({
     type: "Quiz" | "Hands On" | "Recitation" | "Attendance",
     term: "Midterm" | "Final",
   ) => {
-    const existingCount = assessmentColumns.filter(
+    const matchingColumns = assessmentColumns.filter(
       (column) => column.type === type && column.term === term,
-    ).length
+    )
+    const existingCount = matchingColumns.length
     const maximum =
       type === "Quiz"
         ? 8
@@ -3649,9 +3670,17 @@ function RecordsPage({
             ? 20
             : 15
     if (existingCount >= maximum) return
+    const usedIndexes = new Set(
+      matchingColumns
+        .map((column) => assessmentColumnIndex(column))
+        .filter((index) => Number.isFinite(index) && index > 0),
+    )
+    let nextIndex = 1
+    while (usedIndexes.has(nextIndex) && nextIndex <= maximum) nextIndex += 1
+    if (nextIndex > maximum) return
     const label = `${term} ${
       type === "Quiz" ? "Quiz" : type === "Hands On" ? "Project" : type
-    } ${existingCount + 1}`
+    } ${nextIndex}`
 
     setAssessmentColumns((columns) => {
       const lastMatchingIndex = columns.reduce(
@@ -3761,14 +3790,57 @@ function RecordsPage({
     ))
   }
 
-  const deleteAssessmentColumn = async (column: RecordAssessmentColumn) => {
-    const confirmed = window.confirm(`Delete ${column.label}? This removes the column and its saved scores. This action cannot be undone.`)
-    if (!confirmed) return
+  const deleteAssessmentColumn = async () => {
+    const column = assessmentToDelete
+    if (!column || assessmentDeleting) return
+    setAssessmentDeleting(true)
 
-    const assessmentId = column.assessmentId ?? (/^[0-9a-f-]{36}$/i.test(String(column.id)) ? String(column.id) : undefined)
-    if (assessmentId) {
-      const { error } = await supabase.from("assessments").delete().eq("id", assessmentId)
+    const slotIndex = assessmentColumnIndex(column)
+    const assessmentIds = Array.from(new Set(
+      assessmentColumns
+        .filter((item) => sameAssessmentSlot(item, column))
+        .flatMap((item) => [item.assessmentId, /^[0-9a-f-]{36}$/i.test(String(item.id)) ? String(item.id) : undefined])
+        .filter((id): id is string => Boolean(id)),
+    ))
+
+    // Remove OMR sources for the same class, term, type, and index first so the
+    // deleted gradebook column cannot be recreated on refresh.
+    if (column.type === "Quiz" || column.type === "Exam") {
+      const omrType = column.type === "Exam" ? "exam" : "quiz"
+      let omrQuery = supabase
+        .from("omr_assessments")
+        .select("id")
+        .eq("class_id", selectedSectionId)
+        .eq("assessment_type", omrType)
+        .eq("academic_term", column.term === "Final" ? "final" : "midterm")
+      if (Number.isFinite(slotIndex)) omrQuery = omrQuery.eq("assessment_index", slotIndex)
+      const { data: omrRows, error: omrReadError } = await omrQuery
+      if (omrReadError) {
+        setAssessmentDeleting(false)
+        showToast(`Unable to delete ${column.label}: ${omrReadError.message}`, "error")
+        return
+      }
+      const omrIds = (omrRows ?? []).map((row: any) => String(row.id))
+      if (omrIds.length) {
+        const { error: reminderError } = await supabase.from("faculty_reminders").delete().in("omr_assessment_id", omrIds)
+        if (reminderError) {
+          setAssessmentDeleting(false)
+          showToast(`Unable to delete linked activity: ${reminderError.message}`, "error")
+          return
+        }
+        const { error: omrDeleteError } = await supabase.from("omr_assessments").delete().in("id", omrIds)
+        if (omrDeleteError) {
+          setAssessmentDeleting(false)
+          showToast(`Unable to delete OMR assessment: ${omrDeleteError.message}`, "error")
+          return
+        }
+      }
+    }
+
+    if (assessmentIds.length) {
+      const { error } = await supabase.from("assessments").delete().in("id", assessmentIds)
       if (error) {
+        setAssessmentDeleting(false)
         showToast(`Unable to delete ${column.label}: ${error.message}`, "error")
         return
       }
@@ -3783,12 +3855,15 @@ function RecordsPage({
       Object.entries(current).forEach(([studentNumber, values]) => {
         const studentValues = { ...values }
         duplicateIds.forEach((id) => delete studentValues[id])
+        assessmentIds.forEach((id) => delete studentValues[id])
         next[studentNumber] = studentValues
       })
       localDraftValuesRef.current = next
       return next
     })
-    showToast(`${column.label} deleted.`)
+    setAssessmentDeleting(false)
+    setAssessmentToDelete(null)
+    showToast(`${column.label} deleted permanently.`)
   }
 
   const renderAssessmentHeader = (column: RecordAssessmentColumn) => (
@@ -3797,12 +3872,80 @@ function RecordsPage({
       <button
         type="button"
         className="assessment-column-delete"
-        onClick={() => void deleteAssessmentColumn(column)}
+        onClick={() => setAssessmentToDelete(column)}
         aria-label={`Delete ${column.label}`}
         title={`Delete ${column.label}`}
       >×</button>
     </th>
   )
+
+  const gradeComponents = (student: RecordStudent) => {
+    const exam = percentageFromScores([examSubtotal(student, "midterm"), examSubtotal(student, "final")])
+    const quizzes = percentageFromColumns(student, quizColumns)
+    const projects = percentageFromColumns(student, [...midtermProjectColumns, ...finalProjectColumns])
+    const recitation = percentageFromColumns(student, [...midtermRecitationColumns, ...finalRecitationColumns])
+    const attendance = percentageFromColumns(student, [...midtermAttendanceColumns, ...finalAttendanceColumns])
+    return { exam, quizzes, projects, recitation, attendance }
+  }
+
+  const saveGradeRecords = async (status: "Draft" | "Published") => {
+    if (!selectedSectionId) throw new Error("Select a class before saving grades.")
+    const savedAt = new Date().toISOString()
+    const rows = recordStudents.map((student) => {
+      if (!student.userId) throw new Error(`Missing Supabase student ID for ${student.name}.`)
+      const components = gradeComponents(student)
+      const grade = finalGrade(student)
+      return {
+        class_id: selectedSectionId,
+        student_id: student.userId,
+        final_grade: Number(grade.toFixed(2)),
+        exam_percentage: Number(components.exam.toFixed(2)),
+        quiz_percentage: Number(components.quizzes.toFixed(2)),
+        project_percentage: Number(components.projects.toFixed(2)),
+        recitation_percentage: Number(components.recitation.toFixed(2)),
+        attendance_percentage: Number(components.attendance.toFixed(2)),
+        result: grade >= 75 ? "Passed" : "Failed",
+        status: status.toLowerCase(),
+        published_at: status === "Published" ? savedAt : null,
+        updated_at: savedAt,
+      }
+    })
+    const { error } = await supabase.from("student_grades").upsert(rows, { onConflict: "class_id,student_id" })
+    if (error) throw error
+    setRecordPublicationStatus(status)
+    setLastPublishedAt(status === "Published" ? savedAt : null)
+  }
+
+  const publishGrades = async () => {
+    if (publishingRecords) return
+    setPublishingRecords(true)
+    try {
+      await saveGradeRecords("Published")
+      setPublishConfirmationOpen(false)
+      showToast("Grades published. Students can now view their final grades.")
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to publish grades.", "error")
+    } finally {
+      setPublishingRecords(false)
+    }
+  }
+
+  const changeRecordStatus = async (status: "Draft" | "Published") => {
+    if (status === "Published") {
+      setPublishConfirmationOpen(true)
+      return
+    }
+    if (publishingRecords) return
+    setPublishingRecords(true)
+    try {
+      await saveGradeRecords("Draft")
+      showToast("Grades saved as Draft and hidden from students.")
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to save Draft grades.", "error")
+    } finally {
+      setPublishingRecords(false)
+    }
+  }
 
   const renderAssessmentScore = (
     student: typeof students[number],
@@ -4184,7 +4327,7 @@ function RecordsPage({
               className="record-publication-select"
               value={recordPublicationStatus}
               aria-label="Set record publication status"
-              onChange={(event) => setRecordPublicationStatus(event.target.value as "Draft" | "Published")}
+              onChange={(event) => void changeRecordStatus(event.target.value as "Draft" | "Published")}
             >
               <option>Draft</option>
               <option>Published</option>
@@ -4192,11 +4335,12 @@ function RecordsPage({
             <button
               type="button"
               className="primary-button compact record-publish-button"
-              disabled={publishingRecords || recordPublicationStatus === "Published" || !selectedSectionId}
-              onClick={() => void publishOmrRecords()}
+              disabled={publishingRecords || !selectedSectionId}
+              onClick={() => setPublishConfirmationOpen(true)}
+              title={lastPublishedAt ? `Last published ${new Date(lastPublishedAt).toLocaleString()}` : "Publish grades"}
             >
               <Icon name="check" size={15} />
-              {publishingRecords ? "Publishing..." : recordPublicationStatus === "Published" ? "Published" : "Publish"}
+              {publishingRecords ? "Saving..." : recordPublicationStatus === "Published" ? "Republish grades" : "Publish grades"}
             </button>
             <small>
               {recordPublicationStatus === "Published"
@@ -4421,7 +4565,7 @@ function RecordsPage({
                     <button
                       type="button"
                       className="assessment-column-delete"
-                      onClick={() => void deleteAssessmentColumn(column)}
+                      onClick={() => setAssessmentToDelete(column)}
                       aria-label={`Delete ${column.label}`}
                       title={`Delete ${column.label}`}
                     >×</button>
@@ -4434,7 +4578,7 @@ function RecordsPage({
                     <button
                       type="button"
                       className="assessment-column-delete"
-                      onClick={() => void deleteAssessmentColumn(column)}
+                      onClick={() => setAssessmentToDelete(column)}
                       aria-label={`Delete ${column.label}`}
                       title={`Delete ${column.label}`}
                     >×</button>
@@ -4447,7 +4591,7 @@ function RecordsPage({
                     <button
                       type="button"
                       className="assessment-column-delete"
-                      onClick={() => void deleteAssessmentColumn(column)}
+                      onClick={() => setAssessmentToDelete(column)}
                       aria-label={`Delete ${column.label}`}
                       title={`Delete ${column.label}`}
                     >×</button>
@@ -4460,7 +4604,7 @@ function RecordsPage({
                     <button
                       type="button"
                       className="assessment-column-delete"
-                      onClick={() => void deleteAssessmentColumn(column)}
+                      onClick={() => setAssessmentToDelete(column)}
                       aria-label={`Delete ${column.label}`}
                       title={`Delete ${column.label}`}
                     >×</button>
@@ -4473,7 +4617,7 @@ function RecordsPage({
                     <button
                       type="button"
                       className="assessment-column-delete"
-                      onClick={() => void deleteAssessmentColumn(column)}
+                      onClick={() => setAssessmentToDelete(column)}
                       aria-label={`Delete ${column.label}`}
                       title={`Delete ${column.label}`}
                     >×</button>
@@ -4486,7 +4630,7 @@ function RecordsPage({
                     <button
                       type="button"
                       className="assessment-column-delete"
-                      onClick={() => void deleteAssessmentColumn(column)}
+                      onClick={() => setAssessmentToDelete(column)}
                       aria-label={`Delete ${column.label}`}
                       title={`Delete ${column.label}`}
                     >×</button>
@@ -4499,7 +4643,7 @@ function RecordsPage({
                     <button
                       type="button"
                       className="assessment-column-delete"
-                      onClick={() => void deleteAssessmentColumn(column)}
+                      onClick={() => setAssessmentToDelete(column)}
                       aria-label={`Delete ${column.label}`}
                       title={`Delete ${column.label}`}
                     >×</button>
@@ -4512,7 +4656,7 @@ function RecordsPage({
                     <button
                       type="button"
                       className="assessment-column-delete"
-                      onClick={() => void deleteAssessmentColumn(column)}
+                      onClick={() => setAssessmentToDelete(column)}
                       aria-label={`Delete ${column.label}`}
                       title={`Delete ${column.label}`}
                     >×</button>
@@ -4853,6 +4997,46 @@ function RecordsPage({
           </div>
         </section>
       </div>
+      {publishConfirmationOpen && (
+        <div className="modal-backdrop class-confirm-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !publishingRecords) setPublishConfirmationOpen(false)
+        }}>
+          <section className="class-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="publish-grades-title" aria-describedby="publish-grades-description">
+            <button type="button" className="class-confirm-close" onClick={() => setPublishConfirmationOpen(false)} disabled={publishingRecords} aria-label="Close publish grades dialog">×</button>
+            <div className="class-confirm-header">
+              <span className="class-confirm-icon" aria-hidden="true"><Icon name="check" size={18} /></span>
+              <div>
+                <h2 id="publish-grades-title">{recordPublicationStatus === "Published" ? "Republish grades?" : "Publish grades?"}</h2>
+                <p id="publish-grades-description"><strong>{recordStudents.length} students</strong> in {selectedSection.subject} - {selectedSection.code} will be able to see their final grade and Passed/Failed result.</p>
+              </div>
+            </div>
+            <div className="class-confirm-actions">
+              <button type="button" className="secondary-button" onClick={() => setPublishConfirmationOpen(false)} disabled={publishingRecords}>Cancel</button>
+              <button type="button" className="primary-button" onClick={() => void publishGrades()} disabled={publishingRecords}>{publishingRecords ? "Publishing..." : recordPublicationStatus === "Published" ? "Republish grades" : "Publish grades"}</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {assessmentToDelete && (
+        <div className="modal-backdrop class-confirm-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !assessmentDeleting) setAssessmentToDelete(null)
+        }}>
+          <section className="class-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-assessment-title" aria-describedby="delete-assessment-description">
+            <button type="button" className="class-confirm-close" onClick={() => setAssessmentToDelete(null)} disabled={assessmentDeleting} aria-label="Close delete assessment dialog">×</button>
+            <div className="class-confirm-header">
+              <span className="class-confirm-icon" aria-hidden="true"><Icon name="minus" size={18} /></span>
+              <div>
+                <h2 id="delete-assessment-title">Delete assessment?</h2>
+                <p id="delete-assessment-description"><strong>{assessmentToDelete.label}</strong> will be permanently removed with its encoded scores{assessmentToDelete.type === "Quiz" || assessmentToDelete.type === "Exam" ? ", linked OMR assessment, and related activity" : ""}. This action cannot be undone.</p>
+              </div>
+            </div>
+            <div className="class-confirm-actions">
+              <button type="button" className="secondary-button" onClick={() => setAssessmentToDelete(null)} disabled={assessmentDeleting}>Cancel</button>
+              <button type="button" className="danger-button" onClick={() => void deleteAssessmentColumn()} disabled={assessmentDeleting}>{assessmentDeleting ? "Deleting..." : "Delete assessment"}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </>
   )
 }
