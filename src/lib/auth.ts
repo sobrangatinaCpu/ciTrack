@@ -15,38 +15,42 @@ export async function registerFaculty({
   facultyNumber,
   department,
 }: FacultyRegistration) {
-const { data, error } = await supabase.auth.signUp({
-  email: email.trim(),
-  password,
-  options: {
-    data: {
-      full_name: fullName.trim(),
-      faculty_number: facultyNumber.trim(),
-      department: department.trim(),
-      role: "faculty",
+  const normalizedEmail = email.trim().toLowerCase()
+
+  const { data, error } = await supabase.auth.signUp({
+    email: normalizedEmail,
+    password,
+    options: {
+      emailRedirectTo: window.location.origin,
+      data: {
+        full_name: fullName.trim(),
+        faculty_number: facultyNumber.trim(),
+        department: department.trim(),
+        role: "faculty",
+      },
     },
-  },
-})
+  })
 
-if (error) {
-  throw error
-}
+  if (error) {
+    throw error
+  }
 
-if (!data.user) {
-  throw new Error("Faculty account was not created.")
-}
+  if (!data.user) {
+    throw new Error("Faculty account was not created.")
+  }
 
-return data
-
+  return data
 }
 
 export async function loginFaculty(
   email: string,
   password: string,
 ) {
+  const normalizedEmail = email.trim().toLowerCase()
+
   const { data, error } =
     await supabase.auth.signInWithPassword({
-      email: email.trim(),
+      email: normalizedEmail,
       password,
     })
 

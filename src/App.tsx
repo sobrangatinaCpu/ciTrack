@@ -8376,7 +8376,7 @@ function LandingPage({
         return
       }
 
-      await registerFaculty({
+      const registration = await registerFaculty({
         email: normalizedEmail,
         password,
         fullName,
@@ -8384,10 +8384,12 @@ function LandingPage({
         department,
       })
 
-      // Supabase may create a session immediately when email confirmation is disabled.
-      // Registration must not grant dashboard access, so always end that session first.
-      const { error: signOutError } = await supabase.auth.signOut({ scope: "local" })
-      if (signOutError) throw signOutError
+      // Confirm email normally returns a user without an active session.
+      // Close any immediate session if the Supabase setting is later disabled.
+      if (registration.session) {
+        const { error: signOutError } = await supabase.auth.signOut({ scope: "local" })
+        if (signOutError) throw signOutError
+      }
 
       form.reset()
       setAuthMode("signIn")
@@ -8396,10 +8398,10 @@ function LandingPage({
       onRegistrationComplete()
 
       showMessage(
-  "Faculty account created. Please sign in using the account you just created.",
-  "success",
-  "Account Created"
-)
+        `A confirmation link was sent automatically to ${normalizedEmail}. Open the email and select Confirm email address. After confirmation, you will return to CiTracker and your faculty account will open.`,
+        "success",
+        "Check your university email",
+      )
     } else {
       await loginFaculty(email, password)
       onSignIn()
@@ -8410,9 +8412,12 @@ function LandingPage({
         ? error.message
         : "Authentication failed."
 
-    const message = /password/i.test(rawMessage)
-      ? "Use 6+ characters with 1 uppercase letter and 1 number."
-      : rawMessage
+    const loweredMessage = rawMessage.toLowerCase()
+    const message = loweredMessage.includes("email not confirmed")
+      ? "Please confirm your university email before signing in."
+      : /password/i.test(rawMessage) && isSignUp
+        ? "Password must contain at least 8 characters, one uppercase letter, one lowercase letter, one number, and one special character."
+        : rawMessage
 
     console.error("Faculty authentication error:", error)
     if (isSignUp) {
@@ -8773,10 +8778,15 @@ export default function App() {
         return
       }
 
-      // SIGNED_IN is also emitted by signUp when email confirmation is disabled.
-      // Dashboard access is granted only by the explicit Sign in form callback.
-      if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
-        void validateAuthenticatedAccount()
+      // SIGNED_IN is emitted after the confirmation link returns to the app.
+      // Validate the faculty profile before opening the dashboard.
+      if (
+        event === "SIGNED_IN" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "USER_UPDATED"
+      ) {
+        setAuthChecking(true)
+        void validateAuthenticatedAccount().finally(() => setAuthChecking(false))
       }
     })
 
