@@ -2369,16 +2369,21 @@ function ClassesPage({
         minutesFromTime(a.schedule.startTime) -
         minutesFromTime(b.schedule.startTime),
     )
+  const hasEndedOccurrence = (item: ClassItem, schedule: ClassSchedule) =>
+    endedClassIds.includes(`${item.id}:${occurrenceKeyForSchedule(schedule, classesPageNow)}`)
+
   const activeScheduleToday = todaySchedule.find(({ item, schedule }: { item: ClassItem; schedule: ClassSchedule }) => {
-    if (endedClassIds.includes(String(item.id))) return false
+    if (hasEndedOccurrence(item, schedule)) return false
     const start = minutesFromTime(schedule.startTime)
     const end = minutesFromTime(schedule.endTime)
     return currentMinutes >= start && currentMinutes < end
   })
   const nextClassToday = todaySchedule.find(({ item, schedule }: { item: ClassItem; schedule: ClassSchedule }) =>
-    !endedClassIds.includes(String(item.id)) && minutesFromTime(schedule.startTime) > currentMinutes,
+    !hasEndedOccurrence(item, schedule) && minutesFromTime(schedule.startTime) > currentMinutes,
   )
-  const endedClassesToday = todaySchedule.filter(({ item }: { item: ClassItem; schedule: ClassSchedule }) => endedClassIds.includes(String(item.id)))
+  const endedClassesToday = todaySchedule.filter(({ item, schedule }: { item: ClassItem; schedule: ClassSchedule }) =>
+    hasEndedOccurrence(item, schedule),
+  )
   const lastClassToday = todaySchedule.at(-1)
   const scheduleStatus = activeScheduleToday
     ? {
@@ -2394,8 +2399,8 @@ function ClassesPage({
         ? {
             title: endedClassesToday.length === 1 ? "Class ended" : "Classes ended for today",
             message: endedClassesToday.length === 1
-              ? `${endedClassesToday[0].item.subject} has ended. Attendance and class records remain available.`
-              : `${endedClassesToday.length} classes have ended. Attendance and class records remain available.`,
+              ? `${endedClassesToday[0].item.subject} has ended. Class records remain available.`
+              : `${endedClassesToday.length} classes have ended. Class records remain available.`,
           }
         : todaySchedule.length === 0
           ? {
