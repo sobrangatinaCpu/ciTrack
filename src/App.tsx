@@ -3520,6 +3520,54 @@ function RecordsPage({
     }
   }
 
+  const exportGradebookCsv = () => {
+    if (sectionsLoading || recordSectionOptions.length === 0) return
+
+    const escapeCsvCell = (value: string | number) => {
+      const text = String(value ?? "")
+      return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+    }
+
+    const fixedColumns = [
+      { id: "midterm-written", label: "Midterm Written" },
+      { id: "midterm-actual", label: "Midterm Actual" },
+      { id: "final-written", label: "Final Written" },
+      { id: "final-actual", label: "Final Actual" },
+    ]
+    const dynamicColumns = assessmentColumns.filter(
+      (column) => !fixedColumns.some((fixed) => fixed.id === column.id),
+    )
+    const scoreColumns = [...fixedColumns, ...dynamicColumns]
+    const headers = ["Student ID", "Student Name", "Status", ...scoreColumns.map((column) => column.label)]
+    const rows = recordStudents.map((student) => {
+      const values = recordValues[student.id] ?? {}
+      return [
+        student.id,
+        student.name,
+        studentStatuses[student.id] ?? student.attendance,
+        ...scoreColumns.map((column) => values[column.id] ?? ""),
+      ]
+    })
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => escapeCsvCell(cell)).join(","))
+      .join("\r\n")
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    const safeClassName = `${selectedSection.code}-${selectedSection.subject}`
+      .replace(/[^a-z0-9]+/gi, "-")
+      .replace(/^-|-$/g, "")
+      .toLowerCase()
+
+    link.href = url
+    link.download = `${safeClassName || "gradebook"}-gradebook.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    showToast("Gradebook exported successfully.")
+  }
+
   const selectedSection =
     recordSectionOptions.find((section) => section.id === selectedSectionId) ??
     recordSectionOptions[0] ?? {
@@ -4190,16 +4238,15 @@ function RecordsPage({
             </>
           )}
         </div>
-        <label className="records-file-import" title="Import students and gradebook scores from CSV" aria-disabled={sectionsLoading || recordSectionOptions.length === 0}>
-          <input
-            ref={csvInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(event) => void importGradebookCsv(event)}
-            disabled={sectionsLoading || recordSectionOptions.length === 0}
-          />
-          <Icon name="clipboard" size={15} /> Import CSV
-        </label>
+        <button
+          type="button"
+          className="records-file-import"
+          title="Export the current gradebook as CSV"
+          onClick={exportGradebookCsv}
+          disabled={sectionsLoading || recordSectionOptions.length === 0}
+        >
+          <Icon name="clipboard" size={15} /> Export Gradebook
+        </button>
       </div>
       <div
         className={`records-card ${
@@ -8376,7 +8423,7 @@ function LandingPage({
         return
       }
 
-      const registration = await registerFaculty({
+      await registerFaculty({
         email: normalizedEmail,
         password,
         fullName,
@@ -8384,12 +8431,10 @@ function LandingPage({
         department,
       })
 
-      // Confirm email normally returns a user without an active session.
-      // Close any immediate session if the Supabase setting is later disabled.
-      if (registration.session) {
-        const { error: signOutError } = await supabase.auth.signOut({ scope: "local" })
-        if (signOutError) throw signOutError
-      }
+      // Supabase may create a session immediately when email confirmation is disabled.
+      // Registration must not grant dashboard access, so always end that session first.
+      const { error: signOutError } = await supabase.auth.signOut({ scope: "local" })
+      if (signOutError) throw signOutError
 
       form.reset()
       setAuthMode("signIn")
@@ -8398,10 +8443,10 @@ function LandingPage({
       onRegistrationComplete()
 
       showMessage(
-        `A confirmation link was sent automatically to ${normalizedEmail}. Open the email and select Confirm email address. After confirmation, you will return to CiTracker and your faculty account will open.`,
-        "success",
-        "Check your university email",
-      )
+  "Faculty account created. Please sign in using the account you just created.",
+  "success",
+  "Account Created"
+)
     } else {
       await loginFaculty(email, password)
       onSignIn()
@@ -8412,12 +8457,9 @@ function LandingPage({
         ? error.message
         : "Authentication failed."
 
-    const loweredMessage = rawMessage.toLowerCase()
-    const message = loweredMessage.includes("email not confirmed")
-      ? "Please confirm your university email before signing in."
-      : /password/i.test(rawMessage) && isSignUp
-        ? "Password must contain at least 8 characters, one uppercase letter, one lowercase letter, one number, and one special character."
-        : rawMessage
+    const message = /password/i.test(rawMessage)
+      ? "Use 6+ characters with 1 uppercase letter and 1 number."
+      : rawMessage
 
     console.error("Faculty authentication error:", error)
     if (isSignUp) {
@@ -8778,15 +8820,10 @@ export default function App() {
         return
       }
 
-      // SIGNED_IN is emitted after the confirmation link returns to the app.
-      // Validate the faculty profile before opening the dashboard.
-      if (
-        event === "SIGNED_IN" ||
-        event === "TOKEN_REFRESHED" ||
-        event === "USER_UPDATED"
-      ) {
-        setAuthChecking(true)
-        void validateAuthenticatedAccount().finally(() => setAuthChecking(false))
+      // SIGNED_IN is also emitted by signUp when email confirmation is disabled.
+      // Dashboard access is granted only by the explicit Sign in form callback.
+      if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+        void validateAuthenticatedAccount()
       }
     })
 
