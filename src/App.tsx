@@ -5439,6 +5439,8 @@ function ActivitiesPage({
   const [savedDraftIds, setSavedDraftIds] = useState<Record<string, boolean>>({})
   const [concernView, setConcernView] = useState<"open" | "reviewed">("open")
   const [assessmentView, setAssessmentView] = useState<"active" | "finished">("active")
+  const [assessmentSearch, setAssessmentSearch] = useState("")
+  const [assessmentSort, setAssessmentSort] = useState<"newest" | "oldest" | "title">("newest")
 
   const formatRequestSubmittedAt = (value: string) => {
     const date = new Date(value)
@@ -5688,9 +5690,25 @@ function ActivitiesPage({
   const finishedAssessments = reminders.filter((activity, index) =>
     !isQuizManuallyOpen(activity) && getActivityStatus(activity, index) === "Finished",
   )
-  const visibleAssessments = assessmentView === "finished"
+  const selectedAssessments = assessmentView === "finished"
     ? finishedAssessments
     : activeAssessments
+  const normalizedAssessmentSearch = assessmentSearch.trim().toLowerCase()
+  const visibleAssessments = selectedAssessments
+    .filter((activity) => {
+      if (!normalizedAssessmentSearch) return true
+      const activityClass = reminderClasses.find((item) => item.id === activity.classId)
+      return [activity.title, activity.description, activity.type, activityClass?.subject, activityClass?.code]
+        .some((value) => String(value ?? "").toLowerCase().includes(normalizedAssessmentSearch))
+    })
+    .sort((a, b) => {
+      if (assessmentSort === "title") {
+        return a.title.localeCompare(b.title, undefined, { numeric: true })
+      }
+      const aTime = new Date(`${a.date}T${a.startTime || "00:00"}:00`).getTime()
+      const bTime = new Date(`${b.date}T${b.startTime || "00:00"}:00`).getTime()
+      return assessmentSort === "oldest" ? aTime - bTime : bTime - aTime
+    })
 
   const openNewReminder = () => {
     setDraft({ ...createActivityDraft(), classId: reminderClasses[0]?.id ?? "" })
@@ -6419,6 +6437,39 @@ const reminderFormValid = Boolean(
             </button>
           </div>
         </section>
+        <div
+          className="assessment-list-tools"
+          style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", padding: "14px 18px", marginBottom: 16, background: "#fff", border: "1px solid #dbe6f2", borderRadius: 14 }}
+          aria-label="Search and sort assessments"
+        >
+          <label style={{ flex: "1 1 280px" }}>
+            <span className="sr-only">Search assessments</span>
+            <input
+              type="search"
+              value={assessmentSearch}
+              onChange={(event) => setAssessmentSearch(event.target.value)}
+              placeholder="Search quiz, description, class, or code"
+              aria-label="Search assessments"
+              style={{ width: "100%", minHeight: 44, padding: "10px 14px", border: "1px solid #cbd9e8", borderRadius: 10, font: "inherit", color: "#17324d", background: "#fff", boxSizing: "border-box" }}
+            />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#526b84", fontWeight: 600 }}>
+            Sort by
+            <select
+              value={assessmentSort}
+              onChange={(event) => setAssessmentSort(event.target.value as "newest" | "oldest" | "title")}
+              aria-label="Sort assessments"
+              style={{ minHeight: 44, padding: "9px 34px 9px 12px", border: "1px solid #cbd9e8", borderRadius: 10, font: "inherit", color: "#17324d", background: "#fff" }}
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="title">Title A-Z</option>
+            </select>
+          </label>
+          <span style={{ color: "#6b7f93", fontSize: 14 }} aria-live="polite">
+            {visibleAssessments.length} {visibleAssessments.length === 1 ? "result" : "results"}
+          </span>
+        </div>
         <section className="concerns-section" aria-labelledby="concerns-title">
           <div className="concerns-heading">
             <div>
@@ -6616,9 +6667,11 @@ const reminderFormValid = Boolean(
             <p className="reminder-list-state">Loading reminders...</p>
           ) : visibleAssessments.length === 0 ? (
             <p className="reminder-list-state">
-              {assessmentView === "finished"
-                ? "No finished assessments yet."
-                : "No active assessments. Select Add assessment to create one."}
+              {normalizedAssessmentSearch
+                ? `No assessments match “${assessmentSearch.trim()}”.`
+                : assessmentView === "finished"
+                  ? "No finished assessments yet."
+                  : "No active assessments. Select Add assessment to create one."}
             </p>
           ) : visibleAssessments.map((a) => {
             const originalIndex = reminders.findIndex((item) => item.id === a.id)
