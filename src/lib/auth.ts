@@ -8,6 +8,12 @@ export type FacultyRegistration = {
   department: string
 }
 
+function getAuthRedirectUrl() {
+  const configuredUrl = import.meta.env.VITE_APP_URL?.trim()
+  const baseUrl = configuredUrl || window.location.origin
+  return baseUrl.replace(/\/$/, "")
+}
+
 export async function registerFaculty({
   email,
   password,
@@ -21,7 +27,7 @@ export async function registerFaculty({
     email: normalizedEmail,
     password,
     options: {
-      emailRedirectTo: window.location.origin,
+      emailRedirectTo: getAuthRedirectUrl(),
       data: {
         full_name: fullName.trim(),
         faculty_number: facultyNumber.trim(),
@@ -46,11 +52,9 @@ export async function loginFaculty(
   email: string,
   password: string,
 ) {
-  const normalizedEmail = email.trim().toLowerCase()
-
   const { data, error } =
     await supabase.auth.signInWithPassword({
-      email: normalizedEmail,
+      email: email.trim().toLowerCase(),
       password,
     })
 
