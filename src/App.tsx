@@ -2881,6 +2881,18 @@ function RecordsPage({
   }, [selectedSectionId])
 
   useEffect(() => {
+    // Assessment columns belong to one class only. Clear the previous class's
+    // dynamic columns before loading the newly selected class so Quiz 7 cannot
+    // leak into another section and become Quiz 8.
+    setAssessmentColumns(
+      initialRecordAssessmentColumns.filter(
+        (column) => column.type !== "Quiz" && column.type !== "Exam",
+      ),
+    )
+    setRecordValues({})
+    localDraftValuesRef.current = {}
+    assessmentIdByColumnRef.current = {}
+
     let active = true
 
     const normalizeAssessmentLabel = (value: string) =>
@@ -3722,54 +3734,70 @@ function RecordsPage({
     type: "Quiz" | "Hands On" | "Recitation" | "Attendance",
     term: "Midterm" | "Final",
   ) => {
-    const matchingColumns = assessmentColumns.filter(
-      (column) => column.type === type && column.term === term,
-    )
-    const existingCount = matchingColumns.length
-    const maximum =
-      type === "Quiz"
-        ? 8
-        : type === "Hands On"
-          ? term === "Midterm"
-            ? 10
-            : 12
-          : term === "Midterm"
-            ? 20
-            : 15
-    if (existingCount >= maximum) return
-    const usedIndexes = new Set(
-      matchingColumns
-        .map((column) => assessmentColumnIndex(column))
-        .filter((index) => Number.isFinite(index) && index > 0),
-    )
-    let nextIndex = 1
-    while (usedIndexes.has(nextIndex) && nextIndex <= maximum) nextIndex += 1
-    if (nextIndex > maximum) return
-    const label = `${term} ${
-      type === "Quiz" ? "Quiz" : type === "Hands On" ? "Project" : type
-    } ${nextIndex}`
+    if (!selectedSectionId) return
 
     setAssessmentColumns((columns) => {
+      // Count unique visible slots only. Realtime/database synchronization may
+      // temporarily provide the same slot under a local ID and a database UUID.
+      const uniqueMatchingColumns = columns
+        .filter((column) => column.type === type && column.term === term)
+        .filter((column, index, matching) =>
+          matching.findIndex((candidate) => sameAssessmentSlot(candidate, column)) === index,
+        )
+      const maximum =
+        type === "Quiz"
+          ? 8
+          : type === "Hands On"
+            ? term === "Midterm"
+              ? 10
+              : 12
+            : term === "Midterm"
+              ? 20
+              : 15
+
+      if (uniqueMatchingColumns.length >= maximum) {
+        showToast(`The ${term.toLowerCase()} ${type === "Hands On" ? "project" : type.toLowerCase()} limit is ${maximum}.`, "error")
+        return columns
+      }
+
+      const usedIndexes = new Set(
+        uniqueMatchingColumns
+          .map((column) => assessmentColumnIndex(column))
+          .filter((index) => Number.isFinite(index) && index > 0),
+      )
+      let nextIndex = 1
+      while (usedIndexes.has(nextIndex) && nextIndex <= maximum) nextIndex += 1
+      if (nextIndex > maximum) return columns
+
+      const displayType = type === "Quiz" ? "Quiz" : type === "Hands On" ? "Project" : type
+      const label = `${term} ${displayType} ${nextIndex}`
+      const newColumn: RecordAssessmentColumn = {
+        id: `local:${selectedSectionId}:${term.toLowerCase()}:${type.toLowerCase().replace(/ /g, "-")}:${nextIndex}:${Date.now()}`,
+        label,
+        type,
+        term,
+        maxScore: type === "Attendance" || type === "Recitation" ? 10 : 100,
+      }
       const lastMatchingIndex = columns.reduce(
         (lastIndex, column, index) =>
           column.type === type && column.term === term ? index : lastIndex,
         -1,
       )
-      const insertAt =
-        lastMatchingIndex === -1 ? columns.length : lastMatchingIndex + 1
-      const newColumn = {
-        id: `${term.toLowerCase()}-${type.toLowerCase().replace(/ /g, "-")}-${Date.now()}`,
-        label,
-        type,
-        term,
-      }
-      return [
+      const insertAt = lastMatchingIndex === -1 ? columns.length : lastMatchingIndex + 1
+      const next = [
         ...columns.slice(0, insertAt),
         newColumn,
         ...columns.slice(insertAt),
       ]
+
+      setRecordPublicationStatus("Draft")
+      showToast(`${label} added to ${selectedSection.code}. Enter a score to save it.`)
+      return next
     })
-    setAssessmentMenuOpen(false)
+
+    // Keep the menu open so its counters update immediately and the instructor
+    // can add another assessment without reopening the panel.
+    setAssessmentMenuOpen(true)
   }
 
   const assessmentScore = (
@@ -3969,6 +3997,15 @@ function RecordsPage({
   const saveGradeRecords = async (status: "Draft" | "Published") => {
     if (!selectedSectionId) throw new Error("Select a class before saving grades.")
     const savedAt = new Date().toISOString()
+    const {
+      data: { user: authenticatedFaculty },
+      error: facultyAuthError,
+    } = await supabase.auth.getUser()
+
+    if (facultyAuthError || !authenticatedFaculty) {
+      throw new Error("Your faculty session has expired. Sign in again before publishing grades.")
+    }
+
     const rows = recordStudents.map((student) => {
       if (!student.userId) throw new Error(`Missing Supabase student ID for ${student.name}.`)
       const components = gradeComponents(student)
@@ -3976,6 +4013,8 @@ function RecordsPage({
       return {
         class_id: selectedSectionId,
         student_id: student.userId,
+        student_number: student.id,
+        faculty_id: authenticatedFaculty.id,
         final_grade: Number(grade.toFixed(2)),
         exam_percentage: Number(components.exam.toFixed(2)),
         quiz_percentage: Number(components.quizzes.toFixed(2)),
@@ -3988,8 +4027,44 @@ function RecordsPage({
         updated_at: savedAt,
       }
     })
-    const { error } = await supabase.from("student_grades").upsert(rows, { onConflict: "class_id,student_id" })
-    if (error) throw error
+    if (rows.length === 0) {
+      throw new Error("There are no enrolled students to publish.")
+    }
+
+    const { error } = await supabase
+      .from("student_grades")
+      .upsert(rows, {
+        onConflict: "class_id,student_id",
+        ignoreDuplicates: false,
+      })
+
+    if (error) {
+      console.error("Unable to save student_grades:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        rows,
+      })
+
+      if (error.code === "42P10") {
+        throw new Error(
+          "Publishing requires a unique database constraint for class_id and student_id. Run the supplied student_grades SQL fix in Supabase, then publish again.",
+        )
+      }
+
+      if (error.code === "42501") {
+        throw new Error(
+          "Supabase blocked grade publishing because the student_grades Row Level Security policy does not allow this faculty account to insert or update grades.",
+        )
+      }
+
+      throw new Error(
+        [error.message, error.details, error.hint].filter(Boolean).join(" ") ||
+          "Unable to publish grades.",
+      )
+    }
+
     setRecordPublicationStatus(status)
     setLastPublishedAt(status === "Published" ? savedAt : null)
   }
@@ -4053,6 +4128,9 @@ function RecordsPage({
             )
           }
           aria-label={`Edit ${column.label} score for ${student.name}`}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.preventDefault()
+          }}
         />
       </td>
     )
@@ -4094,12 +4172,53 @@ function RecordsPage({
 
     if (nextValue === "" || !selectedSectionId) return
 
-    const column = assessmentColumns.find((item) => String(item.id) === String(columnId))
-    if (!column) return
+    const fixedGradebookColumns: Record<string, RecordAssessmentColumn> = {
+      "midterm-written": {
+        id: "midterm-written",
+        label: "Midterm Written Exam",
+        type: "Exam",
+        term: "Midterm",
+        maxScore: 100,
+      },
+      "midterm-actual": {
+        id: "midterm-actual",
+        label: "Midterm Actual Exam",
+        type: "Exam",
+        term: "Midterm",
+        maxScore: 100,
+      },
+      "final-written": {
+        id: "final-written",
+        label: "Final Written Exam",
+        type: "Exam",
+        term: "Final",
+        maxScore: 100,
+      },
+      "final-actual": {
+        id: "final-actual",
+        label: "Final Actual Exam",
+        type: "Exam",
+        term: "Final",
+        maxScore: 100,
+      },
+    }
+
+    // Dynamic quizzes/projects/recitations/attendance are stored in
+    // assessmentColumns. The four permanent exam fields are resolved here so
+    // they use the same save, toast, Draft, and notification workflow.
+    const column =
+      assessmentColumns.find((item) => String(item.id) === String(columnId)) ??
+      fixedGradebookColumns[String(columnId)]
+    if (!column) {
+      showToast("This gradebook element could not be saved because its assessment definition is missing.", "error")
+      return
+    }
 
     const saveKey = `${studentId}:${columnId}`
     const previousTimer = scoreSaveTimersRef.current[saveKey]
     if (previousTimer) window.clearTimeout(previousTimer)
+
+    const resolvedMaximum = maxScoreForColumn(column) || maximum
 
     scoreSaveTimersRef.current[saveKey] = window.setTimeout(async () => {
       const typeMap: Record<RecordAssessmentColumn["type"], "exam" | "quiz" | "project" | "recitation" | "attendance"> = {
@@ -4118,7 +4237,7 @@ function RecordsPage({
           title: column.label,
           type: typeMap[column.type],
           term: column.term === "Final" ? "final" : "midterm",
-          maxScore: maximum,
+          maxScore: resolvedMaximum,
           score: Number(nextValue),
           status: "draft",
           // Never send an OMR assessment UUID to comptech_faculty_save_score.
@@ -4133,7 +4252,17 @@ function RecordsPage({
         assessmentIdByColumnRef.current[String(column.id)] = savedAssessmentId
         assessmentIdByColumnRef.current[savedAssessmentId] = savedAssessmentId
 
-        if (String(column.id) !== savedAssessmentId) {
+        const isFixedExamField = [
+          "midterm-written",
+          "midterm-actual",
+          "final-written",
+          "final-actual",
+        ].includes(String(column.id))
+
+        // Permanent exam inputs are rendered with stable IDs. Keep those IDs in
+        // local state even after Supabase returns the assessment UUID, otherwise
+        // the realtime reload makes the edited value appear to reset.
+        if (!isFixedExamField && String(column.id) !== savedAssessmentId) {
           setRecordValues((current) => {
             const next = { ...current }
             Object.keys(next).forEach((studentNumber) => {
@@ -4151,12 +4280,43 @@ function RecordsPage({
           })
         }
 
-        setAssessmentColumns((current) => current.map((item) =>
-          item.id === column.id
-            ? { ...item, id: savedAssessmentId, assessmentId: savedAssessmentId }
-            : item,
-        ))
-        showToast(`${column.label} score saved.`)
+        if (!isFixedExamField) {
+          setAssessmentColumns((current) => current.map((item) =>
+            item.id === column.id
+              ? { ...item, id: savedAssessmentId, assessmentId: savedAssessmentId }
+              : item,
+          ))
+        }
+
+        const editedStudent = recordStudents.find((student) => student.id === studentId)
+        const {
+          data: { user: facultyUser },
+        } = await supabase.auth.getUser()
+
+        if (facultyUser) {
+          const { error: notificationError } = await supabase
+            .from("faculty_notifications")
+            .insert({
+              recipient_id: facultyUser.id,
+              kind: "gradebook",
+              title: `${column.label} updated`,
+              message: `${editedStudent?.name ?? studentId}'s ${column.label} score was changed to ${nextValue}/${resolvedMaximum} in ${selectedSection.subject} - ${selectedSection.code}. The gradebook is now Draft until grades are published again.`,
+              target_page: "records",
+              class_id: selectedSectionId,
+              entity_id: savedAssessmentId,
+            })
+
+          // A notification failure must not undo a successfully saved score.
+          if (notificationError) {
+            console.error("Unable to create gradebook edit notification:", notificationError)
+          } else {
+            window.dispatchEvent(new CustomEvent("cit-portal:notifications-changed"))
+          }
+        }
+
+        showToast(
+          `${editedStudent?.name ?? studentId}: ${column.label} saved as ${nextValue}/${resolvedMaximum}. Gradebook changed to Draft.`,
+        )
       } catch (error) {
         console.error("Unable to save score:", error)
         showToast(error instanceof Error ? error.message : "Unable to save score.", "error")
@@ -4794,6 +4954,9 @@ function RecordsPage({
                           updateRecordValue(student.id, String(id), event.target.value)
                         }
                         aria-label={`Edit ${label} score for ${student.name}`}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.preventDefault()
+                        }}
                       />
                     </td>
                   ))}
@@ -4817,6 +4980,9 @@ function RecordsPage({
                           updateRecordValue(student.id, String(id), event.target.value)
                         }
                         aria-label={`Edit ${label} score for ${student.name}`}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.preventDefault()
+                        }}
                       />
                     </td>
                   ))}
