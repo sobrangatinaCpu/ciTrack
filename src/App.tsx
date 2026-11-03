@@ -744,17 +744,8 @@ function Sidebar({
 }) {
   return (
     <aside className="sidebar">
-      <div className="brand">
-        <div className="brand-mark">
-          <img
-            src={citLogo}
-            alt="CIT Logo"
-            className="sidebar-cit-logo"
-          />
-        </div>
-        <span>
-          CIT<span> Portal</span>
-        </span>
+      <div className="brand brand-text-only" aria-label="CiTracker">
+        <span>CiTracker</span>
       </div>
       <nav className="side-nav" aria-label="Main navigation">
         {navItems.map((item) => (
@@ -3124,15 +3115,7 @@ function RecordsPage({
         if (existing) {
           return current.map((column) =>
             column.id === existing.id
-              ? {
-                  ...column,
-                  label: detail.title,
-                  type: columnType,
-                  term: columnTerm,
-                  maxScore: Number(detail.maxScore) > 0
-                    ? Number(detail.maxScore)
-                    : column.maxScore,
-                }
+              ? { ...column, label: detail.title, type: columnType, term: columnTerm }
               : column,
           )
         }
@@ -3221,7 +3204,6 @@ function RecordsPage({
           label: detail.title,
           type: columnType,
           term: columnTerm,
-          maxScore: Number(detail.maxScore) > 0 ? Number(detail.maxScore) : 100,
         }
         const lastMatchingIndex = current.reduce(
           (lastIndex, column, index) =>
@@ -3613,24 +3595,6 @@ function RecordsPage({
   ) => {
     if (!selectedSectionId) return
 
-    // Manual quizzes can contain any number of items. Ask for the actual
-    // maximum score so both Midterm and Final quiz totals use the right
-    // denominator instead of assuming every quiz is out of 100. OMR-created
-    // quizzes continue to receive itemCount * pointsPerItem automatically.
-    let requestedMaximum: number | null = null
-    if (type === "Quiz") {
-      const response = window.prompt(
-        `Enter the maximum score for this ${term.toLowerCase()} quiz (for example 10, 20, or 50):`,
-        "20",
-      )
-      if (response === null) return
-      requestedMaximum = Number(response)
-      if (!Number.isFinite(requestedMaximum) || requestedMaximum <= 0) {
-        showToast("Enter a valid quiz maximum greater than zero.", "error")
-        return
-      }
-    }
-
     setAssessmentColumns((columns) => {
       // Count unique visible slots only. Realtime/database synchronization may
       // temporarily provide the same slot under a local ID and a database UUID.
@@ -3671,12 +3635,7 @@ function RecordsPage({
         label,
         type,
         term,
-        maxScore:
-          type === "Quiz"
-            ? requestedMaximum ?? 100
-            : type === "Attendance" || type === "Recitation"
-              ? 10
-              : 100,
+        maxScore: type === "Attendance" || type === "Recitation" ? 10 : 100,
       }
       const lastMatchingIndex = columns.reduce(
         (lastIndex, column, index) =>
@@ -4897,7 +4856,7 @@ function RecordsPage({
                   <td className="term-total-cell">
                     <output>
                       {assessmentPoints(student, midtermQuizColumns).toFixed(0)}{" "}
-                      / {midtermQuizColumns.reduce((total, column) => total + maxScoreForColumn(column), 0)}
+                      / {midtermQuizColumns.length * 100}
                     </output>
                   </td>
                   {finalQuizColumns.map((column) =>
@@ -4906,7 +4865,7 @@ function RecordsPage({
                   <td className="term-total-cell">
                     <output>
                       {assessmentPoints(student, finalQuizColumns).toFixed(0)} /{" "}
-                      {finalQuizColumns.reduce((total, column) => total + maxScoreForColumn(column), 0)}
+                      {finalQuizColumns.length * 100}
                     </output>
                   </td>
                   {midtermProjectColumns.map((column) =>
