@@ -9007,7 +9007,6 @@ export default function App() {
     setActiveClass(null)
     setActiveSessionStartedAt(null)
     setMinimizedSession(null)
-    setOmrScannerOpen(false)
     setOmrDraftScores({})
   }
 
