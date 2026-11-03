@@ -923,8 +923,6 @@ function ClassCard({
   onMakeUpClass,
   onCancelReschedule,
   onView,
-  onRestore,
-  restoring = false,
   activity,
 }: {
   item: ClassItem
@@ -935,8 +933,6 @@ function ClassCard({
   onMakeUpClass?: (item: ClassItem) => void
   onCancelReschedule?: (item: ClassItem, row: ClassReschedule) => void
   onView?: (item: ClassItem) => void
-  onRestore?: (item: ClassItem) => void
-  restoring?: boolean
   activity?: ActivityItem
 }) {
   const [now, setNow] = useState(() => new Date())
@@ -1220,31 +1216,17 @@ function ClassCard({
           <span>AR</span>
           <span>+{item.attendance - 2}</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-          <button
-            className={
-              canStartNow
-                ? "primary-button compact"
-                : "secondary-button compact class-view-button"
-            }
-            onClick={() => canStartNow ? onStart(item) : (onView ? onView(item) : onStart(item))}
-          >
-            {canStartNow ? <Icon name="play" size={16} /> : <Icon name="eye" size={16} />}
-            {canStartNow ? "Start class" : "View details"}
-          </button>
-          {onRestore && (
-            <button
-              type="button"
-              className="primary-button compact"
-              style={{ minWidth: 138, whiteSpace: "nowrap" }}
-              onClick={() => onRestore(item)}
-              disabled={restoring}
-            >
-              <Icon name="arrow" size={16} />
-              {restoring ? "Restoring..." : "Restore class"}
-            </button>
-          )}
-        </div>
+        <button
+          className={
+            canStartNow
+              ? "primary-button compact"
+              : "secondary-button compact class-view-button"
+          }
+          onClick={() => canStartNow ? onStart(item) : (onView ? onView(item) : onStart(item))}
+        >
+          {canStartNow ? <Icon name="play" size={16} /> : <Icon name="eye" size={16} />}
+          {canStartNow ? "Start class" : "View details"}
+        </button>
       </div>
     </article>
   )
@@ -2471,16 +2453,7 @@ function ClassesPage({
       )}
       <div className="class-grid page-grid">
         {(classView === "active" ? classList : archivedClassList).map((item) => (
-          <div
-            key={item.id}
-            style={{
-              display: "grid",
-              gap: 10,
-              alignSelf: "start",
-              alignContent: "start",
-              gridTemplateRows: "max-content max-content",
-            }}
-          >
+          <div key={item.id} style={{ display: "grid", gap: 10 }}>
             <ClassCard
               item={item}
               onStart={onStart}
@@ -2492,11 +2465,19 @@ function ClassesPage({
               onArchive={classView === "active" ? (classItem) => setClassToArchive(classItem) : undefined}
               onMakeUpClass={classView === "active" ? (classItem) => setClassToMakeUp(classItem) : undefined}
               onView={(classItem) => setClassToView(classItem)}
-              onRestore={classView === "archived" ? (classItem) => void restoreArchivedClass(classItem) : undefined}
-              restoring={classView === "archived" && restoringClassId === String(item.id)}
               onCancelReschedule={classView === "active" ? (classItem, row) => void cancelTemporarySchedule(classItem, row) : undefined}
             />
-
+            {classView === "archived" && (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void restoreArchivedClass(item)}
+                disabled={restoringClassId === String(item.id)}
+              >
+                <Icon name="arrow" size={16} />
+                {restoringClassId === String(item.id) ? "Restoring..." : "Restore class"}
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -3572,13 +3553,33 @@ function RecordsPage({
     setRecordDate(`${term === "Midterm" ? "2026-10" : "2026-11"}-${day}`)
   }
 
-  const filtered = useMemo(
-    () =>
-      recordStudents.filter((s) =>
-        s.name.toLowerCase().includes(query.toLowerCase()),
-      ),
-    [query, recordStudents],
-  )
+  const filtered = useMemo(() => {
+    const normalize = (value: unknown) =>
+      String(value ?? "").trim().toLowerCase()
+    const compact = (value: unknown) =>
+      normalize(value).replace(/[^a-z0-9]/g, "")
+
+    const searchText = normalize(query)
+    const compactSearchText = compact(query)
+    if (!searchText) return recordStudents
+
+    return recordStudents.filter((student) => {
+      const searchableValues = [
+        student.name,
+        student.id,
+        student.userId,
+      ]
+
+      return searchableValues.some((value) => {
+        const normalizedValue = normalize(value)
+        const compactValue = compact(value)
+        return (
+          normalizedValue.includes(searchText) ||
+          (compactSearchText.length > 0 && compactValue.includes(compactSearchText))
+        )
+      })
+    })
+  }, [query, recordStudents])
   const selectedRecordDate = new Date(`${recordDate}T12:00:00`)
   const calendarDays = Array.from(
     {
@@ -4233,7 +4234,7 @@ function RecordsPage({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search students..."
+              placeholder="Search student name or ID..."
             />
           </label>
           <div className="records-date-picker">
