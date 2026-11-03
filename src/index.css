@@ -5776,3 +5776,320 @@ body > .summary-speed-dial .summary-fab { position: relative; z-index: 20002 !im
   .omr-page .omr-result-actions { position: static; }
   .omr-page .omr-result-actions button { flex: 1 1 160px; }
 }
+
+
+/* =========================================================
+   CIT LOGIN EXPERIENCE: dashboard-aligned technology artwork
+   ========================================================= */
+.landing-page {
+  background: #04152f;
+}
+
+.landing-intro {
+  background: #04152f !important;
+}
+
+.landing-building-image {
+  position: absolute;
+  inset: 0;
+  z-index: -3;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  object-position: center center;
+  opacity: 1;
+  visibility: visible;
+  filter: saturate(.96) contrast(1.05);
+}
+
+.landing-intro::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background:
+    linear-gradient(90deg, rgba(3, 15, 48, .08) 0%, rgba(3, 15, 48, .12) 45%, rgba(3, 15, 48, .48) 75%, rgba(3, 15, 48, .74) 100%),
+    linear-gradient(180deg, rgba(4, 17, 51, .12) 0%, rgba(4, 17, 51, .06) 62%, rgba(3, 13, 43, .52) 100%);
+}
+
+.landing-background-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 42% 42%, transparent 32%, rgba(1, 10, 34, .20) 100%);
+}
+
+.landing-logo-placeholder {
+  width: 88px !important;
+  height: 88px !important;
+  min-width: 88px !important;
+  min-height: 88px !important;
+  flex: 0 0 88px;
+  display: grid !important;
+  place-items: center;
+  padding: 7px;
+  overflow: hidden;
+  border: 1px solid rgba(114, 180, 255, .45);
+  border-radius: 18px !important;
+  background: rgba(255, 255, 255, .96) !important;
+  box-shadow: 0 14px 34px rgba(0, 14, 52, .28) !important;
+}
+
+.landing-cit-logo {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+}
+
+.landing-auth-container {
+  width: min(420px, calc(100% - 48px));
+  min-height: calc(100dvh - 48px);
+  margin: 24px 24px 24px auto;
+  border: 1px solid rgba(255, 255, 255, .72);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, .95);
+  box-shadow: 0 30px 80px rgba(0, 12, 43, .34);
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
+}
+
+@media (max-width: 680px) {
+  .landing-building-image {
+    object-position: 62% center;
+  }
+
+  .landing-intro {
+    min-height: 44dvh;
+  }
+
+  .landing-auth-container {
+    width: 100%;
+    min-height: auto;
+    max-height: none;
+    margin: 0;
+    border-radius: 24px 24px 0 0;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .landing-logo-placeholder {
+    width: 58px !important;
+    height: 58px !important;
+    min-width: 58px !important;
+    min-height: 58px !important;
+    flex-basis: 58px;
+    padding: 5px;
+    border-radius: 14px !important;
+  }
+}
+
+
+/* FINAL LOGIN BACKGROUND FIX: hosted image and correct stacking */
+.landing-page { position: relative; isolation: isolate; background: #04152f; }
+.landing-intro { position: absolute; inset: 0; isolation: isolate; background: #04152f !important; }
+.landing-building-image {
+  position: absolute !important; inset: 0 !important; z-index: 0 !important;
+  display: block; width: 100% !important; height: 100% !important; max-width: none !important;
+  object-fit: cover !important; object-position: center center !important;
+  opacity: 1 !important; visibility: visible !important; filter: saturate(.96) contrast(1.05);
+}
+.landing-intro::before {
+  z-index: 1 !important; pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(3,15,48,.08) 0%, rgba(3,15,48,.10) 44%, rgba(3,15,48,.36) 73%, rgba(3,15,48,.64) 100%),
+    linear-gradient(180deg, rgba(4,17,51,.10) 0%, rgba(4,17,51,.04) 62%, rgba(3,13,43,.42) 100%) !important;
+}
+.landing-intro::after {
+  z-index: 1 !important; pointer-events: none;
+  background: radial-gradient(circle at 42% 42%, transparent 34%, rgba(1,10,34,.16) 100%) !important;
+}
+.landing-background-overlay { z-index: 1 !important; pointer-events: none; background: transparent !important; }
+.landing-brand, .landing-copy { position: relative; z-index: 2 !important; }
+.landing-auth-container { position: relative; z-index: 3 !important; }
+@media (max-width: 680px) { .landing-building-image { object-position: 62% center !important; } }
+
+/* FINAL LOGIN BRAND OVERLAP FIX */
+/* The hosted background already contains the CIT logo and college name. */
+.landing-brand {
+  display: none !important;
+}
+
+/* Keep the technology artwork visible and place page content above it. */
+.landing-page {
+  position: relative;
+  isolation: isolate;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: #04152f;
+}
+
+.landing-intro {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  min-height: 100dvh;
+  isolation: isolate;
+  background: #04152f !important;
+}
+
+.landing-building-image {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  object-fit: cover !important;
+  object-position: center center !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  filter: saturate(.96) contrast(1.05);
+}
+
+.landing-intro::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1 !important;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg,
+      rgba(3, 15, 48, .08) 0%,
+      rgba(3, 15, 48, .10) 44%,
+      rgba(3, 15, 48, .36) 73%,
+      rgba(3, 15, 48, .64) 100%),
+    linear-gradient(180deg,
+      rgba(4, 17, 51, .10) 0%,
+      rgba(4, 17, 51, .04) 62%,
+      rgba(3, 13, 43, .42) 100%) !important;
+}
+
+.landing-intro::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1 !important;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  pointer-events: none;
+  background: radial-gradient(circle at 42% 42%, transparent 34%, rgba(1, 10, 34, .16) 100%) !important;
+}
+
+.landing-background-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1 !important;
+  pointer-events: none;
+  background: transparent !important;
+}
+
+.landing-copy {
+  position: relative;
+  z-index: 2 !important;
+  max-width: 650px;
+  margin: auto 430px 6vh 0;
+  padding: 0;
+}
+
+.landing-auth-container {
+  position: relative;
+  z-index: 3 !important;
+}
+
+@media (max-width: 900px) {
+  .landing-copy {
+    margin-right: 390px;
+  }
+}
+
+@media (max-width: 680px) {
+  .landing-page {
+    min-height: 100dvh;
+    overflow-y: auto;
+  }
+
+  .landing-intro {
+    position: relative;
+    display: flex !important;
+    min-height: 42dvh;
+    padding: 22px 20px 34px;
+  }
+
+  .landing-building-image {
+    object-position: 62% center !important;
+  }
+
+  .landing-copy {
+    max-width: 100%;
+    margin: auto 0 0;
+  }
+
+  .landing-auth-container {
+    width: 100%;
+    min-height: auto;
+    max-height: none;
+    margin: 0;
+    border-radius: 24px 24px 0 0;
+  }
+}
+
+
+/* FINAL CIT BACKGROUND CLARITY FIX
+   Keep the original artwork vivid while preserving text readability. */
+.landing-building-image {
+  opacity: 1 !important;
+  filter: brightness(1.16) contrast(1.04) saturate(1.12) !important;
+}
+
+/* Remove the stacked dark overlays that were fading the CIT branding. */
+.landing-intro::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 1 !important;
+  pointer-events: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background:
+    linear-gradient(90deg,
+      rgba(3, 15, 48, .02) 0%,
+      rgba(3, 15, 48, .03) 48%,
+      rgba(3, 15, 48, .18) 72%,
+      rgba(3, 15, 48, .42) 100%),
+    linear-gradient(180deg,
+      rgba(3, 15, 48, .01) 0%,
+      rgba(3, 15, 48, .02) 66%,
+      rgba(3, 15, 48, .20) 100%) !important;
+}
+
+.landing-intro::after {
+  content: none !important;
+  display: none !important;
+  background: none !important;
+}
+
+.landing-background-overlay {
+  opacity: 0 !important;
+  background: transparent !important;
+}
+
+.landing-copy {
+  text-shadow: 0 3px 20px rgba(0, 9, 32, .62) !important;
+}
