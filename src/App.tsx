@@ -5358,6 +5358,7 @@ function ActivitiesPage({
       .from("classes")
       .select("id, subject, code")
       .eq("faculty_id", user.id)
+      .neq("status", "Archived")
       .order("subject", { ascending: true })
     if (error) {
       setReminderNotice(`Unable to load classes: ${error.message}`)
