@@ -1239,6 +1239,7 @@ function Dashboard({
   const [dashboardClassesLoading, setDashboardClassesLoading] = useState(true)
   const [dashboardClassesError, setDashboardClassesError] = useState("")
   const [dashboardReminders, setDashboardReminders] = useState<ActivityItem[]>([])
+  const [dashboardOpenQuizIds, setDashboardOpenQuizIds] = useState<Set<string>>(new Set())
   const [dashboardOpenConcerns, setDashboardOpenConcerns] = useState(0)
   const [dashboardFacultyName, setDashboardFacultyName] = useState("")
   const [dashboardNow, setDashboardNow] = useState(() => new Date())
@@ -1256,6 +1257,54 @@ function Dashboard({
     if (hour < 18) return "Good afternoon"
     return "Good evening"
   })()
+
+  // Count scheduled assessments plus quizzes manually reopened after their
+  // scheduled end time. Reopened state is persisted in omr_assessments.status.
+  const dashboardActiveAssessments = activities.filter((activity) => {
+    const endAt = new Date(`${activity.date}T${activity.endTime}`).getTime()
+    const scheduledActive = !Number.isNaN(endAt) && dashboardNow.getTime() < endAt
+    const manuallyReopened = Boolean(
+      activity.type === "Quiz" &&
+      activity.omrAssessmentId &&
+      dashboardOpenQuizIds.has(activity.omrAssessmentId),
+    )
+    return scheduledActive || manuallyReopened
+  })
+
+  useEffect(() => {
+    const assessmentIds = Array.from(new Set(
+      activities
+        .filter((activity) => activity.type === "Quiz" && activity.omrAssessmentId)
+        .map((activity) => activity.omrAssessmentId as string),
+    ))
+
+    if (assessmentIds.length === 0) {
+      setDashboardOpenQuizIds(new Set())
+      return
+    }
+
+    let cancelled = false
+    const loadOpenQuizStates = async () => {
+      const { data, error } = await supabase
+        .from("omr_assessments")
+        .select("id, status")
+        .in("id", assessmentIds)
+
+      if (cancelled || error) return
+      setDashboardOpenQuizIds(new Set(
+        (data ?? [])
+          .filter((assessment) => String(assessment.status ?? "").toLowerCase() === "open")
+          .map((assessment) => String(assessment.id)),
+      ))
+    }
+
+    void loadOpenQuizStates()
+    const interval = window.setInterval(() => void loadOpenQuizStates(), 15000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [activities])
 
   useEffect(() => {
     const timer = window.setInterval(() => setDashboardNow(new Date()), 30_000)
@@ -1661,13 +1710,19 @@ function Dashboard({
               <small>Total active classes</small>
             </span>
           </button>
-          <button onClick={() => setPage("records")}>
+          <button onClick={() => setPage("activities")}>
             <span className="summary-icon amber">
               <Icon name="clipboard" />
             </span>
             <span>
-              <strong>0 drafts</strong>
-              <small>No records waiting for review</small>
+              <strong>
+                {dashboardActiveAssessments.length} {dashboardActiveAssessments.length === 1 ? "active assessment" : "active assessments"}
+              </strong>
+              <small>
+                {dashboardActiveAssessments.length > 0
+                  ? "Scheduled or currently in progress"
+                  : "No active assessments"}
+              </small>
             </span>
           </button>
           <button onClick={() => setPage("activities")}>
