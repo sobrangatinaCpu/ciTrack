@@ -3538,7 +3538,23 @@ function RecordsPage({
       (column) => !fixedColumns.some((fixed) => fixed.id === column.id),
     )
     const scoreColumns = [...fixedColumns, ...dynamicColumns]
-    const headers = ["Student ID", "Student Name", "Status", ...scoreColumns.map((column) => column.label)]
+    if (enrolledStudentsLoading) {
+      showMessage("Please wait until the enrolled students finish loading before exporting.", "error", "Gradebook is still loading")
+      return
+    }
+    if (recordStudents.length === 0) {
+      showMessage("There are no enrolled students to export for this class.", "error", "Gradebook is empty")
+      return
+    }
+
+    const headers = [
+      "Student ID",
+      "Student Name",
+      "Status",
+      ...scoreColumns.map((column) => column.label),
+      "Final Grade",
+      "Result",
+    ]
     const rows = recordStudents.map((student) => {
       const values = recordValues[student.id] ?? {}
       return [
@@ -3546,6 +3562,8 @@ function RecordsPage({
         student.name,
         studentStatuses[student.id] ?? student.attendance,
         ...scoreColumns.map((column) => values[column.id] ?? ""),
+        finalGrade(student).toFixed(2),
+        finalGrade(student) >= 75 ? "Passed" : "Failed",
       ]
     })
     const csv = [headers, ...rows]
@@ -3844,75 +3862,86 @@ function RecordsPage({
     if (!column || assessmentDeleting) return
     setAssessmentDeleting(true)
 
-    const slotIndex = assessmentColumnIndex(column)
-    const assessmentIds = Array.from(new Set(
-      assessmentColumns
-        .filter((item) => sameAssessmentSlot(item, column))
-        .flatMap((item) => [item.assessmentId, /^[0-9a-f-]{36}$/i.test(String(item.id)) ? String(item.id) : undefined])
-        .filter((id): id is string => Boolean(id)),
-    ))
+    try {
+      const slotIndex = assessmentColumnIndex(column)
+      const columnId = String(column.id)
+      const assessmentId = column.assessmentId
+        ? String(column.assessmentId)
+        : /^[0-9a-f-]{36}$/i.test(columnId)
+          ? columnId
+          : null
 
-    // Remove OMR sources for the same class, term, type, and index first so the
-    // deleted gradebook column cannot be recreated on refresh.
-    if (column.type === "Quiz" || column.type === "Exam") {
-      const omrType = column.type === "Exam" ? "exam" : "quiz"
-      let omrQuery = supabase
-        .from("omr_assessments")
-        .select("id")
-        .eq("class_id", selectedSectionId)
-        .eq("assessment_type", omrType)
-        .eq("academic_term", column.term === "Final" ? "final" : "midterm")
-      if (Number.isFinite(slotIndex)) omrQuery = omrQuery.eq("assessment_index", slotIndex)
-      const { data: omrRows, error: omrReadError } = await omrQuery
-      if (omrReadError) {
-        setAssessmentDeleting(false)
-        showToast(`Unable to delete ${column.label}: ${omrReadError.message}`, "error")
-        return
+      // Delete only the selected assessment record. Never delete other columns
+      // merely because they have the same type, term, or displayed index.
+      if (assessmentId) {
+        const { error: assessmentDeleteError } = await supabase
+          .from("assessments")
+          .delete()
+          .eq("id", assessmentId)
+          .eq("class_id", selectedSectionId)
+
+        if (assessmentDeleteError) throw assessmentDeleteError
       }
-      const omrIds = (omrRows ?? []).map((row: any) => String(row.id))
-      if (omrIds.length) {
-        const { error: reminderError } = await supabase.from("faculty_reminders").delete().in("omr_assessment_id", omrIds)
-        if (reminderError) {
-          setAssessmentDeleting(false)
-          showToast(`Unable to delete linked activity: ${reminderError.message}`, "error")
-          return
+
+      // Quiz and exam columns can have one linked OMR source. Match every
+      // identifying field so deleting Quiz 3 cannot remove Quiz 1, 2, 4, etc.
+      if (
+        (column.type === "Quiz" || column.type === "Exam") &&
+        Number.isFinite(slotIndex)
+      ) {
+        const omrType = column.type === "Exam" ? "exam" : "quiz"
+        const { data: omrRows, error: omrReadError } = await supabase
+          .from("omr_assessments")
+          .select("id")
+          .eq("class_id", selectedSectionId)
+          .eq("assessment_type", omrType)
+          .eq("academic_term", column.term === "Final" ? "final" : "midterm")
+          .eq("assessment_index", slotIndex)
+
+        if (omrReadError) throw omrReadError
+
+        const omrIds = (omrRows ?? []).map((row: any) => String(row.id))
+        if (omrIds.length) {
+          const { error: reminderError } = await supabase
+            .from("faculty_reminders")
+            .delete()
+            .in("omr_assessment_id", omrIds)
+          if (reminderError) throw reminderError
+
+          const { error: omrDeleteError } = await supabase
+            .from("omr_assessments")
+            .delete()
+            .in("id", omrIds)
+          if (omrDeleteError) throw omrDeleteError
         }
-        const { error: omrDeleteError } = await supabase.from("omr_assessments").delete().in("id", omrIds)
-        if (omrDeleteError) {
-          setAssessmentDeleting(false)
-          showToast(`Unable to delete OMR assessment: ${omrDeleteError.message}`, "error")
-          return
-        }
       }
-    }
 
-    if (assessmentIds.length) {
-      const { error } = await supabase.from("assessments").delete().in("id", assessmentIds)
-      if (error) {
-        setAssessmentDeleting(false)
-        showToast(`Unable to delete ${column.label}: ${error.message}`, "error")
-        return
-      }
-    }
-
-    const duplicateIds = assessmentColumns
-      .filter((item) => sameAssessmentSlot(item, column))
-      .map((item) => String(item.id))
-    setAssessmentColumns((current) => current.filter((item) => !sameAssessmentSlot(item, column)))
-    setRecordValues((current) => {
-      const next: Record<string, Record<string, number | "">> = {}
-      Object.entries(current).forEach(([studentNumber, values]) => {
-        const studentValues = { ...values }
-        duplicateIds.forEach((id) => delete studentValues[id])
-        assessmentIds.forEach((id) => delete studentValues[id])
-        next[studentNumber] = studentValues
+      // Remove exactly one gradebook column and all student cells belonging
+      // to that column. Other quizzes, projects, recitations, attendance,
+      // activities, and exams remain untouched.
+      setAssessmentColumns((current) =>
+        current.filter((item) => String(item.id) !== columnId),
+      )
+      setRecordValues((current) => {
+        const next: Record<string, Record<string, number | "">> = {}
+        Object.entries(current).forEach(([studentNumber, values]) => {
+          const studentValues = { ...values }
+          delete studentValues[columnId]
+          if (assessmentId) delete studentValues[assessmentId]
+          next[studentNumber] = studentValues
+        })
+        localDraftValuesRef.current = next
+        return next
       })
-      localDraftValuesRef.current = next
-      return next
-    })
-    setAssessmentDeleting(false)
-    setAssessmentToDelete(null)
-    showToast(`${column.label} deleted permanently.`)
+
+      setAssessmentToDelete(null)
+      showToast(`${column.label} column deleted permanently.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown database error"
+      showToast(`Unable to delete ${column.label}: ${message}`, "error")
+    } finally {
+      setAssessmentDeleting(false)
+    }
   }
 
   const renderAssessmentHeader = (column: RecordAssessmentColumn) => (
@@ -5075,7 +5104,7 @@ function RecordsPage({
               <span className="class-confirm-icon" aria-hidden="true"><Icon name="minus" size={18} /></span>
               <div>
                 <h2 id="delete-assessment-title">Delete assessment?</h2>
-                <p id="delete-assessment-description"><strong>{assessmentToDelete.label}</strong> will be permanently removed with its encoded scores{assessmentToDelete.type === "Quiz" || assessmentToDelete.type === "Exam" ? ", linked OMR assessment, and related activity" : ""}. This action cannot be undone.</p>
+                <p id="delete-assessment-description">Only the <strong>{assessmentToDelete.label}</strong> column will be permanently removed, including every student score in that column{assessmentToDelete.type === "Quiz" || assessmentToDelete.type === "Exam" ? " and its matching OMR record" : ""}. Other gradebook columns will not be changed. This action cannot be undone.</p>
               </div>
             </div>
             <div className="class-confirm-actions">
