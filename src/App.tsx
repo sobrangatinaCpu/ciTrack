@@ -13,7 +13,7 @@ import "./assessment-actions.css"
 import "./assessment-column-delete.css"
 
 const citLogo = `${import.meta.env.BASE_URL}cit.png`
-const citBuilding = `${import.meta.env.BASE_URL}citbuild.jpg` 
+const citBuilding = "https://i.postimg.cc/526JYy0B/cit-login-background.png"
 
 type IconName = "home" | "calendar" | "book" | "chart" | "user" | "bell" | "search" | "play" | "arrow" | "clock" | "users" | "check" | "clipboard" | "scan" | "more" | "chevron" | "plus" | "minus" | "wifi" | "wifiOff" | "edit" | "logout" | "eye" | "eyeOff"
 const formatDatabaseTime = (value: string) => {
@@ -3124,7 +3124,15 @@ function RecordsPage({
         if (existing) {
           return current.map((column) =>
             column.id === existing.id
-              ? { ...column, label: detail.title, type: columnType, term: columnTerm }
+              ? {
+                  ...column,
+                  label: detail.title,
+                  type: columnType,
+                  term: columnTerm,
+                  maxScore: Number(detail.maxScore) > 0
+                    ? Number(detail.maxScore)
+                    : column.maxScore,
+                }
               : column,
           )
         }
@@ -3213,6 +3221,7 @@ function RecordsPage({
           label: detail.title,
           type: columnType,
           term: columnTerm,
+          maxScore: Number(detail.maxScore) > 0 ? Number(detail.maxScore) : 100,
         }
         const lastMatchingIndex = current.reduce(
           (lastIndex, column, index) =>
@@ -3604,6 +3613,24 @@ function RecordsPage({
   ) => {
     if (!selectedSectionId) return
 
+    // Manual quizzes can contain any number of items. Ask for the actual
+    // maximum score so both Midterm and Final quiz totals use the right
+    // denominator instead of assuming every quiz is out of 100. OMR-created
+    // quizzes continue to receive itemCount * pointsPerItem automatically.
+    let requestedMaximum: number | null = null
+    if (type === "Quiz") {
+      const response = window.prompt(
+        `Enter the maximum score for this ${term.toLowerCase()} quiz (for example 10, 20, or 50):`,
+        "20",
+      )
+      if (response === null) return
+      requestedMaximum = Number(response)
+      if (!Number.isFinite(requestedMaximum) || requestedMaximum <= 0) {
+        showToast("Enter a valid quiz maximum greater than zero.", "error")
+        return
+      }
+    }
+
     setAssessmentColumns((columns) => {
       // Count unique visible slots only. Realtime/database synchronization may
       // temporarily provide the same slot under a local ID and a database UUID.
@@ -3644,7 +3671,12 @@ function RecordsPage({
         label,
         type,
         term,
-        maxScore: type === "Attendance" || type === "Recitation" ? 10 : 100,
+        maxScore:
+          type === "Quiz"
+            ? requestedMaximum ?? 100
+            : type === "Attendance" || type === "Recitation"
+              ? 10
+              : 100,
       }
       const lastMatchingIndex = columns.reduce(
         (lastIndex, column, index) =>
@@ -4865,7 +4897,7 @@ function RecordsPage({
                   <td className="term-total-cell">
                     <output>
                       {assessmentPoints(student, midtermQuizColumns).toFixed(0)}{" "}
-                      / {midtermQuizColumns.length * 100}
+                      / {midtermQuizColumns.reduce((total, column) => total + maxScoreForColumn(column), 0)}
                     </output>
                   </td>
                   {finalQuizColumns.map((column) =>
@@ -4874,7 +4906,7 @@ function RecordsPage({
                   <td className="term-total-cell">
                     <output>
                       {assessmentPoints(student, finalQuizColumns).toFixed(0)} /{" "}
-                      {finalQuizColumns.length * 100}
+                      {finalQuizColumns.reduce((total, column) => total + maxScoreForColumn(column), 0)}
                     </output>
                   </td>
                   {midtermProjectColumns.map((column) =>
@@ -8542,29 +8574,17 @@ function LandingPage({
       <section className="landing-intro">
         <img
           src={citBuilding}
-          alt="College of Industrial Technology building"
+          alt=""
+          aria-hidden="true"
           className="landing-building-image"
+          referrerPolicy="no-referrer"
+          onError={(event) => {
+            event.currentTarget.style.display = "none"
+          }}
         />
         <div className="landing-background-overlay" aria-hidden="true" />
-        <div className="landing-brand">
-          <span
-            className="landing-logo-placeholder"
-            aria-hidden="true"
-            style={{ width: "100px", height: "100px", display: "flex" }}
-          >
-            <img
-              src={citLogo}
-              alt="CIT Logo"
-              className="landing-cit-logo"
-            />
-          </span>
-          <span className="landing-brand-name">
-            <small style={{ fontSize: "12px" }}>
-              College of Industrial Technology
-            </small>
-          </span>
-        </div>
-        <div className="landing-copy">
+          {/* The CIT branding is already embedded in the hosted background image. */}
+          <div className="landing-copy">
           <h1>Make every class hour count.</h1>
           <p>
             Plan your sessions, record attendance, and keep every student moving
