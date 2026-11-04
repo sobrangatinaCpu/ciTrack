@@ -8041,6 +8041,9 @@ function ActiveClass({
     "idle" | "starting" | "scanning" | "verifying" | "success" | "unsupported" | "error"
   >("idle")
   const [lastCard, setLastCard] = useState("")
+  // The scanner's own message. nfcSessionMessage is rewritten by the
+  // session sync every 10 seconds, which hid scan results and errors.
+  const [nfcScanMessage, setNfcScanMessage] = useState("")
   const [liveAttendance, setLiveAttendance] = useState<any[]>([])
   const [enrolledStudentCount, setEnrolledStudentCount] = useState(0)
   const [qrExpanded, setQrExpanded] = useState(false)
@@ -8105,7 +8108,16 @@ function ActiveClass({
     )
 
     if (error) {
-      throw new Error(error.message)
+      // For an error status, the reason (e.g. ACTIVE_CARD_REQUIRED) is in the
+      // response body; error.message only says "non-2xx status code".
+      let reason = error.message
+      try {
+        const payload = await (error as any).context?.json?.()
+        reason = payload?.error ?? payload?.message ?? reason
+      } catch {
+        // Keep error.message.
+      }
+      throw new Error(reason)
     }
 
     if (!data?.success) {
@@ -8114,6 +8126,24 @@ function ActiveClass({
 
     return data.data ?? {}
   }
+
+  const nfcErrorText = (code: string) =>
+    ({
+      ACTIVE_CARD_REQUIRED:
+        "This card isn't an active registered card. The student can re-register it in the student app.",
+      CARD_UID_MISMATCH:
+        "This card's token doesn't belong to this card. The student should re-register it.",
+      NOT_ENROLLED: "This student isn't enrolled in this class.",
+      SESSION_NOT_ACTIVE: "This class session has ended or isn't open for NFC.",
+      NFC_TEST_SESSION_REQUIRED:
+        "This class session isn't set up for NFC. End the class and start it again.",
+      LATE_REQUIRES_FACULTY_CONFIRMATION:
+        "The 30-minute check-in window has passed. Mark this student manually.",
+      REGISTERED_PHONE_REQUIRED:
+        "This student has no registered phone in the student app.",
+      NOT_CONFIRMED:
+        "The student's phone didn't confirm in time. Ask them to open NFC Attendance → Use Card, select this class, tap Enable Attendance Readiness, then scan again.",
+    } as Record<string, string>)[code] ?? code
 
   const openMobileNfcSession = async () => {
     if (!scheduledToday) {
@@ -8215,6 +8245,7 @@ function ActiveClass({
     setAttendanceSessionId(null)
     setNfcSessionState("idle")
     setNfcScannerStatus("idle")
+    setNfcScanMessage("")
     return true
   }
 
@@ -8258,7 +8289,7 @@ function ActiveClass({
   const startNfcScanner = async () => {
     if (!("NDEFReader" in window)) {
       setNfcScannerStatus("unsupported")
-      setNfcSessionMessage(
+      setNfcScanMessage(
         "NFC scanning is unavailable on this device. Open the faculty dashboard in Chrome on an NFC-enabled Android phone.",
       )
       return
@@ -8267,12 +8298,12 @@ function ActiveClass({
     try {
       if (nfcReaderRef.current) {
         setNfcScannerStatus("scanning")
-        setNfcSessionMessage("Scanner active. Hold a registered student NFC card near the phone.")
+        setNfcScanMessage("Scanner active. Hold a registered student NFC card near the phone.")
         return
       }
 
       setNfcScannerStatus("starting")
-      setNfcSessionMessage("Allow NFC access, then hold a registered student card near the phone.")
+      setNfcScanMessage("Allow NFC access, then hold a registered student card near the phone.")
 
       const Reader = (window as any).NDEFReader
       const reader = new Reader()
@@ -8280,12 +8311,12 @@ function ActiveClass({
       await reader.scan()
 
       setNfcScannerStatus("scanning")
-      setNfcSessionMessage("Scanner active. Hold a registered student NFC card near the phone.")
+      setNfcScanMessage("Scanner active. Hold a registered student NFC card near the phone.")
 
       reader.addEventListener("readingerror", () => {
         nfcReaderRef.current = null
         setNfcScannerStatus("error")
-        setNfcSessionMessage("The card was detected but could not be read. Try again.")
+        setNfcScanMessage("The card was detected but could not be read. Try again.")
       }, { once: true })
 
       reader.addEventListener("reading", async (event: any) => {
@@ -8296,27 +8327,22 @@ function ActiveClass({
 
         if (!cardUid) {
           setNfcScannerStatus("error")
-          setNfcSessionMessage("The NFC card identifier could not be read.")
+          setNfcScanMessage("The NFC card identifier could not be read.")
           return
         }
 
-        setLastCard(cardUid || "UID unavailable")
-        setNfcSessionMessage(
-          cardUid
-            ? `Card detected. UID: ${cardUid}`
-            : "An NFC card was detected, but the browser did not expose its UID.",
-        )
+        setLastCard(cardUid)
 
         if (!cardToken) {
           setNfcScannerStatus("error")
-          setNfcSessionMessage(
+          setNfcScanMessage(
             "The card was detected, but no CIT Portal registration token was found. Register the card in the student mobile app first.",
           )
           return
         }
 
         setNfcScannerStatus("verifying")
-        setNfcSessionMessage("Card detected. Verifying the student and recording attendance...")
+        setNfcScanMessage("Card detected. Verifying the student...")
 
         try {
           const activeSessionId = await waitForAttendanceSession()
@@ -8326,12 +8352,45 @@ function ActiveClass({
             )
           }
 
-          const data = await invokeFacultyNfc({
+          const scanned = await invokeFacultyNfc({
             action: "scan",
             sessionId: activeSessionId,
             cardUid,
             cardToken,
           })
+
+          // "attendance" right away means this student was already recorded.
+          // Otherwise the scan returns a challenge that the student's phone
+          // confirms (Use Card → Enable Attendance Readiness).
+          const alreadyRecorded = Boolean(scanned?.attendance)
+          let data: any = scanned
+
+          if (!alreadyRecorded) {
+            const challengeId = String(scanned?.challenge_id ?? "")
+            if (!challengeId) {
+              throw new Error("The scan didn't return a challenge. Scan the card again.")
+            }
+
+            setNfcScanMessage(
+              "Card read. Waiting for the student's phone. They need NFC Attendance → Use Card open, this class selected and readiness on.",
+            )
+
+            data = null
+            const deadline = Date.now() + 65_000
+            while (Date.now() < deadline) {
+              await new Promise((resolve) => window.setTimeout(resolve, 2000))
+              const status = await invokeFacultyNfc({
+                action: "scan_status",
+                challengeId,
+              })
+              if (status?.attendance) {
+                data = status
+                break
+              }
+            }
+
+            if (!data) throw new Error("NOT_CONFIRMED")
+          }
 
           if (scannerMode === "performance") {
             const attendance = data?.attendance ?? null
@@ -8345,22 +8404,22 @@ function ActiveClass({
           }
           nfcReaderRef.current = null
           setNfcScannerStatus("success")
-          setNfcSessionMessage(
-            data?.already_recorded
+          setNfcScanMessage(
+            alreadyRecorded
               ? "This student was already recorded for the active class session."
               : "Attendance recorded successfully.",
           )
 
           window.setTimeout(() => {
             setNfcScannerStatus("idle")
-            setNfcSessionMessage("Ready to scan another registered student card.")
+            setNfcScanMessage("Ready to scan another registered student card.")
           }, 2500)
         } catch (error) {
           nfcReaderRef.current = null
           setNfcScannerStatus("error")
-          setNfcSessionMessage(
+          setNfcScanMessage(
             error instanceof Error
-              ? error.message
+              ? nfcErrorText(error.message)
               : "The scanned card could not be verified.",
           )
         }
@@ -8369,7 +8428,7 @@ function ActiveClass({
       nfcReaderRef.current = null
       const errorName = error instanceof DOMException ? error.name : ""
       setNfcScannerStatus(errorName === "NotSupportedError" ? "unsupported" : "error")
-      setNfcSessionMessage(
+      setNfcScanMessage(
         errorName === "NotAllowedError"
           ? "NFC permission was denied. Allow NFC access in Chrome and try again."
           : errorName === "NotSupportedError"
@@ -8745,7 +8804,7 @@ function ActiveClass({
                                 ? "Card could not be verified"
                                 : "Scan a registered student card"}
                   </strong>
-                  <small>{nfcSessionMessage}</small>
+                  <small>{nfcScanMessage || nfcSessionMessage}</small>
                   {lastCard && <small>Last card: {lastCard}</small>}
                 </div>
                 <button
@@ -9890,4 +9949,3 @@ export default function App() {
     </div>
   )
 }
-
