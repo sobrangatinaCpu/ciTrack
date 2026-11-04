@@ -6306,6 +6306,7 @@ function ActivitiesPage({
   }
 
   const assessmentClassLocked = editing !== -1 && Boolean(draft.omrAssessmentId)
+  const indexedAssessment = activityTypes.includes(draft.type)
   const omrEligible = (draft.type === "Quiz" || draft.type === "Exam") && draft.participation === "Individual"
 
   const saveReminder = async () => {
@@ -6382,7 +6383,9 @@ function ActivitiesPage({
 
     let omrAssessmentId = draft.omrAssessmentId
     const isOmrAssessment = omrEligible
-    const canonicalAssessmentTitle = isOmrAssessment
+    // Every assessment type uses a stable type + index title so Activities,
+    // Records, OMR, and Performance Mode resolve the same gradebook slot.
+    const canonicalAssessmentTitle = indexedAssessment
       ? `${draft.type} ${draft.assessmentIndex}`
       : draft.title.trim()
 
@@ -7366,8 +7369,8 @@ const reminderFormValid = Boolean(
             <h2 id="reminder-title">
               {editing === -1 ? "Add assessment" : "Edit assessment"}
             </h2>
-            <p>Create or edit an assessment. Quiz and Exam settings are shared with the OMR scanner.</p>
-            {(draft.type === "Quiz" || draft.type === "Exam") ? (
+            <p>Create or edit an indexed assessment. Every index maps to the matching Gradebook column; Quiz and Exam settings are also shared with the OMR scanner.</p>
+            {indexedAssessment ? (
               <div className="reminder-fields assessment-identity-fields">
                 <label>
                   <span className="reminder-field-label">{draft.type} index <em>Required</em></span>
@@ -7412,7 +7415,7 @@ const reminderFormValid = Boolean(
                 value={draft.type}
                 onChange={(event) => {
                   const nextType = event.target.value
-                  const indexed = nextType === "Quiz" || nextType === "Exam"
+                  const indexed = activityTypes.includes(nextType)
                   const handsOnIndividual = nextType === "Hands-on activity"
                   setDraft({
                     ...draft,
