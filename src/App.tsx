@@ -3881,17 +3881,17 @@ function RecordsPage({
   const finalProjectColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Hands On" && column.term === "Final",
   ).slice(0, 12)
-  // Recitation totals include both Daily Tracker sessions and recitations
-  // stored in the database, such as scores created by the NFC scanner.
-  // Do not use deduplicatedAssessmentColumns here because its slot-based
-  // deduplication merges a Daily Tracker recitation and a database recitation
-  // when both have the same displayed number. Deduplicate by exact ID only.
+  // Recitation totals include the Daily Tracker's sessions (browser) and
+  // recitations saved in the database, e.g. by the student app's NFC scanner.
+  // Use assessmentColumns instead of deduplicatedAssessmentColumns because
+  // Daily Tracker and database recitations can legitimately share a number.
+  // Deduplicate by exact id only, so both sources remain counted.
   const recitationColumnsFor = (term: "Midterm" | "Final") =>
     assessmentColumns.filter((column, index, all) =>
       column.type === "Recitation" &&
       column.term === term &&
       (String(column.id).startsWith("daily-") || Boolean(column.assessmentId)) &&
-      all.findIndex((candidate) => String(candidate.id) === String(column.id)) === index,
+      all.findIndex((candidate) => candidate.id === column.id) === index,
     )
 
   const midtermRecitationColumns = recitationColumnsFor("Midterm")
