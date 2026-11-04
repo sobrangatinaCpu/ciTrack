@@ -8101,49 +8101,55 @@ function ActiveClass({
     return attendanceSessionIdRef.current
   }
 
-  const invokeFacultyNfc = async (body: Record<string, unknown>) => {
-    const { data, error } = await supabase.functions.invoke(
-      "faculty-nfc-attendance",
-      { body },
-    )
-
+  // Use the same backend and request contract as the CompTech professor scanner.
+  const invokeNfcAttendance = async (
+    action: "scan" | "scan_status",
+    body: Record<string, unknown>,
+  ) => {
+    const { data, error } = await supabase.functions.invoke("nfc-attendance", {
+      body: { ...body, action },
+    })
     if (error) {
-      // For an error status, the reason (e.g. ACTIVE_CARD_REQUIRED) is in the
-      // response body; error.message only says "non-2xx status code".
-      let reason = error.message
+      const context = (error as any).context
+      let code = context?.status === 401 ? "SIGN_IN_REQUIRED" : "FUNCTION_REQUEST_FAILED"
       try {
-        const payload = await (error as any).context?.json?.()
-        reason = payload?.error ?? payload?.message ?? reason
-      } catch {
-        // Keep error.message.
-      }
-      throw new Error(reason)
+        const payload = await context?.json?.()
+        if (typeof payload?.error === "string" && /^[A-Z0-9_]{1,80}$/.test(payload.error)) code = payload.error
+      } catch { /* Keep the code above. */ }
+      throw new Error(code)
     }
-
-    if (!data?.success) {
-      throw new Error(data?.error ?? "The NFC attendance request failed.")
-    }
-
-    return data.data ?? {}
+    if (!data || typeof data !== "object") throw new Error("INVALID_RESPONSE")
+    return data as Record<string, any>
   }
 
-  const nfcErrorText = (code: string) =>
+  const nfcExplain = (code: string) =>
     ({
-      ACTIVE_CARD_REQUIRED:
-        "This card isn't an active registered card. The student can re-register it in the student app.",
-      CARD_UID_MISMATCH:
-        "This card's token doesn't belong to this card. The student should re-register it.",
-      NOT_ENROLLED: "This student isn't enrolled in this class.",
-      SESSION_NOT_ACTIVE: "This class session has ended or isn't open for NFC.",
-      NFC_TEST_SESSION_REQUIRED:
-        "This class session isn't set up for NFC. End the class and start it again.",
-      LATE_REQUIRES_FACULTY_CONFIRMATION:
-        "The 30-minute check-in window has passed. Mark this student manually.",
-      REGISTERED_PHONE_REQUIRED:
-        "This student has no registered phone in the student app.",
-      NOT_CONFIRMED:
-        "The student's phone didn't confirm in time. Ask them to open NFC Attendance → Use Card, select this class, tap Enable Attendance Readiness, then scan again.",
-    } as Record<string, string>)[code] ?? code
+      SIGN_IN_REQUIRED: "Sign in again to verify your session.",
+      FACULTY_REQUIRED: "Use an existing faculty/professor account for this scanner.",
+      PROFILE_REQUIRED: "This account has no completed application profile.",
+      STUDENT_REQUIRED: "A completed student account is required.",
+      CLASS_NOT_OWNED: "This session must belong to the signed-in faculty account.",
+      REGISTERED_PHONE_REQUIRED: "Use the phone registered to this student account.",
+      ACTIVE_CARD_REQUIRED: "Assign an active attendance card first.",
+      NOT_ENROLLED: "The student is not enrolled in this class.",
+      STUDENT_NOT_READY: "The student must open NFC Attendance → Use Card, select this class, and enable attendance readiness.",
+      SESSION_NOT_ACTIVE: "This class session has ended or isn't open for NFC. Start the class again.",
+      NFC_TEST_SESSION_REQUIRED: "This class session isn't open for NFC. End the class and start it again.",
+      READY_EXPIRED: "The student's attendance readiness ended. They need to enable it again.",
+      READY_NOT_FOUND: "The student's attendance readiness ended. They need to enable it again.",
+      CHALLENGE_EXPIRED: "The scan expired. The student should enable readiness, then scan the card again.",
+      ATTENDANCE_ALREADY_RECORDED: "Attendance is already recorded for this student and session.",
+      CHALLENGE_ALREADY_USED: "This scan was already processed. Check the roster before retrying.",
+      LATE_REQUIRES_FACULTY_CONFIRMATION: "The check-in period has ended. Mark this student manually.",
+      CARD_UID_MISMATCH: "The token was read, but the card UID does not match the registered card.",
+      SIGNATURE_INVALID: "The registered phone signature could not be verified.",
+      ATTENDANCE_CANCELLED: "The student stopped readiness or the session ended.",
+      RATE_LIMITED: "Too many attempts. Wait one minute.",
+      FUNCTION_REQUEST_FAILED: "Could not reach the attendance server. Check your internet connection and try again.",
+      INVALID_RESPONSE: "The attendance server returned an invalid response.",
+      NOT_CONFIRMED: "The student's phone didn't confirm in time. Ask them to open NFC Attendance → Use Card, select this class, tap Enable Attendance Readiness, then scan again.",
+    } as Record<string, string>)[code] ??
+    (/^[A-Z0-9_]+$/.test(code) ? `Attendance could not be confirmed (${code}).` : code)
 
   const openMobileNfcSession = async () => {
     if (!scheduledToday) {
@@ -8249,41 +8255,22 @@ function ActiveClass({
     return true
   }
 
-  const decodeNdefRecord = (record: any) => {
-    if (!record?.data) return ""
-    const bytes = new Uint8Array(
-      record.data.buffer,
-      record.data.byteOffset,
-      record.data.byteLength,
-    )
-    // Web NFC already separates NDEF text language/status metadata.
-    // Its record.data contains text bytes, so do not strip the first characters.
-    const encoding = record.recordType === "text"
-      ? String(record.encoding || "utf-8")
-      : "utf-8"
-    return new TextDecoder(encoding)
-      .decode(bytes)
-      .replace(/\0/g, "")
-      .trim()
-  }
-
-  const extractCardToken = (message: any) => {
-    for (const record of Array.from(message?.records ?? []) as any[]) {
-      const value = decodeNdefRecord(record)
-      if (!value) continue
-
-      try {
-        const parsed = JSON.parse(value)
-        const token = parsed.card_token ?? parsed.cardToken ?? parsed.nfc_token ?? parsed.token
-        if (typeof token === "string" && token.trim()) return token.trim()
-      } catch {
-        // A plain-text NDEF record is also accepted as the registration token.
-      }
-
-      if (value.length >= 8) return value
+  // Accept only the attendance-card format written by the student app.
+  const readAttendanceCard = (message: any) => {
+    const records = Array.from(message?.records ?? []) as any[]
+    if (records.length !== 1) throw new Error("Use the assigned attendance card.")
+    const record = records[0]
+    const encoding = String(record?.encoding || "utf-8").toLowerCase()
+    if (record?.recordType !== "text" || !record?.data || encoding !== "utf-8") {
+      throw new Error("Unsupported card record.")
     }
-
-    return ""
+    const payload = new TextDecoder("utf-8").decode(
+      new Uint8Array(record.data.buffer, record.data.byteOffset, record.data.byteLength),
+    )
+    if (!/^COMPTECH:NFC:CARD:V1:[0-9a-f]{64}$/.test(payload)) {
+      throw new Error("This card has no attendance token. Assign it in the student app first.")
+    }
+    return payload
   }
 
   const startNfcScanner = async () => {
@@ -8323,9 +8310,7 @@ function ActiveClass({
         const cardUid = String(event.serialNumber ?? "")
           .replace(/[^0-9a-f]/gi, "")
           .toLowerCase()
-        const cardToken = extractCardToken(event.message)
-
-        if (!cardUid) {
+        if (!/^[0-9a-f]{8,32}$/.test(cardUid) || cardUid.length % 2 !== 0) {
           setNfcScannerStatus("error")
           setNfcScanMessage("The NFC card identifier could not be read.")
           return
@@ -8333,11 +8318,13 @@ function ActiveClass({
 
         setLastCard(cardUid)
 
-        if (!cardToken) {
+        let ndefPayload = ""
+        try {
+          ndefPayload = readAttendanceCard(event.message)
+        } catch (error) {
+          nfcReaderRef.current = null
           setNfcScannerStatus("error")
-          setNfcScanMessage(
-            "The card was detected, but no CIT Portal registration token was found. Register the card in the student mobile app first.",
-          )
+          setNfcScanMessage(error instanceof Error ? error.message : "Unsupported card record.")
           return
         }
 
@@ -8352,11 +8339,10 @@ function ActiveClass({
             )
           }
 
-          const scanned = await invokeFacultyNfc({
-            action: "scan",
-            sessionId: activeSessionId,
-            cardUid,
-            cardToken,
+          const scanned = await invokeNfcAttendance("scan", {
+            card_uid: cardUid,
+            ndef_payload: ndefPayload,
+            session_id: activeSessionId,
           })
 
           // "attendance" right away means this student was already recorded.
@@ -8379,9 +8365,8 @@ function ActiveClass({
             const deadline = Date.now() + 65_000
             while (Date.now() < deadline) {
               await new Promise((resolve) => window.setTimeout(resolve, 2000))
-              const status = await invokeFacultyNfc({
-                action: "scan_status",
-                challengeId,
+              const status = await invokeNfcAttendance("scan_status", {
+                challenge_id: challengeId,
               })
               if (status?.attendance) {
                 data = status
@@ -8419,7 +8404,7 @@ function ActiveClass({
           setNfcScannerStatus("error")
           setNfcScanMessage(
             error instanceof Error
-              ? nfcErrorText(error.message)
+              ? nfcExplain(error.message)
               : "The scanned card could not be verified.",
           )
         }
