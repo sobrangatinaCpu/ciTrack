@@ -6759,41 +6759,33 @@ body > .summary-speed-dial .summary-fab { position: relative; z-index: 20002 !im
 }
 
 
-/* Laboratory performance rubric: long weighted criteria and mobile layout */
-.performance-rubric {
-  padding: 16px;
-  border: 1px solid #d7e5ef;
-  border-radius: 14px;
-  background: #f8fbfd;
+/* Scrollable class selector and permanent class-code fields */
+.section-switcher-menu {
+  max-height: min(420px, calc(100dvh - 180px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
-.performance-rubric label {
-  padding: 10px 0;
-  border-bottom: 1px solid #e7eef4;
+.section-switcher-menu-heading {
+  position: sticky;
+  z-index: 2;
+  top: -8px;
+  background: #fff;
 }
-.performance-rubric label:last-of-type { border-bottom: 0; }
-.performance-rubric output {
-  min-width: 58px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: #e8f3ff;
-  text-align: center;
-  white-space: nowrap;
+.class-fixed-code,
+.class-access-code-field input[readonly] {
+  cursor: not-allowed;
+  color: #536e86;
+  background: #f2f6f9 !important;
 }
-.performance-total {
-  display: block;
-  line-height: 1.45;
-}
-@media (max-width: 680px) {
-  .performance-record { padding: 16px; }
-  .performance-rubric { padding: 13px; gap: 8px; }
-  .performance-rubric label {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
-    font-size: 12px;
-    line-height: 1.35;
+@media (max-width: 600px) {
+  .section-switcher-menu {
+    max-height: min(360px, calc(100dvh - 220px));
+    overflow-y: auto !important;
   }
-  .performance-rubric output { min-width: 54px; }
-  .performance-sync-controls { display: grid; grid-template-columns: 1fr; }
-  .performance-sync-controls label { min-width: 0; width: 100%; }
-  .performance-sync-controls select { width: 100%; }
+  .modal-backdrop .class-form-modal > .class-form {
+    touch-action: pan-y;
+  }
 }
