@@ -2574,6 +2574,7 @@ function RecordsPage({
   const [gradebookSaveState, setGradebookSaveState] = useState<"saving" | "saved">("saved")
   const localDraftValuesRef = useRef<Record<string, Record<string, number | "">>>({})
   const scoreSaveTimersRef = useRef<Record<string, number>>({})
+  const examMaximumSaveTimersRef = useRef<Partial<Record<keyof typeof examMaximums, number>>>({})
   const assessmentIdByColumnRef = useRef<Record<string, string>>({})
   const [publishingRecords, setPublishingRecords] = useState(false)
   useEffect(() => {
@@ -2701,21 +2702,86 @@ function RecordsPage({
 
   useEffect(() => {
     if (!selectedSectionId) {
-      setExamMaximums(defaultExamMaximums)
+      setExamMaximums({
+        "midterm-written": 100,
+        "midterm-actual": 100,
+        "final-written": 100,
+        "final-actual": 100,
+      })
       return
     }
 
+    let active = true
     const storageKey = `cit-portal:exam-maximums:${selectedSectionId}`
+    const clampItems = (value: unknown, fallback = 100) =>
+      Math.min(1000, Math.max(1, Math.round(Number(value) || fallback)))
+
+    // Show the last local copy immediately while Supabase loads. Supabase remains
+    // authoritative so another device can replace this value a moment later.
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || "{}") as Partial<typeof defaultExamMaximums>
       setExamMaximums({
-        "midterm-written": Math.min(1000, Math.max(1, Math.round(Number(saved["midterm-written"]) || 100))),
-        "midterm-actual": Math.min(1000, Math.max(1, Math.round(Number(saved["midterm-actual"]) || 100))),
-        "final-written": Math.min(1000, Math.max(1, Math.round(Number(saved["final-written"]) || 100))),
-        "final-actual": Math.min(1000, Math.max(1, Math.round(Number(saved["final-actual"]) || 100))),
+        "midterm-written": clampItems(saved["midterm-written"]),
+        "midterm-actual": clampItems(saved["midterm-actual"]),
+        "final-written": clampItems(saved["final-written"]),
+        "final-actual": clampItems(saved["final-actual"]),
       })
     } catch {
-      setExamMaximums(defaultExamMaximums)
+      // The database load below will provide the shared values.
+    }
+
+    const applyRows = (rows: any[]) => {
+      if (!active) return
+      const next = {
+        "midterm-written": 100,
+        "midterm-actual": 100,
+        "final-written": 100,
+        "final-actual": 100,
+      }
+      rows.forEach((row) => {
+        const key = String(row.exam_key) as keyof typeof next
+        if (key in next) next[key] = clampItems(row.item_count)
+      })
+      setExamMaximums(next)
+      localStorage.setItem(storageKey, JSON.stringify(next))
+    }
+
+    const loadSharedExamMaximums = async () => {
+      const { data, error } = await supabase
+        .from("gradebook_exam_settings")
+        .select("exam_key, item_count")
+        .eq("class_id", selectedSectionId)
+      if (!active) return
+      if (error) {
+        console.error("Unable to load shared exam item counts:", error)
+        return
+      }
+      applyRows(data ?? [])
+    }
+
+    void loadSharedExamMaximums()
+
+    const channel = supabase
+      .channel(`gradebook-exam-settings-${selectedSectionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "gradebook_exam_settings",
+          filter: `class_id=eq.${selectedSectionId}`,
+        },
+        () => void loadSharedExamMaximums(),
+      )
+      .subscribe()
+
+    return () => {
+      active = false
+      Object.values(examMaximumSaveTimersRef.current).forEach((timer) => {
+        if (timer) window.clearTimeout(timer)
+      })
+      examMaximumSaveTimersRef.current = {}
+      void supabase.removeChannel(channel)
     }
   }, [selectedSectionId])
 
@@ -2951,9 +3017,9 @@ function RecordsPage({
           const resolvedPointsPerItem = Number(existingColumn?.pointsPerItem) > 0
             ? Number(existingColumn?.pointsPerItem)
             : Number(row.points_per_item) > 0 ? Number(row.points_per_item) : 1
-          const resolvedItemCount = savedItemOverride
-            ?? (Number(existingColumn?.itemCount) > 0 ? Number(existingColumn?.itemCount) : null)
-            ?? (Number(row.item_count) > 0 ? Number(row.item_count) : 100)
+          const resolvedItemCount = (Number(row.item_count) > 0 ? Number(row.item_count) : null)
+            ?? savedItemOverride
+            ?? (Number(existingColumn?.itemCount) > 0 ? Number(existingColumn?.itemCount) : 100)
           const mergedColumn: RecordAssessmentColumn = {
             ...(existingColumn ?? {} as RecordAssessmentColumn),
             id: columnId,
@@ -3881,21 +3947,18 @@ function RecordsPage({
   const finalProjectColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Hands On" && column.term === "Final",
   ).slice(0, 12)
-  // Recitation totals include the Daily Tracker's sessions (browser) and
-  // recitations saved in the database, e.g. by the student app's NFC scanner.
-  // Use assessmentColumns instead of deduplicatedAssessmentColumns because
-  // Daily Tracker and database recitations can legitimately share a number.
-  // Deduplicate by exact id only, so both sources remain counted.
-  const recitationColumnsFor = (term: "Midterm" | "Final") =>
-    assessmentColumns.filter((column, index, all) =>
+  const midtermRecitationColumns = deduplicatedAssessmentColumns.filter(
+    (column) =>
       column.type === "Recitation" &&
-      column.term === term &&
-      (String(column.id).startsWith("daily-") || Boolean(column.assessmentId)) &&
-      all.findIndex((candidate) => candidate.id === column.id) === index,
-    )
-
-  const midtermRecitationColumns = recitationColumnsFor("Midterm")
-  const finalRecitationColumns = recitationColumnsFor("Final")
+      column.term === "Midterm" &&
+      String(column.id).startsWith("daily-"),
+  )
+  const finalRecitationColumns = deduplicatedAssessmentColumns.filter(
+    (column) =>
+      column.type === "Recitation" &&
+      column.term === "Final" &&
+      String(column.id).startsWith("daily-"),
+  )
   const midtermAttendanceColumns = deduplicatedAssessmentColumns.filter(
     (column) =>
       column.type === "Attendance" &&
@@ -4140,15 +4203,40 @@ function RecordsPage({
     setExamMaximums((current) => {
       const next = { ...current, [field]: maximum }
       if (selectedSectionId) {
-        localStorage.setItem(
-          `cit-portal:exam-maximums:${selectedSectionId}`,
-          JSON.stringify(next),
-        )
+        localStorage.setItem(`cit-portal:exam-maximums:${selectedSectionId}`, JSON.stringify(next))
       }
       return next
     })
-    setDraftSavedAt(new Date().toISOString())
-    setGradebookSaveState("saved")
+
+    if (!selectedSectionId) return
+    const existingTimer = examMaximumSaveTimersRef.current[field]
+    if (existingTimer) window.clearTimeout(existingTimer)
+    setGradebookSaveState("saving")
+
+    examMaximumSaveTimersRef.current[field] = window.setTimeout(async () => {
+      const { error } = await supabase
+        .from("gradebook_exam_settings")
+        .upsert(
+          {
+            class_id: selectedSectionId,
+            exam_key: field,
+            item_count: maximum,
+            points_per_item: 1,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "class_id,exam_key" },
+        )
+
+      if (error) {
+        console.error("Unable to sync exam item count:", error)
+        showToast(`Could not sync ${field.replaceAll("-", " ")} items to other devices.`, "error")
+        setGradebookSaveState("saved")
+        return
+      }
+
+      setDraftSavedAt(new Date().toISOString())
+      setGradebookSaveState("saved")
+    }, 450)
   }
 
   const examEarnedTotal = (
