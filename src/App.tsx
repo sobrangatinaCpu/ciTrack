@@ -1867,8 +1867,10 @@ function AddClassModal({
     initialClass?.schedules?.length ? initialClass.schedules : [legacySchedule],
   )
   const [saving, setSaving] = useState(false)
+  // Generate a code once for a new class. Existing classes always keep the
+  // access code that was stored when the class was first created.
   const [studentAccessCode, setStudentAccessCode] = useState(
-    () => initialClass?.accessCode || generateStudentAccessCode(),
+    () => initialClass ? String(initialClass.accessCode ?? "") : generateStudentAccessCode(),
   )
   const updateForm = (field: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [field]: value }))
@@ -1931,6 +1933,14 @@ function AddClassModal({
       return
     }
     setSaving(true)
+    const fixedAccessCode = initialClass
+      ? String(initialClass.accessCode ?? studentAccessCode).trim()
+      : studentAccessCode.trim()
+    if (!fixedAccessCode) {
+      setSaving(false)
+      showMessage("This existing class has no access code stored. Restore the class access code in Supabase before saving changes.")
+      return
+    }
     const classValues = {
       faculty_id: user.id,
       subject: form.subject.trim(),
@@ -1940,7 +1950,7 @@ function AddClassModal({
       semester_start: form.semesterStart,
       semester_end: form.semesterEnd,
       requirements: form.requirements.trim() || null,
-      access_code: studentAccessCode,
+      access_code: fixedAccessCode,
       color: initialClass?.color ?? "#7a62d3",
       status: initialClass?.status ?? "Scheduled",
     }
@@ -2020,13 +2030,13 @@ function AddClassModal({
       semesterStart: savedClass.semester_start ?? form.semesterStart,
       semesterEnd: savedClass.semester_end ?? form.semesterEnd,
       meetingDays: firstSchedule.meetingDays,
-      accessCode: savedClass.access_code ?? studentAccessCode,
+      accessCode: savedClass.access_code ?? fixedAccessCode,
       schedules: savedSchedules,
       reschedules: initialClass?.reschedules ?? [],
     })
     setSaving(false)
     if (!initialClass) {
-      showToast(`Class created successfully. Access code: ${savedClass.access_code ?? studentAccessCode}`)
+      showToast(`Class created successfully. Access code: ${savedClass.access_code ?? fixedAccessCode}`)
     }
   }
 
@@ -2111,17 +2121,29 @@ function AddClassModal({
           <button type="button" className="secondary-button" style={{ fontFamily: "inherit" }} onClick={addSchedule}><Icon name="plus" size={16} /> Add another schedule</button>
           <label>Student access code
             <div className="class-access-code-field">
-              <input type="text" value={studentAccessCode} readOnly aria-label="Generated student access code" />
-              <button
-                type="button"
-                className="secondary-button class-code-generate"
-                onClick={() => setStudentAccessCode(generateStudentAccessCode())}
-                disabled={saving}
-              >
-                Generate code
-              </button>
+              <input
+                type="text"
+                value={studentAccessCode}
+                readOnly
+                aria-readonly="true"
+                aria-label={isEditing ? "Fixed student access code" : "Generated student access code"}
+              />
+              {!isEditing && (
+                <button
+                  type="button"
+                  className="secondary-button class-code-generate"
+                  onClick={() => setStudentAccessCode(generateStudentAccessCode())}
+                  disabled={saving}
+                >
+                  Generate code
+                </button>
+              )}
             </div>
-            <small>A code is generated automatically. Generate a new one before saving if needed. Students use this code to join the class.</small>
+            <small>
+              {isEditing
+                ? "This class code was fixed when the class was created and cannot be regenerated while editing."
+                : "A code is generated automatically. Generate a different code before creating the class if needed. After creation, the code becomes fixed."}
+            </small>
           </label>
           <label>Required materials or prerequisites
             <textarea value={form.requirements} onChange={(event) => updateForm("requirements", event.target.value)} placeholder="e.g. Laptop, network cable, and completed safety orientation" />
@@ -2574,7 +2596,6 @@ function RecordsPage({
   const [gradebookSaveState, setGradebookSaveState] = useState<"saving" | "saved">("saved")
   const localDraftValuesRef = useRef<Record<string, Record<string, number | "">>>({})
   const scoreSaveTimersRef = useRef<Record<string, number>>({})
-  const draftCellSaveTimersRef = useRef<Record<string, number>>({})
   const assessmentIdByColumnRef = useRef<Record<string, string>>({})
   const [publishingRecords, setPublishingRecords] = useState(false)
   useEffect(() => {
@@ -2847,7 +2868,7 @@ function RecordsPage({
         (column) => column.type !== "Quiz" && column.type !== "Exam",
       ),
     )
-    // Keep current cells visible until the shared database draft finishes loading.
+    setRecordValues({})
     localDraftValuesRef.current = {}
     assessmentIdByColumnRef.current = {}
 
@@ -2865,26 +2886,6 @@ function RecordsPage({
 
     const loadDatabaseGradebook = async () => {
       if (!selectedSectionId) return
-
-      const { data: sharedDraftRows, error: sharedDraftError } = await supabase
-        .from("gradebook_draft_cells")
-        .select("student_number, column_key, score")
-        .eq("class_id", selectedSectionId)
-      if (!active) return
-      if (sharedDraftError) {
-        console.error("Unable to load shared Gradebook draft cells:", sharedDraftError)
-      } else {
-        const sharedValues: Record<string, Record<string, number | "">> = {}
-        ;(sharedDraftRows ?? []).forEach((row: any) => {
-          const studentNumber = String(row.student_number ?? "").trim()
-          const columnKey = String(row.column_key ?? "").trim()
-          const score = Number(row.score)
-          if (!studentNumber || !columnKey || !Number.isFinite(score)) return
-          sharedValues[studentNumber] = { ...(sharedValues[studentNumber] ?? {}), [columnKey]: score }
-        })
-        localDraftValuesRef.current = sharedValues
-        setRecordValues(sharedValues)
-      }
 
       const [{ data: assessmentRows, error: assessmentError }, { data: reminderRows, error: reminderError }] = await Promise.all([
         supabase
@@ -3145,14 +3146,6 @@ function RecordsPage({
       }, () => void loadDatabaseGradebook())
       .on("postgres_changes", {
         event: "*", schema: "public", table: "faculty_reminders",
-        filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
-      }, () => void loadDatabaseGradebook())
-      .on("postgres_changes", {
-        event: "*", schema: "public", table: "gradebook_draft_cells",
-        filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
-      }, () => void loadDatabaseGradebook())
-      .on("postgres_changes", {
-        event: "*", schema: "public", table: "assessment_scores",
         filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
       }, () => void loadDatabaseGradebook())
       .subscribe()
@@ -4212,37 +4205,6 @@ function RecordsPage({
     return Math.min(assessmentPoints(student, columns), maximum)
   }
 
-  const persistSharedDraftCell = (studentId: string, columnKey: string, value: number | "") => {
-    if (!selectedSectionId) return
-    const saveKey = `${selectedSectionId}:${studentId}:${columnKey}`
-    const previousTimer = draftCellSaveTimersRef.current[saveKey]
-    if (previousTimer) window.clearTimeout(previousTimer)
-    setGradebookSaveState("saving")
-    draftCellSaveTimersRef.current[saveKey] = window.setTimeout(async () => {
-      try {
-        if (value === "") {
-          const { error } = await supabase.from("gradebook_draft_cells").delete()
-            .eq("class_id", selectedSectionId).eq("student_number", studentId).eq("column_key", columnKey)
-          if (error) throw error
-        } else {
-          const { data: { user } } = await supabase.auth.getUser()
-          if (!user) throw new Error("Your faculty session expired. Sign in again.")
-          const { error } = await supabase.from("gradebook_draft_cells").upsert({
-            class_id: selectedSectionId, faculty_id: user.id, student_number: studentId,
-            column_key: columnKey, score: Number(value), updated_at: new Date().toISOString(),
-          }, { onConflict: "class_id,student_number,column_key" })
-          if (error) throw error
-        }
-        setDraftSavedAt(new Date().toISOString())
-        setGradebookSaveState("saved")
-      } catch (error) {
-        console.error("Unable to persist shared Gradebook cell:", error)
-        setGradebookSaveState("saved")
-        showToast(error instanceof Error ? error.message : "Unable to save Gradebook cell.", "error")
-      } finally { delete draftCellSaveTimersRef.current[saveKey] }
-    }, 300)
-  }
-
   const updateDailySummaryScore = (
     studentId: string,
     field: keyof typeof dailySummaryItems,
@@ -4252,12 +4214,13 @@ function RecordsPage({
     const value = rawValue === ""
       ? ""
       : String(Math.min(maximum, Math.max(0, Number(rawValue) || 0)))
-    const columnKey = `summary-${field}`
     setRecordValues((current) => ({
       ...current,
-      [studentId]: { ...(current[studentId] ?? {}), [columnKey]: value },
+      [studentId]: {
+        ...(current[studentId] ?? {}),
+        [`summary-${field}`]: value,
+      },
     }))
-    persistSharedDraftCell(studentId, columnKey, value)
   }
 
   const finalGrade = (student: typeof students[number]) => {
@@ -4621,9 +4584,7 @@ function RecordsPage({
       return nextValues
     })
 
-    if (!selectedSectionId) return
-    persistSharedDraftCell(studentId, columnId, nextValue)
-    if (nextValue === "") return
+    if (nextValue === "" || !selectedSectionId) return
 
     // Daily Tracker entries are session data, not standalone assessment rows.
     // Keep these values in the local draft and summarize them in Gradebook.
