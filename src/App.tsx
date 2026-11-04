@@ -3298,7 +3298,7 @@ function RecordsPage({
         assessmentId: string
         classId: string
         title: string
-        type: "quiz" | "exam"
+        type: "quiz" | "exam" | "handson"
         term: "midterm" | "final"
       }>).detail
 
@@ -3326,7 +3326,7 @@ function RecordsPage({
         if (existing) {
           return current.map((column) =>
             column.id === existing.id
-              ? { ...column, label: detail.title, type: columnType, term: columnTerm }
+              ? { ...column, label: detail.title, type: columnType, term: columnTerm, maxScore: detail.maxScore, itemCount: detail.maxScore, pointsPerItem: 1 }
               : column,
           )
         }
@@ -3336,6 +3336,9 @@ function RecordsPage({
           label: detail.title,
           type: columnType,
           term: columnTerm,
+          maxScore: detail.maxScore,
+          itemCount: detail.maxScore,
+          pointsPerItem: 1,
         }
         const lastMatchingIndex = current.reduce(
           (lastIndex, column, index) =>
@@ -3375,7 +3378,7 @@ function RecordsPage({
       if (!detail || detail.classId !== selectedSectionId) return
 
       const columnType: RecordAssessmentColumn["type"] =
-        detail.type === "exam" ? "Exam" : "Quiz"
+        detail.type === "exam" ? "Exam" : detail.type === "handson" ? "Hands On" : "Quiz"
       const columnTerm: RecordAssessmentColumn["term"] =
         detail.term === "final" ? "Final" : "Midterm"
       const normalizedTitle = normalizeAssessmentLabel(detail.title)
@@ -5406,6 +5409,33 @@ function RecordsPage({
               </div>
             </div>
           </div>
+          <div className="daily-student-search" role="search">
+            <label htmlFor="daily-student-search-input">
+              <Icon name="search" size={18} />
+              <input
+                id="daily-student-search-input"
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search student name or ID"
+                autoComplete="off"
+              />
+            </label>
+            <span className="daily-search-result-count" aria-live="polite">
+              {query
+                ? `${filtered.length} of ${recordStudents.length} students`
+                : `${recordStudents.length} students`}
+            </span>
+            {query && (
+              <button
+                type="button"
+                className="daily-search-clear"
+                onClick={() => setQuery("")}
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <div className="daily-table-wrap">
             <table className="daily-tracker-table">
               <thead>
@@ -6111,7 +6141,7 @@ function ActivitiesPage({
       showToast("End time must be later than start time.", "error")
       return
     }
-    if (draft.participation === "Group" && draft.groups.length === 0) {
+    if (draft.type !== "Hands-on activity" && draft.participation === "Group" && draft.groups.length === 0) {
       showToast("Add at least one group for a group activity.", "error")
       return
     }
@@ -6309,8 +6339,8 @@ function ActivitiesPage({
       activity_type: draft.type,
       start_time: draft.startTime,
       end_time: draft.endTime,
-      participation: draft.participation,
-      groups: draft.groups,
+      participation: draft.type === "Hands-on activity" ? "Individual" : draft.participation,
+      groups: draft.type === "Hands-on activity" ? [] : draft.groups,
       item_count: draft.itemCount,
       points_per_item: draft.pointsPerItem,
       omr_assessment_id: isOmrAssessment ? omrAssessmentId : null,
@@ -7199,10 +7229,13 @@ const reminderFormValid = Boolean(
                 onChange={(event) => {
                   const nextType = event.target.value
                   const indexed = nextType === "Quiz" || nextType === "Exam"
+                  const handsOnIndividual = nextType === "Hands-on activity"
                   setDraft({
                     ...draft,
                     type: nextType,
                     title: indexed ? `${nextType} ${draft.assessmentIndex}` : draft.description || draft.title,
+                    participation: handsOnIndividual ? "Individual" : draft.participation,
+                    groups: handsOnIndividual ? [] : draft.groups,
                   })
                 }}
               >
@@ -7292,8 +7325,8 @@ const reminderFormValid = Boolean(
             <label>
               <span className="reminder-field-label">Participation <em>Required</em></span>
               <select required
-                value={draft.participation}
-                disabled={assessmentClassLocked}
+                value={draft.type === "Hands-on activity" ? "Individual" : draft.participation}
+                disabled={assessmentClassLocked || draft.type === "Hands-on activity"}
                 onChange={(e) => {
                   const participation = e.target.value
                   setDraft({
@@ -7306,12 +7339,16 @@ const reminderFormValid = Boolean(
                 }}
               >
                 <option value="Individual">Individual</option>
-                <option value="Group">Group</option>
+                {draft.type !== "Hands-on activity" && <option value="Group">Group</option>}
               </select>
-              {assessmentClassLocked && <small className="reminder-field-hint">Participation is locked because this assessment already has an OMR answer key.</small>}
-              {draft.participation === "Group" && (draft.type === "Quiz" || draft.type === "Exam") && <small className="reminder-field-hint">OMR scanning is available only for individual quizzes and exams. Group assessments use group scoring instead.</small>}
+              {draft.type === "Hands-on activity" ? (
+                <small className="reminder-field-hint">Hands-on activities are individual assessments. Group participation is unavailable.</small>
+              ) : assessmentClassLocked ? (
+                <small className="reminder-field-hint">Participation is locked because this assessment already has an OMR answer key.</small>
+              ) : null}
+              {draft.type !== "Hands-on activity" && draft.participation === "Group" && (draft.type === "Quiz" || draft.type === "Exam") && <small className="reminder-field-hint">OMR scanning is available only for individual quizzes and exams. Group assessments use group scoring instead.</small>}
             </label>
-            {draft.participation === "Group" && (
+            {draft.type !== "Hands-on activity" && draft.participation === "Group" && (
               <section
                 className="group-setup"
                 aria-labelledby="group-setup-title"
@@ -7809,6 +7846,10 @@ function ActiveClass({
   const [handsOnScores, setHandsOnScores] = useState({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
   const [performanceDrafts, setPerformanceDrafts] = useState<any[]>([])
   const [performanceMessage, setPerformanceMessage] = useState("")
+  const [performanceRemarks, setPerformanceRemarks] = useState("")
+  const [performanceTerm, setPerformanceTerm] = useState<"midterm" | "final">("midterm")
+  const [handsOnIndex, setHandsOnIndex] = useState(1)
+  const [performanceDetectedAt, setPerformanceDetectedAt] = useState<string | null>(null)
   const handsOnTotal = handsOnScores.accuracy + handsOnScores.technique + handsOnScores.completion + handsOnScores.safety
 
   const [attendanceSessionId, setAttendanceSessionId] = useState<string | null>(null)
@@ -8132,6 +8173,8 @@ function ActiveClass({
               name: String(attendance?.student_name ?? attendance?.full_name ?? "Scanned student"),
               studentNo: String(attendance?.student_number ?? attendance?.student_no ?? cardUid),
             })
+            setPerformanceDetectedAt(new Date().toISOString())
+            setPerformanceMessage("")
           }
           nfcReaderRef.current = null
           setNfcScannerStatus("success")
@@ -8621,6 +8664,34 @@ function ActiveClass({
                         <button type="button" className="secondary-button compact" onClick={() => setSelectedPerformanceStudent(null)}>Clear</button>
                       </div>
 
+                      <div className="performance-sync-controls">
+                        <label>
+                          <span>Term</span>
+                          <select value={performanceTerm} onChange={(event) => setPerformanceTerm(event.target.value as "midterm" | "final")}>
+                            <option value="midterm">Midterm</option>
+                            <option value="final">Finals</option>
+                          </select>
+                        </label>
+                        {activityType === "handson" && (
+                          <label>
+                            <span>Hands-On index</span>
+                            <select value={handsOnIndex} onChange={(event) => setHandsOnIndex(Number(event.target.value))}>
+                              {Array.from({ length: performanceTerm === "midterm" ? 10 : 12 }, (_, index) => (
+                                <option key={index + 1} value={index + 1}>{index + 1}</option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+
+                      {performanceDetectedAt && (
+                        <div className="performance-detected-banner">
+                          <span>✓</span>
+                          <div><strong>Student card detected</strong><small>Performance record loaded successfully.</small></div>
+                          <time>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(performanceDetectedAt))}</time>
+                        </div>
+                      )}
+
                       {activityType === "recitation" ? (
                         <div className="recitation-performance-panel">
                           <h5>Recitation</h5>
@@ -8644,20 +8715,45 @@ function ActiveClass({
                         </div>
                       )}
 
+                      <label className="performance-remarks-field">
+                        <span>Remarks <small>(optional)</small></span>
+                        <textarea maxLength={255} rows={3} value={performanceRemarks} onChange={(event) => setPerformanceRemarks(event.target.value)} placeholder="Add remarks for this session..." />
+                        <small>{performanceRemarks.length}/255</small>
+                      </label>
+
                       {performanceMessage && <p className="performance-save-message" role="status">{performanceMessage}</p>}
-                      <button type="button" className="primary-button performance-save-button" onClick={() => {
-                        setPerformanceDrafts((records) => [...records, {
-                          student: selectedPerformanceStudent,
-                          activityType,
-                          score: activityType === "recitation" ? recitationScore : handsOnTotal,
-                          handsOnScores: activityType === "handson" ? handsOnScores : undefined,
-                          status: "Draft",
-                          createdAt: new Date().toISOString(),
-                        }])
-                        setPerformanceMessage("Draft saved")
-                        setRecitationScore(0)
-                        setHandsOnScores({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
-                      }}>Save draft</button>
+                      <div className="performance-form-actions">
+                        <button type="button" className="secondary-button" onClick={() => {
+                          setSelectedPerformanceStudent(null)
+                          setPerformanceDetectedAt(null)
+                          setPerformanceRemarks("")
+                          setRecitationScore(0)
+                          setHandsOnScores({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
+                        }}>Clear</button>
+                        <button type="button" className={`primary-button performance-save-button ${activityType === "handson" ? "hands-on" : ""}`} onClick={() => {
+                          const score = activityType === "recitation" ? recitationScore : handsOnTotal
+                          const termLabel = performanceTerm === "final" ? "Final" : "Midterm"
+                          const assessmentId = activityType === "handson"
+                            ? `${performanceTerm}-project-${handsOnIndex}`
+                            : `daily-${new Date().toISOString().slice(0, 10)}-recitation`
+                          const title = activityType === "handson"
+                            ? `${termLabel} Project ${handsOnIndex}`
+                            : `${termLabel} Recitation`
+                          const detail = {
+                            assessmentId, classId: String(item.id),
+                            studentNumber: selectedPerformanceStudent.studentNo,
+                            title, type: activityType === "handson" ? "handson" : "quiz",
+                            term: performanceTerm, maxScore: activityType === "handson" ? 20 : 10,
+                            score, status: "published", remarks: performanceRemarks,
+                          }
+                          if (activityType === "handson") {
+                            window.dispatchEvent(new CustomEvent("cit-portal:gradebook-score-drafted", { detail }))
+                          }
+                          setPerformanceDrafts((records) => [...records, { student: selectedPerformanceStudent, activityType, score, remarks: performanceRemarks, handsOnIndex: activityType === "handson" ? handsOnIndex : undefined, term: performanceTerm, status: "Saved", createdAt: new Date().toISOString() }])
+                          setPerformanceMessage(activityType === "handson" ? `Saved and synced to ${termLabel} Project ${handsOnIndex}.` : "Recitation record saved.")
+                          setPerformanceRemarks("")
+                        }}>Save Record</button>
+                      </div>
                     </div>
                   )}
 

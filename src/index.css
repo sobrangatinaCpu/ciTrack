@@ -6610,3 +6610,93 @@ body > .summary-speed-dial .summary-fab { position: relative; z-index: 20002 !im
   font-weight: 900;
   white-space: nowrap;
 }
+
+
+/* Daily Tracker student search navigation. */
+.daily-student-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #d7e5f1;
+  border-radius: 12px;
+  background: #f8fbfd;
+}
+.daily-student-search > label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 340px;
+  max-width: 520px;
+  min-width: 220px;
+}
+.daily-student-search > label > svg {
+  position: absolute;
+  left: 13px;
+  z-index: 1;
+  color: #648099;
+  pointer-events: none;
+}
+.daily-student-search input[type="search"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 42px 9px 42px;
+  border: 1px solid #c8dbea;
+  border-radius: 10px;
+  color: #123f70;
+  background: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+}
+.daily-student-search input[type="search"]::placeholder {
+  color: #8fa3b5;
+  font-weight: 500;
+}
+.daily-student-search input[type="search"]:focus {
+  border-color: #1672e8;
+  outline: 3px solid rgba(22, 114, 232, .14);
+  outline-offset: 1px;
+}
+.daily-search-result-count {
+  color: #60788f;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.daily-search-clear {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid #bfd2e3;
+  border-radius: 9px;
+  color: #1769ad;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.daily-search-clear:hover {
+  border-color: #1672e8;
+  background: #eef6ff;
+}
+@media (max-width: 680px) {
+  .daily-student-search {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .daily-student-search > label {
+    flex-basis: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+  .daily-search-result-count {
+    flex: 1 1 auto;
+    align-self: center;
+  }
+}
+
+
+/* Post-NFC performance record UI and Gradebook synchronization controls. */
+.performance-detected-banner{display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid #a7dfcc;border-radius:12px;background:#ecfaf5;color:#08775b}.performance-detected-banner>span{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#0b9873;color:#fff;font-weight:900}.performance-detected-banner div{display:grid;gap:2px;flex:1}.performance-detected-banner small{color:#4f7b70}.performance-detected-banner time{font-size:11px;color:#426e65}.performance-sync-controls{display:flex;gap:10px;flex-wrap:wrap}.performance-sync-controls label{display:grid;gap:5px;min-width:150px;color:#49657e;font-size:11px;font-weight:800}.performance-sync-controls select{min-height:40px;padding:8px 10px;border:1px solid #bfd3e4;border-radius:9px;background:#fff;color:#123f70;font-weight:750}.performance-remarks-field{display:grid;gap:6px;position:relative}.performance-remarks-field>span{color:#334f69;font-size:12px;font-weight:800}.performance-remarks-field textarea{min-height:86px;padding:10px 12px 24px;border:1px solid #c7d9e8;border-radius:10px;resize:vertical;font:inherit}.performance-remarks-field>small{position:absolute;right:10px;bottom:7px;color:#7890a5}.performance-form-actions{display:flex;justify-content:space-between;gap:12px}.performance-save-button.hands-on{background:#0a9872}.performance-student-form:has(.performance-save-button.hands-on){border-color:#b8e3d6;background:#f5fcf9}@media(max-width:680px){.performance-detected-banner{align-items:flex-start;flex-wrap:wrap}.performance-detected-banner time{width:100%;padding-left:46px}.performance-form-actions{flex-direction:column-reverse}.performance-form-actions button{width:100%}}
