@@ -2574,7 +2574,6 @@ function RecordsPage({
   const [gradebookSaveState, setGradebookSaveState] = useState<"saving" | "saved">("saved")
   const localDraftValuesRef = useRef<Record<string, Record<string, number | "">>>({})
   const scoreSaveTimersRef = useRef<Record<string, number>>({})
-  const examMaximumSaveTimersRef = useRef<Partial<Record<keyof typeof examMaximums, number>>>({})
   const assessmentIdByColumnRef = useRef<Record<string, string>>({})
   const [publishingRecords, setPublishingRecords] = useState(false)
   useEffect(() => {
@@ -2702,86 +2701,21 @@ function RecordsPage({
 
   useEffect(() => {
     if (!selectedSectionId) {
-      setExamMaximums({
-        "midterm-written": 100,
-        "midterm-actual": 100,
-        "final-written": 100,
-        "final-actual": 100,
-      })
+      setExamMaximums(defaultExamMaximums)
       return
     }
 
-    let active = true
     const storageKey = `cit-portal:exam-maximums:${selectedSectionId}`
-    const clampItems = (value: unknown, fallback = 100) =>
-      Math.min(1000, Math.max(1, Math.round(Number(value) || fallback)))
-
-    // Show the last local copy immediately while Supabase loads. Supabase remains
-    // authoritative so another device can replace this value a moment later.
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || "{}") as Partial<typeof defaultExamMaximums>
       setExamMaximums({
-        "midterm-written": clampItems(saved["midterm-written"]),
-        "midterm-actual": clampItems(saved["midterm-actual"]),
-        "final-written": clampItems(saved["final-written"]),
-        "final-actual": clampItems(saved["final-actual"]),
+        "midterm-written": Math.min(1000, Math.max(1, Math.round(Number(saved["midterm-written"]) || 100))),
+        "midterm-actual": Math.min(1000, Math.max(1, Math.round(Number(saved["midterm-actual"]) || 100))),
+        "final-written": Math.min(1000, Math.max(1, Math.round(Number(saved["final-written"]) || 100))),
+        "final-actual": Math.min(1000, Math.max(1, Math.round(Number(saved["final-actual"]) || 100))),
       })
     } catch {
-      // The database load below will provide the shared values.
-    }
-
-    const applyRows = (rows: any[]) => {
-      if (!active) return
-      const next = {
-        "midterm-written": 100,
-        "midterm-actual": 100,
-        "final-written": 100,
-        "final-actual": 100,
-      }
-      rows.forEach((row) => {
-        const key = String(row.exam_key) as keyof typeof next
-        if (key in next) next[key] = clampItems(row.item_count)
-      })
-      setExamMaximums(next)
-      localStorage.setItem(storageKey, JSON.stringify(next))
-    }
-
-    const loadSharedExamMaximums = async () => {
-      const { data, error } = await supabase
-        .from("gradebook_exam_settings")
-        .select("exam_key, item_count")
-        .eq("class_id", selectedSectionId)
-      if (!active) return
-      if (error) {
-        console.error("Unable to load shared exam item counts:", error)
-        return
-      }
-      applyRows(data ?? [])
-    }
-
-    void loadSharedExamMaximums()
-
-    const channel = supabase
-      .channel(`gradebook-exam-settings-${selectedSectionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "gradebook_exam_settings",
-          filter: `class_id=eq.${selectedSectionId}`,
-        },
-        () => void loadSharedExamMaximums(),
-      )
-      .subscribe()
-
-    return () => {
-      active = false
-      Object.values(examMaximumSaveTimersRef.current).forEach((timer) => {
-        if (timer) window.clearTimeout(timer)
-      })
-      examMaximumSaveTimersRef.current = {}
-      void supabase.removeChannel(channel)
+      setExamMaximums(defaultExamMaximums)
     }
   }, [selectedSectionId])
 
@@ -3017,9 +2951,9 @@ function RecordsPage({
           const resolvedPointsPerItem = Number(existingColumn?.pointsPerItem) > 0
             ? Number(existingColumn?.pointsPerItem)
             : Number(row.points_per_item) > 0 ? Number(row.points_per_item) : 1
-          const resolvedItemCount = (Number(row.item_count) > 0 ? Number(row.item_count) : null)
-            ?? savedItemOverride
-            ?? (Number(existingColumn?.itemCount) > 0 ? Number(existingColumn?.itemCount) : 100)
+          const resolvedItemCount = savedItemOverride
+            ?? (Number(existingColumn?.itemCount) > 0 ? Number(existingColumn?.itemCount) : null)
+            ?? (Number(row.item_count) > 0 ? Number(row.item_count) : 100)
           const mergedColumn: RecordAssessmentColumn = {
             ...(existingColumn ?? {} as RecordAssessmentColumn),
             id: columnId,
@@ -4203,40 +4137,15 @@ function RecordsPage({
     setExamMaximums((current) => {
       const next = { ...current, [field]: maximum }
       if (selectedSectionId) {
-        localStorage.setItem(`cit-portal:exam-maximums:${selectedSectionId}`, JSON.stringify(next))
+        localStorage.setItem(
+          `cit-portal:exam-maximums:${selectedSectionId}`,
+          JSON.stringify(next),
+        )
       }
       return next
     })
-
-    if (!selectedSectionId) return
-    const existingTimer = examMaximumSaveTimersRef.current[field]
-    if (existingTimer) window.clearTimeout(existingTimer)
-    setGradebookSaveState("saving")
-
-    examMaximumSaveTimersRef.current[field] = window.setTimeout(async () => {
-      const { error } = await supabase
-        .from("gradebook_exam_settings")
-        .upsert(
-          {
-            class_id: selectedSectionId,
-            exam_key: field,
-            item_count: maximum,
-            points_per_item: 1,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "class_id,exam_key" },
-        )
-
-      if (error) {
-        console.error("Unable to sync exam item count:", error)
-        showToast(`Could not sync ${field.replaceAll("-", " ")} items to other devices.`, "error")
-        setGradebookSaveState("saved")
-        return
-      }
-
-      setDraftSavedAt(new Date().toISOString())
-      setGradebookSaveState("saved")
-    }, 450)
+    setDraftSavedAt(new Date().toISOString())
+    setGradebookSaveState("saved")
   }
 
   const examEarnedTotal = (
@@ -8099,9 +8008,8 @@ function ActiveClass({
   const [scannerMode, setScannerMode] = useState<"attendance" | "performance">(
     "attendance",
   )
-  const [activityType, setActivityType] = useState<"recitation" | "handson">("recitation")
+  const [activityType] = useState<"handson">("handson")
   const [selectedPerformanceStudent, setSelectedPerformanceStudent] = useState<any>(null)
-  const [recitationScore, setRecitationScore] = useState(0)
   const [handsOnScores, setHandsOnScores] = useState({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
   const [performanceDrafts, setPerformanceDrafts] = useState<any[]>([])
   const [performanceMessage, setPerformanceMessage] = useState("")
@@ -8906,11 +8814,6 @@ function ActiveClass({
                   <strong>Ready to log performance</strong>
                   <p>Scan a registered student NFC card to open the performance record.</p>
 
-                  <div className="activity-type-picker" role="group" aria-label="Performance activity type">
-                    <button type="button" className={activityType === "recitation" ? "active" : ""} onClick={() => setActivityType("recitation")}>Recitation</button>
-                    <button type="button" className={activityType === "handson" ? "active" : ""} onClick={() => setActivityType("handson")}>Hands-On</button>
-                  </div>
-
                   {!selectedPerformanceStudent ? (
                     <p className="performance-awaiting-card">Tap a student NFC card to open the student performance record.</p>
                   ) : (
@@ -8931,16 +8834,14 @@ function ActiveClass({
                             <option value="final">Finals</option>
                           </select>
                         </label>
-                        {activityType === "handson" && (
-                          <label>
-                            <span>Hands-On index</span>
-                            <select value={handsOnIndex} onChange={(event) => setHandsOnIndex(Number(event.target.value))}>
-                              {Array.from({ length: performanceTerm === "midterm" ? 10 : 12 }, (_, index) => (
-                                <option key={index + 1} value={index + 1}>{index + 1}</option>
-                              ))}
-                            </select>
-                          </label>
-                        )}
+                        <label>
+                          <span>Hands-On index</span>
+                          <select value={handsOnIndex} onChange={(event) => setHandsOnIndex(Number(event.target.value))}>
+                            {Array.from({ length: performanceTerm === "midterm" ? 10 : 12 }, (_, index) => (
+                              <option key={index + 1} value={index + 1}>{index + 1}</option>
+                            ))}
+                          </select>
+                        </label>
                       </div>
 
                       {performanceDetectedAt && (
@@ -8951,16 +8852,7 @@ function ActiveClass({
                         </div>
                       )}
 
-                      {activityType === "recitation" ? (
-                        <div className="recitation-performance-panel">
-                          <h5>Recitation</h5>
-                          <label className="performance-score-field">
-                            <span>Score</span>
-                            <input type="number" min="0" max="10" value={recitationScore} onChange={(event) => setRecitationScore(Math.min(10, Math.max(0, Number(event.target.value))))} />
-                            <small>Maximum score: 10</small>
-                          </label>
-                        </div>
-                      ) : (
+
                         <div className="performance-rubric">
                           <h5>Hands-On Activity</h5>
                           {(["accuracy", "technique", "completion", "safety"] as const).map((criterion) => (
@@ -8972,7 +8864,6 @@ function ActiveClass({
                           ))}
                           <strong className="performance-total">Total score: {handsOnTotal} / 20</strong>
                         </div>
-                      )}
 
                       <label className="performance-remarks-field">
                         <span>Remarks <small>(optional)</small></span>
@@ -8986,30 +8877,23 @@ function ActiveClass({
                           setSelectedPerformanceStudent(null)
                           setPerformanceDetectedAt(null)
                           setPerformanceRemarks("")
-                          setRecitationScore(0)
                           setHandsOnScores({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
                         }}>Clear</button>
                         <button type="button" className={`primary-button performance-save-button ${activityType === "handson" ? "hands-on" : ""}`} onClick={() => {
-                          const score = activityType === "recitation" ? recitationScore : handsOnTotal
+                          const score = handsOnTotal
                           const termLabel = performanceTerm === "final" ? "Final" : "Midterm"
-                          const assessmentId = activityType === "handson"
-                            ? `${performanceTerm}-project-${handsOnIndex}`
-                            : `daily-${new Date().toISOString().slice(0, 10)}-recitation`
-                          const title = activityType === "handson"
-                            ? `${termLabel} Project ${handsOnIndex}`
-                            : `${termLabel} Recitation`
+                          const assessmentId = `${performanceTerm}-project-${handsOnIndex}`
+                          const title = `${termLabel} Project ${handsOnIndex}`
                           const detail = {
                             assessmentId, classId: String(item.id),
                             studentNumber: selectedPerformanceStudent.studentNo,
-                            title, type: activityType === "handson" ? "handson" : "quiz",
-                            term: performanceTerm, maxScore: activityType === "handson" ? 20 : 10,
+                            title, type: "handson",
+                            term: performanceTerm, maxScore: 20,
                             score, status: "published", remarks: performanceRemarks,
                           }
-                          if (activityType === "handson") {
-                            window.dispatchEvent(new CustomEvent("cit-portal:gradebook-score-drafted", { detail }))
-                          }
-                          setPerformanceDrafts((records) => [...records, { student: selectedPerformanceStudent, activityType, score, remarks: performanceRemarks, handsOnIndex: activityType === "handson" ? handsOnIndex : undefined, term: performanceTerm, status: "Saved", createdAt: new Date().toISOString() }])
-                          setPerformanceMessage(activityType === "handson" ? `Saved and synced to ${termLabel} Project ${handsOnIndex}.` : "Recitation record saved.")
+                          window.dispatchEvent(new CustomEvent("cit-portal:gradebook-score-drafted", { detail }))
+                          setPerformanceDrafts((records) => [...records, { student: selectedPerformanceStudent, activityType: "handson", score, remarks: performanceRemarks, handsOnIndex, term: performanceTerm, status: "Saved", createdAt: new Date().toISOString() }])
+                          setPerformanceMessage(`Saved and synced to ${termLabel} Project ${handsOnIndex}.`)
                           setPerformanceRemarks("")
                         }}>Save Record</button>
                       </div>
