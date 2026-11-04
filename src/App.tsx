@@ -446,6 +446,13 @@ const sameAssessmentSlot = (
 ) => left.type === right.type && left.term === right.term &&
   Number.isFinite(assessmentColumnIndex(left)) &&
   assessmentColumnIndex(left) === assessmentColumnIndex(right)
+const assessmentItemOverrideKey = (classId: string, column: RecordAssessmentColumn) =>
+  `cit-portal:item-count:${classId}:${column.term ?? "Midterm"}:${column.type}:${assessmentColumnIndex(column)}`
+const readAssessmentItemOverride = (classId: string, column: RecordAssessmentColumn) => {
+  if (!classId) return null
+  const value = Number(localStorage.getItem(assessmentItemOverrideKey(classId, column)))
+  return Number.isFinite(value) && value > 0 ? value : null
+}
 
 const initialRecordAssessmentColumns: RecordAssessmentColumn[] = [
   { id: "quiz-1", label: "Midterm Quiz 1", type: "Quiz", term: "Midterm" },
@@ -2518,12 +2525,13 @@ function RecordsPage({
       (column) => column.type !== "Quiz" && column.type !== "Exam",
     ),
   )
-  const [examMaximums, setExamMaximums] = useState({
+  const defaultExamMaximums = {
     "midterm-written": 100,
     "midterm-actual": 100,
     "final-written": 100,
     "final-actual": 100,
-  })
+  }
+  const [examMaximums, setExamMaximums] = useState(defaultExamMaximums)
   const [dailySummaryItems, setDailySummaryItems] = useState({
     "midterm-recitation": 10,
     "final-recitation": 5,
@@ -2689,6 +2697,26 @@ function RecordsPage({
         setLastPublishedAt(data?.published_at ?? null)
       })
     return () => { active = false }
+  }, [selectedSectionId])
+
+  useEffect(() => {
+    if (!selectedSectionId) {
+      setExamMaximums(defaultExamMaximums)
+      return
+    }
+
+    const storageKey = `cit-portal:exam-maximums:${selectedSectionId}`
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || "{}") as Partial<typeof defaultExamMaximums>
+      setExamMaximums({
+        "midterm-written": Math.min(1000, Math.max(1, Math.round(Number(saved["midterm-written"]) || 100))),
+        "midterm-actual": Math.min(1000, Math.max(1, Math.round(Number(saved["midterm-actual"]) || 100))),
+        "final-written": Math.min(1000, Math.max(1, Math.round(Number(saved["final-written"]) || 100))),
+        "final-actual": Math.min(1000, Math.max(1, Math.round(Number(saved["final-actual"]) || 100))),
+      })
+    } catch {
+      setExamMaximums(defaultExamMaximums)
+    }
   }, [selectedSectionId])
 
   useEffect(() => {
@@ -2919,6 +2947,13 @@ function RecordsPage({
           const existingIndex = next.findIndex((column) => sameAssessmentSlot(column, targetSlot))
           const existingColumn = existingIndex >= 0 ? next[existingIndex] : null
           const columnId = linkedGradebookId || existingColumn?.assessmentId || existingColumn?.id || String(row.id)
+          const savedItemOverride = readAssessmentItemOverride(selectedSectionId, targetSlot)
+          const resolvedPointsPerItem = Number(existingColumn?.pointsPerItem) > 0
+            ? Number(existingColumn?.pointsPerItem)
+            : Number(row.points_per_item) > 0 ? Number(row.points_per_item) : 1
+          const resolvedItemCount = savedItemOverride
+            ?? (Number(existingColumn?.itemCount) > 0 ? Number(existingColumn?.itemCount) : null)
+            ?? (Number(row.item_count) > 0 ? Number(row.item_count) : 100)
           const mergedColumn: RecordAssessmentColumn = {
             ...(existingColumn ?? {} as RecordAssessmentColumn),
             id: columnId,
@@ -2926,14 +2961,19 @@ function RecordsPage({
             label: existingColumn?.label || `${type} ${index}`,
             type,
             term,
-            maxScore: Number(row.item_count) * Number(row.points_per_item) || existingColumn?.maxScore || 100,
-            itemCount: Number(row.item_count) || existingColumn?.itemCount,
-            pointsPerItem: Number(row.points_per_item) || existingColumn?.pointsPerItem,
+            maxScore: resolvedItemCount * resolvedPointsPerItem,
+            itemCount: resolvedItemCount,
+            pointsPerItem: resolvedPointsPerItem,
           }
           if (existingIndex >= 0) next[existingIndex] = mergedColumn
           else next.push(mergedColumn)
           resolvedColumnByAssessment.set(String(row.id), columnId)
-          if (linkedGradebookId) resolvedColumnByAssessment.set(linkedGradebookId, columnId)
+          if (linkedGradebookId) {
+            resolvedColumnByAssessment.set(linkedGradebookId, columnId)
+            assessmentIdByColumnRef.current[String(columnId)] = linkedGradebookId
+            assessmentIdByColumnRef.current[String(row.id)] = linkedGradebookId
+            assessmentIdByColumnRef.current[linkedGradebookId] = linkedGradebookId
+          }
         })
 
         const order = (column: RecordAssessmentColumn) => {
@@ -3015,13 +3055,20 @@ function RecordsPage({
               rawType === "attendance" ? "Attendance" : "Activities"
             const term: RecordAssessmentColumn["term"] =
               String(row.term).trim().toLowerCase() === "final" ? "Final" : "Midterm"
-            const column: RecordAssessmentColumn = {
+            const slotForOverride: RecordAssessmentColumn = {
               id: assessmentId,
               assessmentId,
               label: String(row.title),
               type,
               term,
               maxScore: Number(row.max_score) || 100,
+            }
+            const savedItemOverride = readAssessmentItemOverride(selectedSectionId, slotForOverride)
+            const column: RecordAssessmentColumn = {
+              ...slotForOverride,
+              itemCount: savedItemOverride ?? undefined,
+              pointsPerItem: 1,
+              maxScore: savedItemOverride ?? (Number(row.max_score) || 100),
             }
             const index = next.findIndex((item) =>
               String(item.id) === assessmentId ||
@@ -3460,26 +3507,51 @@ function RecordsPage({
       }
       if (typeof parsed.savedAt === "string") setDraftSavedAt(parsed.savedAt)
 
-      // Quiz and Exam columns come only from Supabase. This permanently clears
-      // deleted Quiz 5/Quiz 6 columns left behind by older localStorage data.
-      const preservedColumns: RecordAssessmentColumn[] = Array.isArray(parsed.columns)
-        ? parsed.columns.filter((column: RecordAssessmentColumn) =>
-            column.type !== "Quiz" && column.type !== "Exam",
-          )
+      // Restore every saved Gradebook column, including editable Quiz and Exam
+      // item counts. Supabase still supplies assessment identity and labels, but
+      // the professor's saved item-count override wins for the same term/type/index.
+      const savedColumns: RecordAssessmentColumn[] = Array.isArray(parsed.columns)
+        ? parsed.columns
         : []
-      const preservedIds = new Set(preservedColumns.map((column) => column.id))
       const savedValues = parsed.values && typeof parsed.values === "object"
         ? parsed.values as Record<string, Record<string, number | "">>
         : {}
-      // Keep all locally edited score values, including Quiz and Exam drafts.
-      // The previous filter removed those values on every refresh.
       const cleanedValues: Record<string, Record<string, number | "">> = savedValues
       localDraftValuesRef.current = cleanedValues
 
-      setAssessmentColumns((current) => [
-        ...preservedColumns,
-        ...current.filter((column) => column.type === "Quiz" || column.type === "Exam"),
-      ])
+      setAssessmentColumns((current) => {
+        const merged = current.map((column) => {
+          const savedColumn = savedColumns.find((candidate) =>
+            candidate.id === column.id || sameAssessmentSlot(candidate, column),
+          )
+          if (!savedColumn) return column
+
+          const savedItems = Number(savedColumn.itemCount)
+          const savedPointsPerItem = Number(savedColumn.pointsPerItem) > 0
+            ? Number(savedColumn.pointsPerItem)
+            : Number(column.pointsPerItem) > 0
+              ? Number(column.pointsPerItem)
+              : 1
+
+          return {
+            ...column,
+            label: savedColumn.label || column.label,
+            itemCount: savedItems > 0 ? savedItems : column.itemCount,
+            pointsPerItem: savedPointsPerItem,
+            maxScore: savedItems > 0
+              ? savedItems * savedPointsPerItem
+              : column.maxScore,
+          }
+        })
+
+        savedColumns.forEach((savedColumn) => {
+          const exists = merged.some((column) =>
+            column.id === savedColumn.id || sameAssessmentSlot(column, savedColumn),
+          )
+          if (!exists) merged.push(savedColumn)
+        })
+        return merged
+      })
       setRecordValues((current) => {
         const next = { ...cleanedValues }
         Object.entries(current).forEach(([studentNumber, values]) => {
@@ -3490,7 +3562,7 @@ function RecordsPage({
 
       localStorage.setItem("cit-portal:gradebook", JSON.stringify({
         ...parsed,
-        columns: preservedColumns,
+        columns: savedColumns,
         values: cleanedValues,
       }))
     } catch (error) {
@@ -4020,18 +4092,60 @@ function RecordsPage({
     ))
   }
 
-  const updateAssessmentItemCount = (columnId: string, rawValue: string) => {
+  const updateAssessmentItemCount = async (columnId: string, rawValue: string) => {
     const items = Math.min(1000, Math.max(1, Math.round(Number(rawValue) || 1)))
-    setAssessmentColumns((columns) => columns.map((column) => {
-      if (column.id !== columnId) return column
-      const pointsPerItem = Number(column.pointsPerItem) > 0 ? Number(column.pointsPerItem) : 1
-      return { ...column, itemCount: items, pointsPerItem, maxScore: items * pointsPerItem }
-    }))
+    const targetColumn = assessmentColumns.find((column) => column.id === columnId)
+    if (!targetColumn || !selectedSectionId) return
+    const pointsPerItem = Number(targetColumn.pointsPerItem) > 0 ? Number(targetColumn.pointsPerItem) : 1
+    const maximum = items * pointsPerItem
+
+    localStorage.setItem(assessmentItemOverrideKey(selectedSectionId, targetColumn), String(items))
+    setAssessmentColumns((columns) => columns.map((column) =>
+      column.id === columnId || sameAssessmentSlot(column, targetColumn)
+        ? { ...column, itemCount: items, pointsPerItem, maxScore: maximum }
+        : column,
+    ))
+    setGradebookSaveState("saving")
+    try {
+      if (targetColumn.type === "Quiz" || targetColumn.type === "Exam") {
+        const { error } = await supabase.from("omr_assessments")
+          .update({ item_count: items, points_per_item: pointsPerItem })
+          .eq("class_id", selectedSectionId)
+          .eq("assessment_type", targetColumn.type.toLowerCase())
+          .eq("academic_term", targetColumn.term === "Final" ? "final" : "midterm")
+          .eq("assessment_index", assessmentColumnIndex(targetColumn))
+        if (error) throw error
+      }
+      const publicId = assessmentIdByColumnRef.current[String(targetColumn.id)]
+      if (publicId) {
+        const { error } = await supabase.from("assessments")
+          .update({ max_score: maximum }).eq("id", publicId).eq("class_id", selectedSectionId)
+        if (error) throw error
+      }
+      const savedAt = new Date().toISOString()
+      setDraftSavedAt(savedAt)
+      setGradebookSaveState("saved")
+    } catch (error) {
+      console.warn("Assessment metadata sync was unavailable; the Gradebook item override remains saved:", error)
+      setDraftSavedAt(new Date().toISOString())
+      setGradebookSaveState("saved")
+    }
   }
 
   const updateExamMaximum = (field: keyof typeof examMaximums, rawValue: string) => {
     const maximum = Math.min(1000, Math.max(1, Math.round(Number(rawValue) || 1)))
-    setExamMaximums((current) => ({ ...current, [field]: maximum }))
+    setExamMaximums((current) => {
+      const next = { ...current, [field]: maximum }
+      if (selectedSectionId) {
+        localStorage.setItem(
+          `cit-portal:exam-maximums:${selectedSectionId}`,
+          JSON.stringify(next),
+        )
+      }
+      return next
+    })
+    setDraftSavedAt(new Date().toISOString())
+    setGradebookSaveState("saved")
   }
 
   const examEarnedTotal = (
@@ -4460,28 +4574,36 @@ function RecordsPage({
         label: "Midterm Written Exam",
         type: "Exam",
         term: "Midterm",
-        maxScore: 100,
+        maxScore: examMaximums["midterm-written"],
+        itemCount: examMaximums["midterm-written"],
+        pointsPerItem: 1,
       },
       "midterm-actual": {
         id: "midterm-actual",
         label: "Midterm Actual Exam",
         type: "Exam",
         term: "Midterm",
-        maxScore: 100,
+        maxScore: examMaximums["midterm-actual"],
+        itemCount: examMaximums["midterm-actual"],
+        pointsPerItem: 1,
       },
       "final-written": {
         id: "final-written",
         label: "Final Written Exam",
         type: "Exam",
         term: "Final",
-        maxScore: 100,
+        maxScore: examMaximums["final-written"],
+        itemCount: examMaximums["final-written"],
+        pointsPerItem: 1,
       },
       "final-actual": {
         id: "final-actual",
         label: "Final Actual Exam",
         type: "Exam",
         term: "Final",
-        maxScore: 100,
+        maxScore: examMaximums["final-actual"],
+        itemCount: examMaximums["final-actual"],
+        pointsPerItem: 1,
       },
     }
 
@@ -4500,7 +4622,11 @@ function RecordsPage({
     const previousTimer = scoreSaveTimersRef.current[saveKey]
     if (previousTimer) window.clearTimeout(previousTimer)
 
-    const resolvedMaximum = maxScoreForColumn(column) || maximum
+    const requestedMaximum = Number(maximum)
+    const resolvedMaximum =
+      Number.isFinite(requestedMaximum) && requestedMaximum > 0
+        ? requestedMaximum
+        : maxScoreForColumn(column)
 
     scoreSaveTimersRef.current[saveKey] = window.setTimeout(async () => {
       const typeMap: Record<RecordAssessmentColumn["type"], "exam" | "quiz" | "project" | "recitation" | "attendance"> = {
@@ -4513,7 +4639,59 @@ function RecordsPage({
       }
 
       try {
-        const savedAssessmentId = await saveStudentScore({
+        const resolveExistingAssessmentId = async () => {
+          // Dynamic Quiz/Exam columns already carry the linked public
+          // assessments.id in assessmentId. Reuse it instead of asking
+          // saveStudentScore to insert another definition with the same
+          // class/type/term/index identity.
+          const directAssessmentId = column.assessmentId
+            ? String(column.assessmentId)
+            : /^[0-9a-f-]{36}$/i.test(String(column.id))
+              ? String(column.id)
+              : undefined
+          const cached =
+            assessmentIdByColumnRef.current[String(column.id)] ?? directAssessmentId
+          if (cached) {
+            assessmentIdByColumnRef.current[String(column.id)] = cached
+            assessmentIdByColumnRef.current[cached] = cached
+            return cached
+          }
+
+          const { data: freshGradebook, error: lookupError } = await supabase.rpc(
+            "comptech_faculty_load_gradebook",
+            { p_class_id: selectedSectionId },
+          )
+          if (lookupError) throw lookupError
+
+          const definitions = Array.isArray((freshGradebook as any)?.assessments)
+            ? (freshGradebook as any).assessments
+            : []
+          const wantedType = typeMap[column.type]
+          const wantedTerm = column.term === "Final" ? "final" : "midterm"
+          const wantedIndex = assessmentColumnIndex(column)
+          const normalizedTitle = String(column.label).trim().toLowerCase()
+
+          const match = definitions.find((row: any) => {
+            const rowType = String(row.assessment_type ?? row.type ?? "").toLowerCase()
+            const rowTerm = String(row.term ?? row.academic_term ?? "").toLowerCase()
+            const rowTitle = String(row.title ?? "").trim().toLowerCase()
+            const rowIndex = Number(
+              row.assessment_index ?? rowTitle.match(/\d+/)?.[0] ?? Number.NaN,
+            )
+            return rowType === wantedType && rowTerm === wantedTerm && (
+              rowIndex === wantedIndex || rowTitle === normalizedTitle
+            )
+          })
+
+          if (!match?.id) return undefined
+          const id = String(match.id)
+          assessmentIdByColumnRef.current[String(column.id)] = id
+          assessmentIdByColumnRef.current[id] = id
+          return id
+        }
+
+        let resolvedAssessmentId = await resolveExistingAssessmentId()
+        const saveScore = (assessmentId?: string) => saveStudentScore({
           classId: selectedSectionId,
           studentNumber: studentId,
           title: column.label,
@@ -4522,14 +4700,25 @@ function RecordsPage({
           maxScore: resolvedMaximum,
           score: Number(nextValue),
           status: "draft",
-          // Never send an OMR assessment UUID to comptech_faculty_save_score.
-          // The RPC expects public.assessments.id. If an OMR quiz is not linked
-          // yet, send null so the RPC creates/resolves the gradebook assessment.
-          assessmentId:
-            assessmentIdByColumnRef.current[String(column.id)] ??
-            column.assessmentId ??
-            undefined,
+          assessmentId,
         })
+
+        let savedAssessmentId: string
+        try {
+          savedAssessmentId = await saveScore(resolvedAssessmentId)
+        } catch (saveError: any) {
+          const duplicateIdentity =
+            String(saveError?.code ?? "") === "23505" ||
+            String(saveError?.message ?? saveError).includes("assessments_unique_gradebook_identity")
+          if (!duplicateIdentity) throw saveError
+
+          // A definition already exists but the original ID was stale or absent.
+          // Reload the authoritative Gradebook and retry with that existing ID.
+          delete assessmentIdByColumnRef.current[String(column.id)]
+          resolvedAssessmentId = await resolveExistingAssessmentId()
+          if (!resolvedAssessmentId) throw saveError
+          savedAssessmentId = await saveScore(resolvedAssessmentId)
+        }
 
         assessmentIdByColumnRef.current[String(column.id)] = savedAssessmentId
         assessmentIdByColumnRef.current[savedAssessmentId] = savedAssessmentId
@@ -4962,7 +5151,7 @@ function RecordsPage({
                           min="1"
                           max="1000"
                           value={itemCountForColumn(column)}
-                          onChange={(event) => updateAssessmentItemCount(column.id, event.target.value)}
+                          onChange={(event) => void updateAssessmentItemCount(column.id, event.target.value)}
                           onClick={(event) => event.stopPropagation()}
                           aria-label={`Number of items for ${column.label}`}
                         />
@@ -4992,7 +5181,7 @@ function RecordsPage({
                           min="1"
                           max="1000"
                           value={itemCountForColumn(column)}
-                          onChange={(event) => updateAssessmentItemCount(column.id, event.target.value)}
+                          onChange={(event) => void updateAssessmentItemCount(column.id, event.target.value)}
                           onClick={(event) => event.stopPropagation()}
                           aria-label={`Number of items for ${column.label}`}
                         />
@@ -5034,7 +5223,7 @@ function RecordsPage({
                           min="1"
                           max="1000"
                           value={itemCountForColumn(column)}
-                          onChange={(event) => updateAssessmentItemCount(column.id, event.target.value)}
+                          onChange={(event) => void updateAssessmentItemCount(column.id, event.target.value)}
                           onClick={(event) => event.stopPropagation()}
                           aria-label={`Number of items for ${column.label}`}
                         />
@@ -5076,7 +5265,7 @@ function RecordsPage({
                           min="1"
                           max="1000"
                           value={itemCountForColumn(column)}
-                          onChange={(event) => updateAssessmentItemCount(column.id, event.target.value)}
+                          onChange={(event) => void updateAssessmentItemCount(column.id, event.target.value)}
                           onClick={(event) => event.stopPropagation()}
                           aria-label={`Number of items for ${column.label}`}
                         />
@@ -5185,7 +5374,12 @@ function RecordsPage({
                         max={examMaximums[String(id) as keyof typeof examMaximums]}
                         value={recordValue(student, String(id), Number(fallback))}
                         onChange={(event) =>
-                          updateRecordValue(student.id, String(id), event.target.value)
+                          updateRecordValue(
+                            student.id,
+                            String(id),
+                            event.target.value,
+                            examMaximums[String(id) as keyof typeof examMaximums],
+                          )
                         }
                         aria-label={`Edit ${label} score for ${student.name}`}
                         onKeyDown={(event) => {
@@ -5215,7 +5409,12 @@ function RecordsPage({
                         max={examMaximums[String(id) as keyof typeof examMaximums]}
                         value={recordValue(student, String(id), Number(fallback))}
                         onChange={(event) =>
-                          updateRecordValue(student.id, String(id), event.target.value)
+                          updateRecordValue(
+                            student.id,
+                            String(id),
+                            event.target.value,
+                            examMaximums[String(id) as keyof typeof examMaximums],
+                          )
                         }
                         aria-label={`Edit ${label} score for ${student.name}`}
                         onKeyDown={(event) => {
