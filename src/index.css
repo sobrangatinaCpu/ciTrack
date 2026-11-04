@@ -6789,3 +6789,46 @@ body > .summary-speed-dial .summary-fab { position: relative; z-index: 20002 !im
     touch-action: pan-y;
   }
 }
+
+/* Final section-switcher correction: force a real scroll viewport. */
+.records-section-manager,
+.section-switcher {
+  overflow: visible !important;
+}
+.section-switcher-menu {
+  display: block;
+  height: auto;
+  max-height: 260px !important;
+  overflow-x: hidden !important;
+  overflow-y: scroll !important;
+  overscroll-behavior-y: contain;
+  scrollbar-width: auto;
+  scrollbar-color: #7f9bb3 #eef4f8;
+  pointer-events: auto;
+  touch-action: pan-y !important;
+}
+.section-switcher-menu::-webkit-scrollbar {
+  width: 10px;
+}
+.section-switcher-menu::-webkit-scrollbar-track {
+  background: #eef4f8;
+  border-radius: 999px;
+}
+.section-switcher-menu::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 2px solid #eef4f8;
+  border-radius: 999px;
+  background: #7f9bb3;
+}
+.section-switcher-menu > button {
+  flex: none;
+}
+@media (max-width: 600px) {
+  .section-switcher-menu {
+    position: absolute !important;
+    right: 0 !important;
+    left: auto !important;
+    width: min(390px, calc(100vw - 28px)) !important;
+    max-height: 240px !important;
+  }
+}

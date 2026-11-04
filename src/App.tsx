@@ -1934,13 +1934,15 @@ function AddClassModal({
     const classValues = {
       faculty_id: user.id,
       subject: form.subject.trim(),
-      code: form.code.trim(),
-      section: form.code.trim(),
+      // Class code/section is permanent after creation.
+      code: initialClass?.code ?? form.code.trim(),
+      section: initialClass?.code ?? form.code.trim(),
       capacity: Number(form.attendance),
       semester_start: form.semesterStart,
       semester_end: form.semesterEnd,
       requirements: form.requirements.trim() || null,
-      access_code: studentAccessCode,
+      // Student access code is also permanent after creation.
+      access_code: initialClass?.accessCode ?? studentAccessCode,
       color: initialClass?.color ?? "#7a62d3",
       status: initialClass?.status ?? "Scheduled",
     }
@@ -2044,7 +2046,17 @@ function AddClassModal({
           </label>
           <div className="class-form-grid">
             <label>Course code / section <em>Required</em>
-              <input value={form.code} onChange={(event) => updateForm("code", event.target.value)} placeholder="e.g. BIT-CT 3B" required />
+              <input
+                value={form.code}
+                onChange={(event) => updateForm("code", event.target.value)}
+                placeholder="e.g. BIT-CT 3B"
+                readOnly={isEditing}
+                aria-readonly={isEditing}
+                className={isEditing ? "class-fixed-code" : undefined}
+                title={isEditing ? "The course code and section are fixed after the class is created." : undefined}
+                required
+              />
+              {isEditing && <small>Fixed after class creation.</small>}
             </label>
             <label>Student capacity <em>Required</em>
               <input type="number" min="1" max="200" value={form.attendance} onChange={(event) => updateForm("attendance", event.target.value)} required />
@@ -2112,16 +2124,20 @@ function AddClassModal({
           <label>Student access code
             <div className="class-access-code-field">
               <input type="text" value={studentAccessCode} readOnly aria-label="Generated student access code" />
-              <button
-                type="button"
-                className="secondary-button class-code-generate"
-                onClick={() => setStudentAccessCode(generateStudentAccessCode())}
-                disabled={saving}
-              >
-                Generate code
-              </button>
+              {!isEditing && (
+                <button
+                  type="button"
+                  className="secondary-button class-code-generate"
+                  onClick={() => setStudentAccessCode(generateStudentAccessCode())}
+                  disabled={saving}
+                >
+                  Generate code
+                </button>
+              )}
             </div>
-            <small>A code is generated automatically. Generate a new one before saving if needed. Students use this code to join the class.</small>
+            <small>{isEditing
+              ? "This access code is permanent and cannot be changed after the class is created."
+              : "A code is generated automatically. Generate a new one before saving if needed. Students use this code to join the class."}</small>
           </label>
           <label>Required materials or prerequisites
             <textarea value={form.requirements} onChange={(event) => updateForm("requirements", event.target.value)} placeholder="e.g. Laptop, network cable, and completed safety orientation" />
@@ -8031,12 +8047,12 @@ function ActiveClass({
   }
   type RubricCriterion = { id: string; name: string; max: number }
   const defaultRubric: RubricCriterion[] = [
-    { id: "problem-identification", name: "Problem Identification", max: 25 },
-    { id: "design-quality", name: "Design Quality", max: 40 },
-    { id: "creativity-innovation", name: "Creativity & Innovation", max: 15 },
-    { id: "explanation-justification", name: "Explanation & Justification", max: 20 },
+    { id: "accuracy", name: "Accuracy", max: 5 },
+    { id: "technique", name: "Technique", max: 5 },
+    { id: "completion", name: "Completion", max: 5 },
+    { id: "safety", name: "Safety", max: 5 },
   ]
-  const rubricStorageKey = `cit-portal:performance-rubric:v2:${item.id}`
+  const rubricStorageKey = `cit-portal:performance-rubric:${item.id}`
   const [performanceStudent, setPerformanceStudent] = useState<PerformanceStudent | null>(null)
   const [performanceTerm, setPerformanceTerm] = useState<"midterm" | "final">("midterm")
   const performanceTermRef = useRef(performanceTerm)
@@ -8174,22 +8190,6 @@ function ActiveClass({
         p_points: scaledPoints,
         p_note: note,
       })
-      const { error: laboratoryRecordError } = await supabase.rpc(
-        "save_laboratory_performance_record",
-        {
-          p_class_id: item.id,
-          p_assessment_id: performanceColumn.id,
-          p_student_id: performanceStudent.id,
-          p_term: performanceTerm,
-          p_problem_identification: rubricScores["problem-identification"] ?? 0,
-          p_design_quality: rubricScores["design-quality"] ?? 0,
-          p_creativity_innovation: rubricScores["creativity-innovation"] ?? 0,
-          p_explanation_justification: rubricScores["explanation-justification"] ?? 0,
-          p_scaled_score: scaledPoints,
-          p_remarks: performanceRemarks.trim() || null,
-        },
-      )
-      if (laboratoryRecordError) throw laboratoryRecordError
       setPerformanceColumns((columns) => columns.map((column) =>
         column.id === performanceColumn.id
           ? { ...column, currentScore: Number(result.score) }
@@ -9131,7 +9131,7 @@ function ActiveClass({
 
                           <div className="performance-rubric">
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                              <h5>Laboratory rubric</h5>
+                              <h5>Rubric</h5>
                               <button
                                 type="button"
                                 className="secondary-button compact"
@@ -9213,7 +9213,7 @@ function ActiveClass({
                               })
                             )}
                             <strong className="performance-total">
-                              Laboratory total: {rubricTotal} / {rubricMax} → {scaledPoints} / {performanceColumn?.maxScore ?? 100} in the gradebook
+                              Total: {rubricTotal} / {rubricMax} → {scaledPoints} / {performanceColumn?.maxScore ?? 100} in the column
                             </strong>
                           </div>
 
