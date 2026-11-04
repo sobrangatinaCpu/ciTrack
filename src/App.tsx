@@ -8008,16 +8008,188 @@ function ActiveClass({
   const [scannerMode, setScannerMode] = useState<"attendance" | "performance">(
     "attendance",
   )
-  const [activityType] = useState<"handson">("handson")
-  const [selectedPerformanceStudent, setSelectedPerformanceStudent] = useState<any>(null)
-  const [handsOnScores, setHandsOnScores] = useState({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
-  const [performanceDrafts, setPerformanceDrafts] = useState<any[]>([])
-  const [performanceMessage, setPerformanceMessage] = useState("")
-  const [performanceRemarks, setPerformanceRemarks] = useState("")
+  // The scan handler is created when scanning starts, so it reads the
+  // current mode and term through refs.
+  const scannerModeRef = useRef(scannerMode)
+  useEffect(() => { scannerModeRef.current = scannerMode }, [scannerMode])
+
+  // Performance mode: hands-on points for the scanned student, saved to the
+  // gradebook through comptech_performance_points, the same database function
+  // as the CompTech app's professor scanner. It records no attendance.
+  type PerformanceColumn = {
+    id: string
+    title: string
+    maxScore: number
+    currentScore: number | null
+  }
+  type PerformanceStudent = {
+    id: string
+    name: string
+    studentNumber: string
+    cardUid: string
+    cardPayload: string
+  }
+  type RubricCriterion = { id: string; name: string; max: number }
+  const defaultRubric: RubricCriterion[] = [
+    { id: "accuracy", name: "Accuracy", max: 5 },
+    { id: "technique", name: "Technique", max: 5 },
+    { id: "completion", name: "Completion", max: 5 },
+    { id: "safety", name: "Safety", max: 5 },
+  ]
+  const rubricStorageKey = `cit-portal:performance-rubric:${item.id}`
+  const [performanceStudent, setPerformanceStudent] = useState<PerformanceStudent | null>(null)
   const [performanceTerm, setPerformanceTerm] = useState<"midterm" | "final">("midterm")
-  const [handsOnIndex, setHandsOnIndex] = useState(1)
-  const [performanceDetectedAt, setPerformanceDetectedAt] = useState<string | null>(null)
-  const handsOnTotal = handsOnScores.accuracy + handsOnScores.technique + handsOnScores.completion + handsOnScores.safety
+  const performanceTermRef = useRef(performanceTerm)
+  useEffect(() => { performanceTermRef.current = performanceTerm }, [performanceTerm])
+  const [performanceColumns, setPerformanceColumns] = useState<PerformanceColumn[]>([])
+  const [performanceColumnId, setPerformanceColumnId] = useState("")
+  const [performanceLoading, setPerformanceLoading] = useState(false)
+  const [performanceSaving, setPerformanceSaving] = useState(false)
+  const [performanceMessage, setPerformanceMessage] = useState("")
+  const [performanceError, setPerformanceError] = useState("")
+  const [performanceRemarks, setPerformanceRemarks] = useState("")
+  // The rubric is edited by the professor and kept on this device per class.
+  const [rubric, setRubric] = useState<RubricCriterion[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(rubricStorageKey) ?? "null")
+      if (
+        Array.isArray(saved) && saved.length > 0 &&
+        saved.every((c: any) => typeof c?.id === "string" && typeof c?.name === "string" && Number(c?.max) > 0)
+      ) return saved.map((c: any) => ({ id: c.id, name: c.name, max: Number(c.max) }))
+    } catch {
+      // Use the default rubric.
+    }
+    return defaultRubric
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem(rubricStorageKey, JSON.stringify(rubric))
+    } catch {
+      // Not saved on this device; the rubric still works for this session.
+    }
+  }, [rubric, rubricStorageKey])
+  const [rubricScores, setRubricScores] = useState<Record<string, number>>({})
+  const [rubricEditing, setRubricEditing] = useState(false)
+  const rubricMax = rubric.reduce((sum, criterion) => sum + criterion.max, 0)
+  const rubricTotal = rubric.reduce(
+    (sum, criterion) => sum + Math.min(criterion.max, rubricScores[criterion.id] ?? 0),
+    0,
+  )
+  const performanceColumn =
+    performanceColumns.find((column) => column.id === performanceColumnId) ?? null
+  // The rubric total, scaled to the column's maximum (15/20 → 75/100).
+  const scaledPoints = performanceColumn && rubricMax > 0
+    ? Math.round((rubricTotal / rubricMax) * performanceColumn.maxScore * 100) / 100
+    : 0
+
+  const performanceErrorText = (error: any) => {
+    const code = error?.code === "PGRST202" ? "SETUP_REQUIRED" : String(error?.message ?? "")
+    return ({
+      CARD_NOT_RECOGNIZED: "This card isn't assigned to a student. Assign it in the student app first.",
+      NOT_ENROLLED: "This student isn't enrolled in this class.",
+      CLASS_NOT_OWNED: "This class doesn't belong to the signed-in faculty account.",
+      COLUMN_NOT_FOUND: "That hands-on column no longer exists. Pick another one.",
+      SETUP_REQUIRED:
+        "Performance scoring isn't set up in the database yet. Run the latest 20261104020000_performance_points.sql in Supabase.",
+    } as Record<string, string>)[code] ?? "Points could not be saved. Check the connection and try again."
+  }
+
+  const callPerformancePoints = async (params: Record<string, unknown>) => {
+    const { data, error } = await supabase.rpc("comptech_performance_points", {
+      p_class_id: String(item.id),
+      ...params,
+    })
+    if (error) throw error
+    if (!data || typeof data !== "object") throw new Error("INVALID_RESPONSE")
+    return data as Record<string, any>
+  }
+
+  // Identifies the student on the card and lists the term's existing
+  // hands-on columns, with the student's current score in each.
+  const loadPerformanceStudent = async (
+    cardUid: string,
+    cardPayload: string,
+    term: "midterm" | "final",
+  ) => {
+    setPerformanceLoading(true)
+    setPerformanceError("")
+    try {
+      const preview = await callPerformancePoints({
+        p_term: term,
+        p_card_uid: cardUid,
+        p_card_payload: cardPayload,
+      })
+      const columns: PerformanceColumn[] = (Array.isArray(preview.columns) ? preview.columns : [])
+        .map((column: any) => ({
+          id: String(column.id),
+          title: String(column.title ?? "Hands-on"),
+          maxScore: Number(column.max_score) > 0 ? Number(column.max_score) : 100,
+          currentScore:
+            column.current_score === null || column.current_score === undefined
+              ? null
+              : Number(column.current_score),
+        }))
+      setPerformanceStudent({
+        id: String(preview.student_id ?? ""),
+        name: String(preview.student_name ?? "Student"),
+        studentNumber: String(preview.student_number ?? ""),
+        cardUid,
+        cardPayload,
+      })
+      setPerformanceColumns(columns)
+      setPerformanceColumnId((current) =>
+        columns.some((column) => column.id === current)
+          ? current
+          : columns[columns.length - 1]?.id ?? "",
+      )
+      return preview
+    } finally {
+      setPerformanceLoading(false)
+    }
+  }
+
+  const savePerformancePoints = async () => {
+    if (!performanceStudent || !performanceColumn || performanceSaving) return
+    if (rubricMax <= 0) {
+      setPerformanceError("Give the rubric at least one criterion with a maximum above 0.")
+      return
+    }
+    setPerformanceSaving(true)
+    setPerformanceError("")
+    setPerformanceMessage("")
+    const breakdown = rubric
+      .map((criterion) =>
+        `${criterion.name || "Criterion"} ${Math.min(criterion.max, rubricScores[criterion.id] ?? 0)}/${criterion.max}`)
+      .join(", ")
+    const note = [
+      `Rubric: ${breakdown} (${rubricTotal}/${rubricMax})`,
+      performanceRemarks.trim(),
+    ].filter(Boolean).join(" · ")
+    try {
+      const result = await callPerformancePoints({
+        p_term: performanceTerm,
+        p_card_uid: performanceStudent.cardUid,
+        p_card_payload: performanceStudent.cardPayload,
+        p_assessment_id: performanceColumn.id,
+        p_points: scaledPoints,
+        p_note: note,
+      })
+      setPerformanceColumns((columns) => columns.map((column) =>
+        column.id === performanceColumn.id
+          ? { ...column, currentScore: Number(result.score) }
+          : column,
+      ))
+      setRubricScores({})
+      setPerformanceRemarks("")
+      setPerformanceMessage(
+        `Saved ${result.student_name}: ${result.score} / ${result.max_score} in ${result.assessment_title}. Tap Scan student card for the next student.`,
+      )
+    } catch (error) {
+      setPerformanceError(performanceErrorText(error))
+    } finally {
+      setPerformanceSaving(false)
+    }
+  }
 
   const [attendanceSessionId, setAttendanceSessionId] = useState<string | null>(null)
   const {
@@ -8328,6 +8500,27 @@ function ActiveClass({
           return
         }
 
+        // Performance mode only identifies the student for hands-on points.
+        // It records no attendance and doesn't need the student's phone.
+        if (scannerModeRef.current === "performance") {
+          setNfcScannerStatus("verifying")
+          setNfcScanMessage("Card detected. Loading the student's hands-on columns...")
+          try {
+            const preview = await loadPerformanceStudent(cardUid, ndefPayload, performanceTermRef.current)
+            setRubricScores({})
+            setPerformanceRemarks("")
+            setPerformanceMessage("")
+            nfcReaderRef.current = null
+            setNfcScannerStatus("success")
+            setNfcScanMessage(`${preview.student_name ?? "Student"} found. Enter the hands-on points below.`)
+          } catch (error) {
+            nfcReaderRef.current = null
+            setNfcScannerStatus("error")
+            setNfcScanMessage(performanceErrorText(error))
+          }
+          return
+        }
+
         setNfcScannerStatus("verifying")
         setNfcScanMessage("Card detected. Verifying the student...")
 
@@ -8377,16 +8570,6 @@ function ActiveClass({
             if (!data) throw new Error("NOT_CONFIRMED")
           }
 
-          if (scannerMode === "performance") {
-            const attendance = data?.attendance ?? null
-            setSelectedPerformanceStudent({
-              id: String(attendance?.student_id ?? ""),
-              name: String(attendance?.student_name ?? attendance?.full_name ?? "Scanned student"),
-              studentNo: String(attendance?.student_number ?? attendance?.student_no ?? cardUid),
-            })
-            setPerformanceDetectedAt(new Date().toISOString())
-            setPerformanceMessage("")
-          }
           nfcReaderRef.current = null
           setNfcScannerStatus("success")
           setNfcScanMessage(
@@ -8609,7 +8792,7 @@ function ActiveClass({
   )
   useEffect(() => {
     if (!performanceMessage) return
-    const timer = window.setTimeout(() => setPerformanceMessage(""), 3000)
+    const timer = window.setTimeout(() => setPerformanceMessage(""), 8000)
     return () => window.clearTimeout(timer)
   }, [performanceMessage])
 
@@ -8782,7 +8965,7 @@ function ActiveClass({
                         : nfcScannerStatus === "verifying"
                           ? "Verifying student"
                           : nfcScannerStatus === "success"
-                            ? "Attendance recorded"
+                            ? scannerMode === "performance" ? "Student found" : "Attendance recorded"
                             : nfcScannerStatus === "unsupported"
                               ? "NFC scanning unavailable"
                               : nfcScannerStatus === "error"
@@ -8855,98 +9038,196 @@ function ActiveClass({
                 <span><Icon name="chart" size={20} /></span>
                 <div className="performance-mode-content">
                   <small>Performance mode</small>
-                  <strong>Ready to log performance</strong>
-                  <p>Scan a registered student NFC card to open the performance record.</p>
+                  <strong>Hands-on points</strong>
+                  <p>Tap Scan student card, then hold the student's card to the phone. This records no attendance.</p>
 
-                  {!selectedPerformanceStudent ? (
-                    <p className="performance-awaiting-card">Tap a student NFC card to open the student performance record.</p>
+                  <div className="performance-sync-controls">
+                    <label>
+                      <span>Term</span>
+                      <select
+                        value={performanceTerm}
+                        disabled={performanceLoading || performanceSaving}
+                        onChange={(event) => {
+                          const term = event.target.value as "midterm" | "final"
+                          setPerformanceTerm(term)
+                          if (performanceStudent) {
+                            void loadPerformanceStudent(performanceStudent.cardUid, performanceStudent.cardPayload, term)
+                              .catch((error) => setPerformanceError(performanceErrorText(error)))
+                          }
+                        }}
+                      >
+                        <option value="midterm">Midterm</option>
+                        <option value="final">Finals</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  {!performanceStudent ? (
+                    <p className="performance-awaiting-card">
+                      {performanceLoading ? "Loading the student..." : "No student scanned yet."}
+                    </p>
                   ) : (
                     <div className="performance-record">
                       <div className="performance-student-heading">
                         <div>
-                          <strong>{selectedPerformanceStudent.name}</strong>
-                          <small>{selectedPerformanceStudent.studentNo}</small>
+                          <strong>{performanceStudent.name}</strong>
+                          <small>{performanceStudent.studentNumber || "No student number"}</small>
                         </div>
-                        <button type="button" className="secondary-button compact" onClick={() => setSelectedPerformanceStudent(null)}>Clear</button>
+                        <button
+                          type="button"
+                          className="secondary-button compact"
+                          onClick={() => {
+                            setPerformanceStudent(null)
+                            setPerformanceColumns([])
+                            setRubricScores({})
+                            setPerformanceRemarks("")
+                            setPerformanceError("")
+                          }}
+                        >Clear</button>
                       </div>
 
-                      <div className="performance-sync-controls">
-                        <label>
-                          <span>Term</span>
-                          <select value={performanceTerm} onChange={(event) => setPerformanceTerm(event.target.value as "midterm" | "final")}>
-                            <option value="midterm">Midterm</option>
-                            <option value="final">Finals</option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>Hands-On index</span>
-                          <select value={handsOnIndex} onChange={(event) => setHandsOnIndex(Number(event.target.value))}>
-                            {Array.from({ length: performanceTerm === "midterm" ? 10 : 12 }, (_, index) => (
-                              <option key={index + 1} value={index + 1}>{index + 1}</option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-
-                      {performanceDetectedAt && (
-                        <div className="performance-detected-banner">
-                          <span>✓</span>
-                          <div><strong>Student card detected</strong><small>Performance record loaded successfully.</small></div>
-                          <time>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(performanceDetectedAt))}</time>
-                        </div>
-                      )}
-
-
-                        <div className="performance-rubric">
-                          <h5>Hands-On Activity</h5>
-                          {(["accuracy", "technique", "completion", "safety"] as const).map((criterion) => (
-                            <label key={criterion}>
-                              <span>{criterion[0].toUpperCase() + criterion.slice(1)}: {handsOnScores[criterion]}</span>
-                              <output>{handsOnScores[criterion]} / 5</output>
-                              <input type="range" min="0" max="5" value={handsOnScores[criterion]} onChange={(event) => setHandsOnScores((scores) => ({ ...scores, [criterion]: Number(event.target.value) }))} />
+                      {performanceColumns.length === 0 ? (
+                        <p className="performance-awaiting-card">
+                          This class has no {performanceTerm === "final" ? "Finals" : "Midterm"} hands-on columns yet.
+                          Add one in Records → {performanceTerm === "final" ? "Final" : "Midterm"} ACTIVITIES/Projects and
+                          save a score in it, then scan again.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="performance-sync-controls">
+                            <label>
+                              <span>Hands-on column</span>
+                              <select
+                                value={performanceColumnId}
+                                disabled={performanceSaving}
+                                onChange={(event) => setPerformanceColumnId(event.target.value)}
+                              >
+                                {performanceColumns.map((column) => (
+                                  <option key={column.id} value={column.id}>{column.title}</option>
+                                ))}
+                              </select>
                             </label>
-                          ))}
-                          <strong className="performance-total">Total score: {handsOnTotal} / 20</strong>
-                        </div>
+                          </div>
+                          <small>
+                            Current score: {performanceColumn?.currentScore ?? "—"} / {performanceColumn?.maxScore ?? 100}
+                            {performanceColumn?.currentScore != null ? " · saving replaces it" : ""}
+                          </small>
 
-                      <label className="performance-remarks-field">
-                        <span>Remarks <small>(optional)</small></span>
-                        <textarea maxLength={255} rows={3} value={performanceRemarks} onChange={(event) => setPerformanceRemarks(event.target.value)} placeholder="Add remarks for this session..." />
-                        <small>{performanceRemarks.length}/255</small>
-                      </label>
+                          <div className="performance-rubric">
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                              <h5>Rubric</h5>
+                              <button
+                                type="button"
+                                className="secondary-button compact"
+                                onClick={() => setRubricEditing((editing) => !editing)}
+                              >{rubricEditing ? "Done editing" : "Edit rubric"}</button>
+                            </div>
+                            {rubricEditing ? (
+                              <>
+                                {rubric.map((criterion) => (
+                                  <div key={criterion.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                                    <input
+                                      value={criterion.name}
+                                      maxLength={40}
+                                      placeholder="Criterion"
+                                      aria-label="Criterion name"
+                                      style={{ flex: 1, minWidth: 0 }}
+                                      onChange={(event) => setRubric((current) => current.map((c) =>
+                                        c.id === criterion.id ? { ...c, name: event.target.value } : c))}
+                                    />
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={100}
+                                      value={criterion.max}
+                                      aria-label={`Maximum score for ${criterion.name || "criterion"}`}
+                                      style={{ width: 64 }}
+                                      onChange={(event) => {
+                                        const max = Math.min(100, Math.max(1, Math.round(Number(event.target.value) || 1)))
+                                        setRubric((current) => current.map((c) =>
+                                          c.id === criterion.id ? { ...c, max } : c))
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="secondary-button compact"
+                                      disabled={rubric.length <= 1}
+                                      aria-label={`Remove ${criterion.name || "criterion"}`}
+                                      onClick={() => setRubric((current) => current.filter((c) => c.id !== criterion.id))}
+                                    >×</button>
+                                  </div>
+                                ))}
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <button
+                                    type="button"
+                                    className="secondary-button compact"
+                                    disabled={rubric.length >= 10}
+                                    onClick={() => setRubric((current) => [
+                                      ...current,
+                                      { id: `criterion-${Date.now()}`, name: `Criterion ${current.length + 1}`, max: 5 },
+                                    ])}
+                                  >+ Add criterion</button>
+                                  <button
+                                    type="button"
+                                    className="secondary-button compact"
+                                    onClick={() => setRubric(defaultRubric)}
+                                  >Reset to default</button>
+                                </div>
+                                <small>Total possible: {rubricMax}. The rubric is kept on this device for this class.</small>
+                              </>
+                            ) : (
+                              rubric.map((criterion) => {
+                                const value = Math.min(criterion.max, rubricScores[criterion.id] ?? 0)
+                                return (
+                                  <label key={criterion.id}>
+                                    <span>{criterion.name || "Criterion"}: {value}</span>
+                                    <output>{value} / {criterion.max}</output>
+                                    <input
+                                      type="range"
+                                      min="0"
+                                      max={criterion.max}
+                                      value={value}
+                                      onChange={(event) => setRubricScores((scores) => ({
+                                        ...scores,
+                                        [criterion.id]: Number(event.target.value),
+                                      }))}
+                                    />
+                                  </label>
+                                )
+                              })
+                            )}
+                            <strong className="performance-total">
+                              Total: {rubricTotal} / {rubricMax} → {scaledPoints} / {performanceColumn?.maxScore ?? 100} in the column
+                            </strong>
+                          </div>
 
-                      {performanceMessage && <p className="performance-save-message" role="status">{performanceMessage}</p>}
-                      <div className="performance-form-actions">
-                        <button type="button" className="secondary-button" onClick={() => {
-                          setSelectedPerformanceStudent(null)
-                          setPerformanceDetectedAt(null)
-                          setPerformanceRemarks("")
-                          setHandsOnScores({ accuracy: 0, technique: 0, completion: 0, safety: 0 })
-                        }}>Clear</button>
-                        <button type="button" className={`primary-button performance-save-button ${activityType === "handson" ? "hands-on" : ""}`} onClick={() => {
-                          const score = handsOnTotal
-                          const termLabel = performanceTerm === "final" ? "Final" : "Midterm"
-                          const assessmentId = `${performanceTerm}-project-${handsOnIndex}`
-                          const title = `${termLabel} Project ${handsOnIndex}`
-                          const detail = {
-                            assessmentId, classId: String(item.id),
-                            studentNumber: selectedPerformanceStudent.studentNo,
-                            title, type: "handson",
-                            term: performanceTerm, maxScore: 20,
-                            score, status: "published", remarks: performanceRemarks,
-                          }
-                          window.dispatchEvent(new CustomEvent("cit-portal:gradebook-score-drafted", { detail }))
-                          setPerformanceDrafts((records) => [...records, { student: selectedPerformanceStudent, activityType: "handson", score, remarks: performanceRemarks, handsOnIndex, term: performanceTerm, status: "Saved", createdAt: new Date().toISOString() }])
-                          setPerformanceMessage(`Saved and synced to ${termLabel} Project ${handsOnIndex}.`)
-                          setPerformanceRemarks("")
-                        }}>Save Record</button>
-                      </div>
+                          <label className="performance-remarks-field">
+                            <span>Notes <small>(optional)</small></span>
+                            <textarea
+                              maxLength={200}
+                              rows={3}
+                              value={performanceRemarks}
+                              onChange={(event) => setPerformanceRemarks(event.target.value)}
+                              placeholder="Add a note for this score..."
+                            />
+                            <small>{performanceRemarks.length}/200</small>
+                          </label>
+
+                          <div className="performance-form-actions">
+                            <button
+                              type="button"
+                              className="primary-button performance-save-button hands-on"
+                              disabled={performanceSaving || performanceLoading || !performanceColumn || rubricEditing}
+                              onClick={() => void savePerformancePoints()}
+                            >{performanceSaving ? "Saving..." : "Save to gradebook"}</button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
 
-                  {performanceDrafts.length > 0 && (
-                    <small className="performance-draft-count">{performanceDrafts.length} performance draft{performanceDrafts.length === 1 ? "" : "s"} in this session</small>
-                  )}
+                  {performanceError && <p className="performance-save-message" role="alert">{performanceError}</p>}
+                  {performanceMessage && <p className="performance-save-message" role="status">{performanceMessage}</p>}
                 </div>
               </section>
             )}
