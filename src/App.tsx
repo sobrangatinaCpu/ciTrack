@@ -2574,6 +2574,7 @@ function RecordsPage({
   const [gradebookSaveState, setGradebookSaveState] = useState<"saving" | "saved">("saved")
   const localDraftValuesRef = useRef<Record<string, Record<string, number | "">>>({})
   const scoreSaveTimersRef = useRef<Record<string, number>>({})
+  const draftCellSaveTimersRef = useRef<Record<string, number>>({})
   const assessmentIdByColumnRef = useRef<Record<string, string>>({})
   const [publishingRecords, setPublishingRecords] = useState(false)
   useEffect(() => {
@@ -2846,7 +2847,7 @@ function RecordsPage({
         (column) => column.type !== "Quiz" && column.type !== "Exam",
       ),
     )
-    setRecordValues({})
+    // Keep current cells visible until the shared database draft finishes loading.
     localDraftValuesRef.current = {}
     assessmentIdByColumnRef.current = {}
 
@@ -2864,6 +2865,26 @@ function RecordsPage({
 
     const loadDatabaseGradebook = async () => {
       if (!selectedSectionId) return
+
+      const { data: sharedDraftRows, error: sharedDraftError } = await supabase
+        .from("gradebook_draft_cells")
+        .select("student_number, column_key, score")
+        .eq("class_id", selectedSectionId)
+      if (!active) return
+      if (sharedDraftError) {
+        console.error("Unable to load shared Gradebook draft cells:", sharedDraftError)
+      } else {
+        const sharedValues: Record<string, Record<string, number | "">> = {}
+        ;(sharedDraftRows ?? []).forEach((row: any) => {
+          const studentNumber = String(row.student_number ?? "").trim()
+          const columnKey = String(row.column_key ?? "").trim()
+          const score = Number(row.score)
+          if (!studentNumber || !columnKey || !Number.isFinite(score)) return
+          sharedValues[studentNumber] = { ...(sharedValues[studentNumber] ?? {}), [columnKey]: score }
+        })
+        localDraftValuesRef.current = sharedValues
+        setRecordValues(sharedValues)
+      }
 
       const [{ data: assessmentRows, error: assessmentError }, { data: reminderRows, error: reminderError }] = await Promise.all([
         supabase
@@ -3124,6 +3145,14 @@ function RecordsPage({
       }, () => void loadDatabaseGradebook())
       .on("postgres_changes", {
         event: "*", schema: "public", table: "faculty_reminders",
+        filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
+      }, () => void loadDatabaseGradebook())
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "gradebook_draft_cells",
+        filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
+      }, () => void loadDatabaseGradebook())
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "assessment_scores",
         filter: selectedSectionId ? `class_id=eq.${selectedSectionId}` : undefined,
       }, () => void loadDatabaseGradebook())
       .subscribe()
@@ -4183,6 +4212,37 @@ function RecordsPage({
     return Math.min(assessmentPoints(student, columns), maximum)
   }
 
+  const persistSharedDraftCell = (studentId: string, columnKey: string, value: number | "") => {
+    if (!selectedSectionId) return
+    const saveKey = `${selectedSectionId}:${studentId}:${columnKey}`
+    const previousTimer = draftCellSaveTimersRef.current[saveKey]
+    if (previousTimer) window.clearTimeout(previousTimer)
+    setGradebookSaveState("saving")
+    draftCellSaveTimersRef.current[saveKey] = window.setTimeout(async () => {
+      try {
+        if (value === "") {
+          const { error } = await supabase.from("gradebook_draft_cells").delete()
+            .eq("class_id", selectedSectionId).eq("student_number", studentId).eq("column_key", columnKey)
+          if (error) throw error
+        } else {
+          const { data: { user } } = await supabase.auth.getUser()
+          if (!user) throw new Error("Your faculty session expired. Sign in again.")
+          const { error } = await supabase.from("gradebook_draft_cells").upsert({
+            class_id: selectedSectionId, faculty_id: user.id, student_number: studentId,
+            column_key: columnKey, score: Number(value), updated_at: new Date().toISOString(),
+          }, { onConflict: "class_id,student_number,column_key" })
+          if (error) throw error
+        }
+        setDraftSavedAt(new Date().toISOString())
+        setGradebookSaveState("saved")
+      } catch (error) {
+        console.error("Unable to persist shared Gradebook cell:", error)
+        setGradebookSaveState("saved")
+        showToast(error instanceof Error ? error.message : "Unable to save Gradebook cell.", "error")
+      } finally { delete draftCellSaveTimersRef.current[saveKey] }
+    }, 300)
+  }
+
   const updateDailySummaryScore = (
     studentId: string,
     field: keyof typeof dailySummaryItems,
@@ -4192,13 +4252,12 @@ function RecordsPage({
     const value = rawValue === ""
       ? ""
       : String(Math.min(maximum, Math.max(0, Number(rawValue) || 0)))
+    const columnKey = `summary-${field}`
     setRecordValues((current) => ({
       ...current,
-      [studentId]: {
-        ...(current[studentId] ?? {}),
-        [`summary-${field}`]: value,
-      },
+      [studentId]: { ...(current[studentId] ?? {}), [columnKey]: value },
     }))
+    persistSharedDraftCell(studentId, columnKey, value)
   }
 
   const finalGrade = (student: typeof students[number]) => {
@@ -4562,7 +4621,9 @@ function RecordsPage({
       return nextValues
     })
 
-    if (nextValue === "" || !selectedSectionId) return
+    if (!selectedSectionId) return
+    persistSharedDraftCell(studentId, columnId, nextValue)
+    if (nextValue === "") return
 
     // Daily Tracker entries are session data, not standalone assessment rows.
     // Keep these values in the local draft and summarize them in Gradebook.
