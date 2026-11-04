@@ -1867,10 +1867,8 @@ function AddClassModal({
     initialClass?.schedules?.length ? initialClass.schedules : [legacySchedule],
   )
   const [saving, setSaving] = useState(false)
-  // Generate a code once for a new class. Existing classes always keep the
-  // access code that was stored when the class was first created.
   const [studentAccessCode, setStudentAccessCode] = useState(
-    () => initialClass ? String(initialClass.accessCode ?? "") : generateStudentAccessCode(),
+    () => initialClass?.accessCode || generateStudentAccessCode(),
   )
   const updateForm = (field: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [field]: value }))
@@ -1933,14 +1931,6 @@ function AddClassModal({
       return
     }
     setSaving(true)
-    const fixedAccessCode = initialClass
-      ? String(initialClass.accessCode ?? studentAccessCode).trim()
-      : studentAccessCode.trim()
-    if (!fixedAccessCode) {
-      setSaving(false)
-      showMessage("This existing class has no access code stored. Restore the class access code in Supabase before saving changes.")
-      return
-    }
     const classValues = {
       faculty_id: user.id,
       subject: form.subject.trim(),
@@ -1950,7 +1940,7 @@ function AddClassModal({
       semester_start: form.semesterStart,
       semester_end: form.semesterEnd,
       requirements: form.requirements.trim() || null,
-      access_code: fixedAccessCode,
+      access_code: studentAccessCode,
       color: initialClass?.color ?? "#7a62d3",
       status: initialClass?.status ?? "Scheduled",
     }
@@ -2030,13 +2020,13 @@ function AddClassModal({
       semesterStart: savedClass.semester_start ?? form.semesterStart,
       semesterEnd: savedClass.semester_end ?? form.semesterEnd,
       meetingDays: firstSchedule.meetingDays,
-      accessCode: savedClass.access_code ?? fixedAccessCode,
+      accessCode: savedClass.access_code ?? studentAccessCode,
       schedules: savedSchedules,
       reschedules: initialClass?.reschedules ?? [],
     })
     setSaving(false)
     if (!initialClass) {
-      showToast(`Class created successfully. Access code: ${savedClass.access_code ?? fixedAccessCode}`)
+      showToast(`Class created successfully. Access code: ${savedClass.access_code ?? studentAccessCode}`)
     }
   }
 
@@ -2121,29 +2111,17 @@ function AddClassModal({
           <button type="button" className="secondary-button" style={{ fontFamily: "inherit" }} onClick={addSchedule}><Icon name="plus" size={16} /> Add another schedule</button>
           <label>Student access code
             <div className="class-access-code-field">
-              <input
-                type="text"
-                value={studentAccessCode}
-                readOnly
-                aria-readonly="true"
-                aria-label={isEditing ? "Fixed student access code" : "Generated student access code"}
-              />
-              {!isEditing && (
-                <button
-                  type="button"
-                  className="secondary-button class-code-generate"
-                  onClick={() => setStudentAccessCode(generateStudentAccessCode())}
-                  disabled={saving}
-                >
-                  Generate code
-                </button>
-              )}
+              <input type="text" value={studentAccessCode} readOnly aria-label="Generated student access code" />
+              <button
+                type="button"
+                className="secondary-button class-code-generate"
+                onClick={() => setStudentAccessCode(generateStudentAccessCode())}
+                disabled={saving}
+              >
+                Generate code
+              </button>
             </div>
-            <small>
-              {isEditing
-                ? "This class code was fixed when the class was created and cannot be regenerated while editing."
-                : "A code is generated automatically. Generate a different code before creating the class if needed. After creation, the code becomes fixed."}
-            </small>
+            <small>A code is generated automatically. Generate a new one before saving if needed. Students use this code to join the class.</small>
           </label>
           <label>Required materials or prerequisites
             <textarea value={form.requirements} onChange={(event) => updateForm("requirements", event.target.value)} placeholder="e.g. Laptop, network cable, and completed safety orientation" />
@@ -9251,15 +9229,88 @@ function MinimizedSession({
 function LandingPage({
   onSignIn,
   onRegistrationComplete,
+  forcePasswordRecovery = false,
 }: {
   onSignIn: () => void
   onRegistrationComplete: () => void
+  forcePasswordRecovery?: boolean
 }) {
   const [authMode, setAuthMode] = useState<"signIn" | "signUp">("signIn")
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [authFormErrors, setAuthFormErrors] = useState<string[]>([])
+  const [recoveryView, setRecoveryView] = useState<"closed" | "request" | "update">("closed")
+  const [recoveryEmail, setRecoveryEmail] = useState("")
+  const [recoveryPassword, setRecoveryPassword] = useState("")
+  const [recoveryConfirmation, setRecoveryConfirmation] = useState("")
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
+  const [recoveryNotice, setRecoveryNotice] = useState("")
   const isSignUp = authMode === "signUp"
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryNotice("")
+        setRecoveryView("update")
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (forcePasswordRecovery) {
+      setRecoveryNotice("")
+      setRecoveryView("update")
+    }
+  }, [forcePasswordRecovery])
+
+  const requestPasswordReset = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const email = recoveryEmail.trim().toLowerCase()
+    if (!/^[^\s@]+@ms\.bulsu\.edu\.ph$/i.test(email)) {
+      setRecoveryNotice("Enter your @ms.bulsu.edu.ph university email address.")
+      return
+    }
+    setRecoveryBusy(true)
+    setRecoveryNotice("")
+    const redirectTo = `${window.location.origin}${window.location.pathname}`
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo })
+    setRecoveryBusy(false)
+    if (error) {
+      setRecoveryNotice(error.message)
+      return
+    }
+    setRecoveryNotice("If an account exists for this email, a password-reset link has been sent. Check the inbox and spam folder.")
+  }
+
+  const updateRecoveredPassword = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const validPassword = recoveryPassword.length >= 8 && /[A-Z]/.test(recoveryPassword) &&
+      /[a-z]/.test(recoveryPassword) && /[0-9]/.test(recoveryPassword) && /[^A-Za-z0-9]/.test(recoveryPassword)
+    if (!validPassword) {
+      setRecoveryNotice("Use at least 8 characters with uppercase, lowercase, number, and special character.")
+      return
+    }
+    if (recoveryPassword !== recoveryConfirmation) {
+      setRecoveryNotice("Passwords do not match.")
+      return
+    }
+    setRecoveryBusy(true)
+    setRecoveryNotice("")
+    const { error } = await supabase.auth.updateUser({ password: recoveryPassword })
+    if (error) {
+      setRecoveryBusy(false)
+      setRecoveryNotice(error.message)
+      return
+    }
+    await supabase.auth.signOut({ scope: "local" })
+    setRecoveryBusy(false)
+    setRecoveryPassword("")
+    setRecoveryConfirmation("")
+    setRecoveryView("closed")
+    showMessage("Password updated successfully. Sign in with the new password.", "success", "Password changed")
+    window.history.replaceState({}, document.title, window.location.pathname)
+  }
 
   return (
     <main className="landing-page">
@@ -9524,7 +9575,15 @@ function LandingPage({
         </label>
       </>
     ) : (
-      <button className="landing-forgot-password" type="button">
+      <button
+        className="landing-forgot-password"
+        type="button"
+        onClick={() => {
+          setRecoveryNotice("")
+          setRecoveryEmail("")
+          setRecoveryView("request")
+        }}
+      >
         Forgot password?
       </button>
     )}
@@ -9550,6 +9609,31 @@ function LandingPage({
     </p>
   </div>
 </section>
+      {recoveryView !== "closed" && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-card profile-edit-modal" role="dialog" aria-modal="true" aria-labelledby="password-recovery-title">
+            <button type="button" className="modal-close" aria-label="Close password recovery" onClick={() => setRecoveryView("closed")}>×</button>
+            <p className="eyebrow">Account recovery</p>
+            <h2 id="password-recovery-title">{recoveryView === "request" ? "Forgot password" : "Create a new password"}</h2>
+            {recoveryView === "request" ? (
+              <form className="profile-form-fields" onSubmit={requestPasswordReset}>
+                <p>Enter the university email connected to the faculty account. A secure recovery link will be sent by Supabase.</p>
+                <label><span className="profile-field-heading">University email <em>Required</em></span><input type="email" value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} placeholder="name@ms.bulsu.edu.ph" autoComplete="email" required /></label>
+                {recoveryNotice && <p role="status" className="performance-save-message">{recoveryNotice}</p>}
+                <div className="profile-form-actions"><button type="button" className="secondary-button" onClick={() => setRecoveryView("closed")}>Cancel</button><button type="submit" className="primary-button" disabled={recoveryBusy}>{recoveryBusy ? "Sending..." : "Send reset link"}</button></div>
+              </form>
+            ) : (
+              <form className="profile-form-fields" onSubmit={updateRecoveredPassword}>
+                <p>Use at least 8 characters with uppercase, lowercase, number, and special character.</p>
+                <label><span className="profile-field-heading">New password <em>Required</em></span><input type="password" value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} autoComplete="new-password" required /></label>
+                <label><span className="profile-field-heading">Confirm new password <em>Required</em></span><input type="password" value={recoveryConfirmation} onChange={(event) => setRecoveryConfirmation(event.target.value)} autoComplete="new-password" required /></label>
+                {recoveryNotice && <p role="alert" className="performance-save-message">{recoveryNotice}</p>}
+                <div className="profile-form-actions"><button type="submit" className="primary-button" disabled={recoveryBusy}>{recoveryBusy ? "Updating..." : "Update password"}</button></div>
+              </form>
+            )}
+          </section>
+        </div>
+      )}
     </main>
   )
 }
@@ -9557,6 +9641,10 @@ function LandingPage({
 export default function App() {
   const [page, setPage] = useState("home")
   const [signedIn, setSignedIn] = useState(false)
+  const recoveryLinkOnLoad = () =>
+    window.location.hash.includes("type=recovery") ||
+    new URLSearchParams(window.location.search).get("type") === "recovery"
+  const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(recoveryLinkOnLoad)
   const [authChecking, setAuthChecking] = useState(true)
   const registrationLogoutInProgress = useRef(false)
   const [activities, setActivities] =
@@ -9760,7 +9848,12 @@ export default function App() {
     let mounted = true
 
     const checkAccount = async () => {
-      await validateAuthenticatedAccount()
+      if (recoveryLinkOnLoad()) {
+        setPasswordRecoveryActive(true)
+        setSignedIn(false)
+      } else {
+        await validateAuthenticatedAccount()
+      }
       if (mounted) setAuthChecking(false)
     }
 
@@ -9769,6 +9862,13 @@ export default function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setPasswordRecoveryActive(true)
+        setSignedIn(false)
+        setAuthChecking(false)
+        return
+      }
+
       if (registrationLogoutInProgress.current) {
         if (event === "SIGNED_OUT" || !session?.user) {
           registrationLogoutInProgress.current = false
@@ -9792,7 +9892,7 @@ export default function App() {
     })
 
     const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && !recoveryLinkOnLoad()) {
         void validateAuthenticatedAccount()
       }
     }
@@ -9888,10 +9988,12 @@ export default function App() {
     )
   }
 
-  if (!signedIn) {
+  if (passwordRecoveryActive || !signedIn) {
     return (
       <LandingPage
+        forcePasswordRecovery={passwordRecoveryActive}
         onSignIn={() => {
+          setPasswordRecoveryActive(false)
           setAuthChecking(true)
           void validateAuthenticatedAccount().finally(() => setAuthChecking(false))
         }}
