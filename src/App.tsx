@@ -414,12 +414,27 @@ type RecordAssessmentColumn = {
   type: "Quiz" | "Hands On" | "Activities" | "Exam" | "Attendance" | "Recitation"
   term?: "Midterm" | "Final"
   maxScore?: number
+  itemCount?: number
+  pointsPerItem?: number
 }
 
 const maxScoreForColumn = (column: RecordAssessmentColumn) => {
   const value = Number(column.maxScore)
   if (Number.isFinite(value) && value > 0) return value
   return column.type === "Attendance" || column.type === "Recitation" ? 10 : 100
+}
+const itemCountForColumn = (column: RecordAssessmentColumn) => {
+  const explicitItems = Number(column.itemCount)
+  if (Number.isFinite(explicitItems) && explicitItems > 0) return Math.round(explicitItems)
+
+  const pointsPerItem = Number(column.pointsPerItem)
+  const maximum = maxScoreForColumn(column)
+  if (Number.isFinite(pointsPerItem) && pointsPerItem > 0) {
+    return Math.max(1, Math.round(maximum / pointsPerItem))
+  }
+
+  // Manual class-record columns default to one point per item.
+  return Math.max(1, Math.round(maximum))
 }
 const assessmentColumnIndex = (column: Pick<RecordAssessmentColumn, "label">) => {
   const match = String(column.label ?? "").match(/\d+/)
@@ -2489,7 +2504,11 @@ function RecordsPage({
   const [query, setQuery] = useState("")
   const [recordStudents, setRecordStudents] = useState<typeof students>(students)
   const csvInputRef = useRef<HTMLInputElement | null>(null)
-  const [recordDate, setRecordDate] = useState("2026-10-23")
+  const [recordDate, setRecordDate] = useState(() => {
+    const now = new Date()
+    const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+    return localDate.toISOString().slice(0, 10)
+  })
   const [datePickerOpen, setDatePickerOpen] = useState(false)
   const [calendarMonth, setCalendarMonth] = useState(
     () => new Date("2026-10-01T12:00:00"),
@@ -2499,7 +2518,18 @@ function RecordsPage({
       (column) => column.type !== "Quiz" && column.type !== "Exam",
     ),
   )
-  const [assessmentMenuOpen, setAssessmentMenuOpen] = useState(false)
+  const [examMaximums, setExamMaximums] = useState({
+    "midterm-written": 100,
+    "midterm-actual": 100,
+    "final-written": 100,
+    "final-actual": 100,
+  })
+  const [dailySummaryItems, setDailySummaryItems] = useState({
+    "midterm-recitation": 10,
+    "final-recitation": 5,
+    "midterm-attendance": 10,
+    "final-attendance": 5,
+  })
   const [assessmentToDelete, setAssessmentToDelete] = useState<RecordAssessmentColumn | null>(null)
   const [assessmentDeleting, setAssessmentDeleting] = useState(false)
   const [gradebookView, setGradebookView] = useState<"summary" | "daily">(() => {
@@ -2514,16 +2544,13 @@ function RecordsPage({
   const [dailySessions, setDailySessions] = useState<Record<string, {
     attendanceId: string
     recitationId: string
-  }>>({
-    "2026-10-23": {
-      attendanceId: "midterm-attendance-1",
-      recitationId: "midterm-recitation-1",
-    },
-  })
+  }>>({})
   const [recordValues, setRecordValues] =
     useState<Record<string, Record<string, number | "">>>({})
   const [studentStatuses, setStudentStatuses] =
     useState<Record<string, string>>({})
+  const [manualAttendanceOverrides, setManualAttendanceOverrides] =
+    useState<Record<string, boolean>>({})
   const [selectedSectionId, setSelectedSectionId] = useState(
     () => sessionStorage.getItem("records-target-class") || localStorage.getItem("cit-portal:records-section") || "",
   )
@@ -2885,6 +2912,8 @@ function RecordsPage({
             type,
             term,
             maxScore: Number(row.item_count) * Number(row.points_per_item) || 100,
+            itemCount: Number(row.item_count) || undefined,
+            pointsPerItem: Number(row.points_per_item) || undefined,
           }
           const existingIndex = next.findIndex((column) => sameAssessmentSlot(column, targetSlot))
           const existingColumn = existingIndex >= 0 ? next[existingIndex] : null
@@ -2897,6 +2926,8 @@ function RecordsPage({
             type,
             term,
             maxScore: Number(row.item_count) * Number(row.points_per_item) || existingColumn?.maxScore || 100,
+            itemCount: Number(row.item_count) || existingColumn?.itemCount,
+            pointsPerItem: Number(row.points_per_item) || existingColumn?.pointsPerItem,
           }
           if (existingIndex >= 0) next[existingIndex] = mergedColumn
           else next.push(mergedColumn)
@@ -3122,16 +3153,141 @@ function RecordsPage({
           label: `${term} Attendance ${attendanceCount + 1}`,
           type: "Attendance",
           term,
+          maxScore: 10, itemCount: 10, pointsPerItem: 1,
         },
         {
           id: recitationId,
           label: `${term} Recitation ${recitationCount + 1}`,
           type: "Recitation",
           term,
+          maxScore: 10, itemCount: 10, pointsPerItem: 1,
         },
       ]
     })
   }, [dailySessions, recordDate])
+
+  useEffect(() => {
+    if (!selectedSectionId || !recordDate || recordStudents.length === 0) return
+
+    let active = true
+    let requestVersion = 0
+
+    const loadAttendanceForSelectedDate = async () => {
+      const version = ++requestVersion
+      const dayStart = new Date(`${recordDate}T00:00:00`)
+      const dayEnd = new Date(`${recordDate}T23:59:59.999`)
+
+      const { data: sessions, error: sessionError } = await supabase
+        .from("attendance_sessions")
+        .select("id, class_id, started_at, ended_at, status")
+        .eq("class_id", selectedSectionId)
+        .gte("started_at", dayStart.toISOString())
+        .lte("started_at", dayEnd.toISOString())
+        .order("started_at", { ascending: true })
+
+      if (!active || version !== requestVersion) return
+      if (sessionError) {
+        console.error("Unable to synchronize Daily Tracker attendance:", sessionError)
+        return
+      }
+
+      const sessionRows = sessions ?? []
+      // No class session means no attendance decision yet. Do not mark everyone absent.
+      if (sessionRows.length === 0) return
+
+      const rosterResults = await Promise.all(
+        sessionRows.map((session: any) =>
+          supabase.rpc("faculty_get_live_attendance", {
+            p_session_id: String(session.id),
+          }),
+        ),
+      )
+      if (!active || version !== requestVersion) return
+
+      const attendanceRows = rosterResults.flatMap((result) => {
+        if (result.error) {
+          console.error("Unable to load synchronized attendance roster:", result.error)
+          return []
+        }
+        return Array.isArray(result.data) ? result.data : []
+      })
+
+      const statusByStudent = new Map<string, string>()
+      attendanceRows.forEach((row: any) => {
+        const status = String(row.status ?? "Present").trim() || "Present"
+        const keys = [row.student_id, row.user_id, row.profile_id, row.student_number, row.student_no]
+          .map((value) => String(value ?? "").trim())
+          .filter(Boolean)
+        keys.forEach((key) => statusByStudent.set(key, status))
+      })
+
+      const attendanceColumnId = `daily-${recordDate}-attendance`
+      const nextStatuses: Record<string, string> = {}
+      const nextScores: Record<string, string> = {}
+
+      recordStudents.forEach((student) => {
+        const matchedStatus = [student.userId, student.id]
+          .map((value) => String(value ?? "").trim())
+          .filter(Boolean)
+          .map((key) => statusByStudent.get(key))
+          .find(Boolean)
+        const normalized = String(matchedStatus ?? "Absent").toLowerCase()
+        const status = normalized === "late"
+          ? "Late"
+          : normalized === "excused"
+            ? "Excused"
+            : normalized === "present"
+              ? "Present"
+              : "Absent"
+        nextStatuses[`${recordDate}:${student.id}`] = status
+        nextScores[student.id] = status === "Present" || status === "Excused"
+          ? "10"
+          : status === "Late"
+            ? "7"
+            : "0"
+      })
+
+      setStudentStatuses((current) => {
+        const next = { ...current }
+        Object.entries(nextStatuses).forEach(([key, status]) => {
+          if (!manualAttendanceOverrides[key]) next[key] = status
+        })
+        return next
+      })
+      setRecordValues((current) => {
+        const next = { ...current }
+        Object.entries(nextScores).forEach(([studentId, score]) => {
+          const attendanceKey = `${recordDate}:${studentId}`
+          if (manualAttendanceOverrides[attendanceKey]) return
+          next[studentId] = { ...(next[studentId] ?? {}), [attendanceColumnId]: score }
+        })
+        return next
+      })
+    }
+
+    void loadAttendanceForSelectedDate()
+    const refreshTimer = window.setInterval(() => void loadAttendanceForSelectedDate(), 10000)
+    const attendanceChannel = supabase
+      .channel(`records-attendance-sync-${selectedSectionId}-${recordDate}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, () => {
+        void loadAttendanceForSelectedDate()
+      })
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "attendance_sessions",
+        filter: `class_id=eq.${selectedSectionId}`,
+      }, () => {
+        void loadAttendanceForSelectedDate()
+      })
+      .subscribe()
+
+    return () => {
+      active = false
+      window.clearInterval(refreshTimer)
+      void supabase.removeChannel(attendanceChannel)
+    }
+  }, [selectedSectionId, recordDate, recordStudents, manualAttendanceOverrides])
 
   useEffect(() => {
     const normalizeAssessmentLabel = (value: string) =>
@@ -3281,7 +3437,19 @@ function RecordsPage({
 
       const parsed = JSON.parse(saved)
       if (Array.isArray(parsed.students) && parsed.students.length > 0) setRecordStudents(parsed.students)
-      if (parsed.statuses && typeof parsed.statuses === "object") setStudentStatuses(parsed.statuses)
+      if (parsed.statuses && typeof parsed.statuses === "object") {
+        const scopedStatuses = Object.fromEntries(
+          Object.entries(parsed.statuses).filter(([key]) => /^\d{4}-\d{2}-\d{2}:/.test(key)),
+        )
+        setStudentStatuses(scopedStatuses as Record<string, string>)
+      }
+      if (parsed.manualAttendanceOverrides && typeof parsed.manualAttendanceOverrides === "object") {
+        setManualAttendanceOverrides(parsed.manualAttendanceOverrides)
+      }
+      if (parsed.dailySessions && typeof parsed.dailySessions === "object") setDailySessions(parsed.dailySessions)
+      if (parsed.dailySummaryItems && typeof parsed.dailySummaryItems === "object") {
+        setDailySummaryItems((current) => ({ ...current, ...parsed.dailySummaryItems }))
+      }
       if (parsed.remarks && typeof parsed.remarks === "object") setDailyRemarks(parsed.remarks)
       if (["Draft", "Published"].includes(parsed.publicationStatus)) {
         setRecordPublicationStatus(parsed.publicationStatus)
@@ -3332,7 +3500,10 @@ function RecordsPage({
         students: recordStudents,
         values: recordValues,
         statuses: studentStatuses,
+        manualAttendanceOverrides,
         columns: assessmentColumns,
+        dailySessions,
+        dailySummaryItems,
         remarks: dailyRemarks,
         publicationStatus: recordPublicationStatus,
         selectedSectionId,
@@ -3341,7 +3512,7 @@ function RecordsPage({
       setDraftSavedAt(new Date().toISOString())
     }, 250)
     return () => window.clearTimeout(timer)
-  }, [recordStudents, recordValues, studentStatuses, assessmentColumns, dailyRemarks, recordPublicationStatus, selectedSectionId])
+  }, [recordStudents, recordValues, studentStatuses, manualAttendanceOverrides, assessmentColumns, dailySessions, dailySummaryItems, dailyRemarks, recordPublicationStatus, selectedSectionId])
 
   const normalizeCsvHeader = (value: string) =>
     value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")
@@ -3619,29 +3790,42 @@ function RecordsPage({
   )
   const midtermQuizColumns = quizColumns.filter(
     (column) => column.term === "Midterm",
-  )
+  ).slice(0, 8)
   const finalQuizColumns = quizColumns.filter(
     (column) => column.term === "Final",
-  )
+  ).slice(0, 8)
+  const visibleQuizColumns = [...midtermQuizColumns, ...finalQuizColumns]
   const midtermQuizCount = midtermQuizColumns.length
   const finalQuizCount = finalQuizColumns.length
   const midtermProjectColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Hands On" && column.term === "Midterm",
-  )
+  ).slice(0, 10)
   const finalProjectColumns = deduplicatedAssessmentColumns.filter(
     (column) => column.type === "Hands On" && column.term === "Final",
-  )
+  ).slice(0, 12)
   const midtermRecitationColumns = deduplicatedAssessmentColumns.filter(
-    (column) => column.type === "Recitation" && column.term === "Midterm",
+    (column) =>
+      column.type === "Recitation" &&
+      column.term === "Midterm" &&
+      String(column.id).startsWith("daily-"),
   )
   const finalRecitationColumns = deduplicatedAssessmentColumns.filter(
-    (column) => column.type === "Recitation" && column.term === "Final",
+    (column) =>
+      column.type === "Recitation" &&
+      column.term === "Final" &&
+      String(column.id).startsWith("daily-"),
   )
   const midtermAttendanceColumns = deduplicatedAssessmentColumns.filter(
-    (column) => column.type === "Attendance" && column.term === "Midterm",
+    (column) =>
+      column.type === "Attendance" &&
+      column.term === "Midterm" &&
+      String(column.id).startsWith("daily-"),
   )
   const finalAttendanceColumns = deduplicatedAssessmentColumns.filter(
-    (column) => column.type === "Attendance" && column.term === "Final",
+    (column) =>
+      column.type === "Attendance" &&
+      column.term === "Final" &&
+      String(column.id).startsWith("daily-"),
   )
 
   const addAssessmentColumn = (
@@ -3649,6 +3833,51 @@ function RecordsPage({
     term: "Midterm" | "Final",
   ) => {
     if (!selectedSectionId) return
+
+    const existingCount = deduplicatedAssessmentColumns.filter((column) =>
+      column.type === type && column.term === term,
+    ).length
+    const limit = type === "Quiz"
+      ? 8
+      : type === "Hands On"
+        ? term === "Midterm" ? 10 : 12
+        : 1
+    if (existingCount >= limit) {
+      showToast(
+        `${term} ${type === "Hands On" ? "Project/Activity" : type} is limited to ${limit} columns by the class-record format.`,
+        "error",
+      )
+      return
+    }
+
+    // Match the class-record format: every manually added assessment must
+    // declare its number of items before the score column is created.
+    const defaultItems = type === "Attendance" || type === "Recitation" ? 10 : 20
+    const itemResponse = window.prompt(
+      `Enter the number of items for this ${term.toLowerCase()} ${type === "Hands On" ? "project/activity" : type.toLowerCase()}:`,
+      String(defaultItems),
+    )
+    if (itemResponse === null) return
+
+    const requestedItems = Number(itemResponse)
+    if (!Number.isInteger(requestedItems) || requestedItems < 1 || requestedItems > 1000) {
+      showToast("Number of items must be a whole number from 1 to 1000.", "error")
+      return
+    }
+
+    const pointsResponse = window.prompt(
+      "Enter the points per item:",
+      "1",
+    )
+    if (pointsResponse === null) return
+
+    const requestedPointsPerItem = Number(pointsResponse)
+    if (!Number.isFinite(requestedPointsPerItem) || requestedPointsPerItem <= 0 || requestedPointsPerItem > 100) {
+      showToast("Points per item must be greater than 0 and no more than 100.", "error")
+      return
+    }
+
+    const requestedMaximum = requestedItems * requestedPointsPerItem
 
     setAssessmentColumns((columns) => {
       // Count unique visible slots only. Realtime/database synchronization may
@@ -3690,7 +3919,9 @@ function RecordsPage({
         label,
         type,
         term,
-        maxScore: type === "Attendance" || type === "Recitation" ? 10 : 100,
+        maxScore: requestedMaximum,
+        itemCount: requestedItems,
+        pointsPerItem: requestedPointsPerItem,
       }
       const lastMatchingIndex = columns.reduce(
         (lastIndex, column, index) =>
@@ -3765,39 +3996,153 @@ function RecordsPage({
       ? Math.min(100, Math.max(0, scores.reduce((total, score) => total + score, 0) / scores.length))
       : 0
 
+  const weightedContribution = (percentage: number, weight: number) =>
+    Math.min(weight, Math.max(0, (percentage / 100) * weight))
+
+  const updateDailySummaryItems = (
+    field: keyof typeof dailySummaryItems,
+    rawValue: string,
+  ) => {
+    const items = Math.min(1000, Math.max(1, Math.round(Number(rawValue) || 1)))
+    setDailySummaryItems((current) => ({ ...current, [field]: items }))
+  }
+
+  const updateProjectDescription = (columnId: string, rawValue: string) => {
+    const trimmed = rawValue.slice(0, 40)
+    setAssessmentColumns((columns) => columns.map((column) =>
+      column.id === columnId ? { ...column, label: trimmed } : column,
+    ))
+  }
+
+  const updateAssessmentItemCount = (columnId: string, rawValue: string) => {
+    const items = Math.min(1000, Math.max(1, Math.round(Number(rawValue) || 1)))
+    setAssessmentColumns((columns) => columns.map((column) => {
+      if (column.id !== columnId) return column
+      const pointsPerItem = Number(column.pointsPerItem) > 0 ? Number(column.pointsPerItem) : 1
+      return { ...column, itemCount: items, pointsPerItem, maxScore: items * pointsPerItem }
+    }))
+  }
+
+  const updateExamMaximum = (field: keyof typeof examMaximums, rawValue: string) => {
+    const maximum = Math.min(1000, Math.max(1, Math.round(Number(rawValue) || 1)))
+    setExamMaximums((current) => ({ ...current, [field]: maximum }))
+  }
+
+  const examEarnedTotal = (
+    student: typeof students[number],
+    term: "midterm" | "final",
+  ) =>
+    Number(recordValue(student, `${term}-written`, 0)) +
+    Number(recordValue(student, `${term}-actual`, 0))
+
+  const examMaximumTotal = (term: "midterm" | "final") =>
+    examMaximums[`${term}-written`] + examMaximums[`${term}-actual`]
+
   const examSubtotal = (
     student: typeof students[number],
     term: "midterm" | "final",
   ) => {
     const written = Number(recordValue(student, `${term}-written`, 0))
     const actual = Number(recordValue(student, `${term}-actual`, 0))
-    return written > 0 ? Math.min(100, Math.max(0, (actual / written) * 100)) : 0
+    const possible = examMaximums[`${term}-written`] + examMaximums[`${term}-actual`]
+    return possible > 0
+      ? Math.min(100, Math.max(0, ((written + actual) / possible) * 100))
+      : 0
+  }
+
+  const dailySummaryScore = (
+    student: typeof students[number],
+    field: keyof typeof dailySummaryItems,
+    columns: RecordAssessmentColumn[],
+  ) => {
+    const override = recordValues[student.id]?.[`summary-${field}`]
+    const maximum = dailySummaryItems[field]
+    if (override !== undefined && override !== "") {
+      return Math.min(maximum, Math.max(0, Number(override) || 0))
+    }
+    return Math.min(assessmentPoints(student, columns), maximum)
+  }
+
+  const updateDailySummaryScore = (
+    studentId: string,
+    field: keyof typeof dailySummaryItems,
+    rawValue: string,
+  ) => {
+    const maximum = dailySummaryItems[field]
+    const value = rawValue === ""
+      ? ""
+      : String(Math.min(maximum, Math.max(0, Number(rawValue) || 0)))
+    setRecordValues((current) => ({
+      ...current,
+      [studentId]: {
+        ...(current[studentId] ?? {}),
+        [`summary-${field}`]: value,
+      },
+    }))
   }
 
   const finalGrade = (student: typeof students[number]) => {
-    const examPercentage = percentageFromScores([
+    // Workbook logic:
+    // Exam = average of Midterm% and Final%
+    // Quiz = combined earned / combined available
+    // Project = average of Midterm% and Final%
+    // Recitation and Attendance = combined Midterm + Final summary scores
+    const examRating = percentageFromScores([
       examSubtotal(student, "midterm"),
       examSubtotal(student, "final"),
     ])
-    const recitationPercentage = percentageFromColumns(student, [
-      ...midtermRecitationColumns,
-      ...finalRecitationColumns,
+
+    const quizRating = percentageFromColumns(student, visibleQuizColumns)
+
+    const projectRating = percentageFromScores([
+      percentageFromColumns(student, midtermProjectColumns),
+      percentageFromColumns(student, finalProjectColumns),
     ])
-    const attendancePercentage = percentageFromColumns(student, [
-      ...midtermAttendanceColumns,
-      ...finalAttendanceColumns,
-    ])
+
+    const recitationEarned =
+      dailySummaryScore(student, "midterm-recitation", midtermRecitationColumns) +
+      dailySummaryScore(student, "final-recitation", finalRecitationColumns)
+    const recitationPossible =
+      dailySummaryItems["midterm-recitation"] + dailySummaryItems["final-recitation"]
+    const recitationRating = recitationPossible > 0
+      ? (recitationEarned / recitationPossible) * 100
+      : 0
+
+    const attendanceEarned =
+      dailySummaryScore(student, "midterm-attendance", midtermAttendanceColumns) +
+      dailySummaryScore(student, "final-attendance", finalAttendanceColumns)
+    const attendancePossible =
+      dailySummaryItems["midterm-attendance"] + dailySummaryItems["final-attendance"]
+    const attendanceRating = attendancePossible > 0
+      ? (attendanceEarned / attendancePossible) * 100
+      : 0
+
     return Math.min(100, Math.max(0,
-      examPercentage * 0.25 +
-      percentageFromColumns(student, quizColumns) * 0.2 +
-      percentageFromColumns(student, [
-        ...midtermProjectColumns,
-        ...finalProjectColumns,
-      ]) * 0.25 +
-      recitationPercentage * 0.2 +
-      attendancePercentage * 0.1,
+      examRating * 0.25 +
+      quizRating * 0.20 +
+      projectRating * 0.25 +
+      recitationRating * 0.20 +
+      attendanceRating * 0.10,
     ))
   }
+
+  const gradeEquivalent = (percentage: number) => {
+    // Exact conversion table from the reference Excel workbook named range
+    // mynerves (CD16:CF26), applied as an approximate lookup.
+    if (percentage >= 97) return 1.00
+    if (percentage >= 94) return 1.25
+    if (percentage >= 91) return 1.50
+    if (percentage >= 88) return 1.75
+    if (percentage >= 85) return 2.00
+    if (percentage >= 82) return 2.25
+    if (percentage >= 79) return 2.50
+    if (percentage >= 76) return 2.75
+    if (percentage >= 75) return 3.00
+    return 5.00
+  }
+
+  const gradeResult = (percentage: number) =>
+    gradeEquivalent(percentage) >= 5 ? "Fail" : "Pass"
 
   const deleteAssessmentColumn = async () => {
     const column = assessmentToDelete
@@ -3901,10 +4246,21 @@ function RecordsPage({
 
   const gradeComponents = (student: RecordStudent) => {
     const exam = percentageFromScores([examSubtotal(student, "midterm"), examSubtotal(student, "final")])
-    const quizzes = percentageFromColumns(student, quizColumns)
+    const quizzes = percentageFromColumns(student, visibleQuizColumns)
     const projects = percentageFromColumns(student, [...midtermProjectColumns, ...finalProjectColumns])
-    const recitation = percentageFromColumns(student, [...midtermRecitationColumns, ...finalRecitationColumns])
-    const attendance = percentageFromColumns(student, [...midtermAttendanceColumns, ...finalAttendanceColumns])
+    const recitationEarned =
+      dailySummaryScore(student, "midterm-recitation", midtermRecitationColumns) +
+      dailySummaryScore(student, "final-recitation", finalRecitationColumns)
+    const recitationPossible =
+      dailySummaryItems["midterm-recitation"] + dailySummaryItems["final-recitation"]
+    const recitation = recitationPossible > 0 ? (recitationEarned / recitationPossible) * 100 : 0
+
+    const attendanceEarned =
+      dailySummaryScore(student, "midterm-attendance", midtermAttendanceColumns) +
+      dailySummaryScore(student, "final-attendance", finalAttendanceColumns)
+    const attendancePossible =
+      dailySummaryItems["midterm-attendance"] + dailySummaryItems["final-attendance"]
+    const attendance = attendancePossible > 0 ? (attendanceEarned / attendancePossible) * 100 : 0
     return { exam, quizzes, projects, recitation, attendance }
   }
 
@@ -4073,6 +4429,8 @@ function RecordsPage({
         values: nextValues,
         statuses: studentStatuses,
         columns: assessmentColumns,
+        dailySessions,
+        dailySummaryItems,
         remarks: dailyRemarks,
         publicationStatus: recordPublicationStatus,
         selectedSectionId,
@@ -4085,6 +4443,10 @@ function RecordsPage({
     })
 
     if (nextValue === "" || !selectedSectionId) return
+
+    // Daily Tracker entries are session data, not standalone assessment rows.
+    // Keep these values in the local draft and summarize them in Gradebook.
+    if (columnId.startsWith("daily-")) return
 
     const fixedGradebookColumns: Record<string, RecordAssessmentColumn> = {
       "midterm-written": {
@@ -4117,8 +4479,8 @@ function RecordsPage({
       },
     }
 
-    // Dynamic quizzes/projects/recitations/attendance are stored in
-    // assessmentColumns. The four permanent exam fields are resolved here so
+    // Dynamic quizzes and projects are stored in assessmentColumns.
+    // Daily Tracker attendance and recitation are handled above. The four permanent exam fields are resolved here so
     // they use the same save, toast, Draft, and notification workflow.
     const column =
       assessmentColumns.find((item) => String(item.id) === String(columnId)) ??
@@ -4499,141 +4861,6 @@ function RecordsPage({
                 : `Private to instructor · Draft saved${draftSavedAt ? ` at ${new Date(draftSavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`}
             </small>
           </div>
-          <div className="records-assessment-actions">
-            <button
-              className="primary-button compact records-add-assessment"
-              type="button"
-              onClick={() => setAssessmentMenuOpen((open) => !open)}
-              aria-expanded={assessmentMenuOpen}
-              aria-controls="add-assessment-menu"
-            >
-              <Icon name="plus" size={15} /> Add assessment
-            </button>
-            {assessmentMenuOpen && (
-              <div
-                id="add-assessment-menu"
-                className="add-assessment-menu"
-                role="menu"
-                aria-label="Add assessment column"
-              >
-                <div className="add-assessment-menu-header">
-                  <div>
-                    <p>Add a record column</p>
-                    <small>Choose the term and assessment type.</small>
-                  </div>
-                  <button
-                    type="button"
-                    className="add-assessment-menu-close"
-                    onClick={() => setAssessmentMenuOpen(false)}
-                    aria-label="Close add assessment menu"
-                  >
-                    ×
-                  </button>
-                </div>
-                <p className="quiz-limit-title">Quizzes · maximum 8 per term</p>
-                {([
-                  {
-                    term: "Midterm" as const,
-                    type: "Quiz" as const,
-                    count: midtermQuizCount,
-                    maximum: 8,
-                  },
-                  {
-                    term: "Final" as const,
-                    type: "Quiz" as const,
-                    count: finalQuizCount,
-                    maximum: 8,
-                  },
-                  {
-                    term: "Midterm" as const,
-                    type: "Hands On" as const,
-                    count: midtermProjectColumns.length,
-                    maximum: 10,
-                  },
-                  {
-                    term: "Final" as const,
-                    type: "Hands On" as const,
-                    count: finalProjectColumns.length,
-                    maximum: 12,
-                  },
-                  {
-                    term: "Midterm" as const,
-                    type: "Recitation" as const,
-                    count: midtermRecitationColumns.length,
-                    maximum: 20,
-                  },
-                  {
-                    term: "Final" as const,
-                    type: "Recitation" as const,
-                    count: finalRecitationColumns.length,
-                    maximum: 15,
-                  },
-                  {
-                    term: "Midterm" as const,
-                    type: "Attendance" as const,
-                    count: midtermAttendanceColumns.length,
-                    maximum: 20,
-                  },
-                  {
-                    term: "Final" as const,
-                    type: "Attendance" as const,
-                    count: finalAttendanceColumns.length,
-                    maximum: 15,
-                  },
-                ] as const).map(({ term, type, count, maximum }) => {
-                  const limitReached = count >= maximum
-                  const isQuiz = type === "Quiz"
-                  const isProject = type === "Hands On"
-                  const label = isQuiz
-                    ? "quiz"
-                    : isProject
-                      ? "project"
-                      : type.toLowerCase()
-                  return (
-                    <button
-                      className={
-                        isQuiz
-                          ? "add-quiz-term"
-                          : isProject
-                            ? "add-project-term"
-                            : "add-session-term"
-                      }
-                      key={`${term}-${type}`}
-                      type="button"
-                      role="menuitem"
-                      disabled={limitReached}
-                      onClick={() => addAssessmentColumn(type, term)}
-                    >
-                      <span>
-                        <Icon
-                          name={
-                            isQuiz
-                              ? "clipboard"
-                              : isProject
-                                ? "scan"
-                                : type === "Attendance"
-                                  ? "check"
-                                  : "users"
-                          }
-                          size={15}
-                        />
-                      </span>
-                      <span>
-                        <strong>
-                          Add {term} {label}
-                        </strong>
-                        <small>
-                          {limitReached
-                            ? `${term} ${label} limit reached`
-                            : `${count} of ${maximum} ${label} sessions added`}
-                        </small>
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
         </div>
         <div className="table-wrap">
           <table>
@@ -4641,9 +4868,6 @@ function RecordsPage({
               <tr>
                 <th scope="col" rowSpan={2}>
                   Student
-                </th>
-                <th scope="col" rowSpan={2}>
-                  Status
                 </th>
                 <th scope="colgroup" colSpan={3}>
                   Midterm Exam · 25%
@@ -4665,25 +4889,29 @@ function RecordsPage({
                 </th>
                 <th
                   scope="colgroup"
-                  colSpan={midtermRecitationColumns.length + 1}
+                  colSpan={1}
+                  className="daily-summary-group recitation-summary-group"
                 >
                   Midterm Recitation · 20%
                 </th>
                 <th
                   scope="colgroup"
-                  colSpan={finalRecitationColumns.length + 1}
+                  colSpan={1}
+                  className="daily-summary-group recitation-summary-group"
                 >
                   Final Recitation · 20%
                 </th>
                 <th
                   scope="colgroup"
-                  colSpan={midtermAttendanceColumns.length + 1}
+                  colSpan={1}
+                  className="daily-summary-group attendance-summary-group"
                 >
                   Midterm Attendance · 10%
                 </th>
                 <th
                   scope="colgroup"
-                  colSpan={finalAttendanceColumns.length + 1}
+                  colSpan={1}
+                  className="daily-summary-group attendance-summary-group"
                 >
                   Final Attendance · 10%
                 </th>
@@ -4692,27 +4920,63 @@ function RecordsPage({
                 </th>
               </tr>
               <tr>
-                {[
-                  "Written",
-                  "Actual",
-                  "Subtotal",
-                  "Written",
-                  "Actual",
-                  "Subtotal",
-                ].map((label, index) => (
-                  <th
-                    scope="col"
-                    key={`${label}-${index}`}
-                    className={
-                      label === "Written" ? "exam-written-heading" : undefined
-                    }
-                  >
-                    {label}
+                {([
+                  ["midterm-written", "Written"],
+                  ["midterm-actual", "Actual"],
+                ] as const).map(([field, label]) => (
+                  <th scope="col" key={field} className={label === "Written" ? "exam-written-heading" : undefined}>
+                    <div className="assessment-heading-content">
+                      <span>{label}</span>
+                      <label className="gradebook-items-editor">
+                        <input type="number" min="1" max="1000" value={examMaximums[field]}
+                          onChange={(event) => updateExamMaximum(field, event.target.value)}
+                          aria-label={`${label} midterm number of items`} />
+                        <span>items</span>
+                      </label>
+                    </div>
                   </th>
                 ))}
+                <th scope="col" className="term-total-heading">
+                  <span>Total</span>
+                  <small>{examMaximumTotal("midterm")} items</small>
+                </th>
+                {([
+                  ["final-written", "Written"],
+                  ["final-actual", "Actual"],
+                ] as const).map(([field, label]) => (
+                  <th scope="col" key={field} className={label === "Written" ? "exam-written-heading" : undefined}>
+                    <div className="assessment-heading-content">
+                      <span>{label}</span>
+                      <label className="gradebook-items-editor">
+                        <input type="number" min="1" max="1000" value={examMaximums[field]}
+                          onChange={(event) => updateExamMaximum(field, event.target.value)}
+                          aria-label={`${label} final number of items`} />
+                        <span>items</span>
+                      </label>
+                    </div>
+                  </th>
+                ))}
+                <th scope="col" className="term-total-heading">
+                  <span>Total</span>
+                  <small>{examMaximumTotal("final")} items</small>
+                </th>
                 {midtermQuizColumns.map((column) => (
                   <th scope="col" key={column.id} className="assessment-column-heading">
-                    <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                    <div className="assessment-heading-content">
+                      <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                      <label className="gradebook-items-editor">
+                        <input
+                          type="number"
+                          min="1"
+                          max="1000"
+                          value={itemCountForColumn(column)}
+                          onChange={(event) => updateAssessmentItemCount(column.id, event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Number of items for ${column.label}`}
+                        />
+                        <span>items</span>
+                      </label>
+                    </div>
                     <button
                       type="button"
                       className="assessment-column-delete"
@@ -4722,10 +4986,27 @@ function RecordsPage({
                     >×</button>
                   </th>
                 ))}
-                <th scope="col">Total</th>
+                <th scope="col" className="term-total-heading">
+                  <span>Total</span>
+                  <small>{midtermQuizColumns.reduce((sum, column) => sum + maxScoreForColumn(column), 0)} items</small>
+                </th>
                 {finalQuizColumns.map((column) => (
                   <th scope="col" key={column.id} className="assessment-column-heading">
-                    <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                    <div className="assessment-heading-content">
+                      <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                      <label className="gradebook-items-editor">
+                        <input
+                          type="number"
+                          min="1"
+                          max="1000"
+                          value={itemCountForColumn(column)}
+                          onChange={(event) => updateAssessmentItemCount(column.id, event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Number of items for ${column.label}`}
+                        />
+                        <span>items</span>
+                      </label>
+                    </div>
                     <button
                       type="button"
                       className="assessment-column-delete"
@@ -4735,10 +5016,39 @@ function RecordsPage({
                     >×</button>
                   </th>
                 ))}
-                <th scope="col">Total</th>
-                {midtermProjectColumns.map((column) => (
-                  <th scope="col" key={column.id} className="assessment-column-heading">
-                    <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                <th scope="col" className="term-total-heading">
+                  <span>Total</span>
+                  <small>{finalQuizColumns.reduce((sum, column) => sum + maxScoreForColumn(column), 0)} items</small>
+                </th>
+                {midtermProjectColumns.map((column, index) => (
+                  <th scope="col" key={column.id} className="assessment-column-heading project-assessment-heading">
+                    <div className="assessment-heading-content">
+                      <strong className="project-column-number">{index + 1}</strong>
+                      <textarea
+                        className="gradebook-project-description-editor"
+                        value={column.label.replace("Midterm ", "").replace(/^Project \d+$/i, "")}
+                        maxLength={80}
+                        rows={3}
+                        placeholder="Description"
+                        onChange={(event) =>
+                          updateProjectDescription(column.id, `Midterm ${event.target.value}`)
+                        }
+                        onClick={(event) => event.stopPropagation()}
+                        aria-label={`Description for Midterm project ${index + 1}`}
+                      />
+                      <label className="gradebook-items-editor">
+                        <input
+                          type="number"
+                          min="1"
+                          max="1000"
+                          value={itemCountForColumn(column)}
+                          onChange={(event) => updateAssessmentItemCount(column.id, event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Number of items for ${column.label}`}
+                        />
+                        <span>items</span>
+                      </label>
+                    </div>
                     <button
                       type="button"
                       className="assessment-column-delete"
@@ -4748,10 +5058,39 @@ function RecordsPage({
                     >×</button>
                   </th>
                 ))}
-                <th scope="col">Total</th>
-                {finalProjectColumns.map((column) => (
-                  <th scope="col" key={column.id} className="assessment-column-heading">
-                    <span>{column.label.replace("Midterm ", "").replace("Final ", "")}</span>
+                <th scope="col" className="term-total-heading">
+                  <span>Total</span>
+                  <small>{midtermProjectColumns.reduce((sum, column) => sum + maxScoreForColumn(column), 0)} items</small>
+                </th>
+                {finalProjectColumns.map((column, index) => (
+                  <th scope="col" key={column.id} className="assessment-column-heading project-assessment-heading">
+                    <div className="assessment-heading-content">
+                      <strong className="project-column-number">{index + 1}</strong>
+                      <textarea
+                        className="gradebook-project-description-editor"
+                        value={column.label.replace("Final ", "").replace(/^Project \d+$/i, "")}
+                        maxLength={80}
+                        rows={3}
+                        placeholder="Description"
+                        onChange={(event) =>
+                          updateProjectDescription(column.id, `Final ${event.target.value}`)
+                        }
+                        onClick={(event) => event.stopPropagation()}
+                        aria-label={`Description for Final project ${index + 1}`}
+                      />
+                      <label className="gradebook-items-editor">
+                        <input
+                          type="number"
+                          min="1"
+                          max="1000"
+                          value={itemCountForColumn(column)}
+                          onChange={(event) => updateAssessmentItemCount(column.id, event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Number of items for ${column.label}`}
+                        />
+                        <span>items</span>
+                      </label>
+                    </div>
                     <button
                       type="button"
                       className="assessment-column-delete"
@@ -4761,59 +5100,66 @@ function RecordsPage({
                     >×</button>
                   </th>
                 ))}
-                <th scope="col">Total</th>
-                {midtermRecitationColumns.map((column) => (
-                  <th scope="col" key={column.id} className="assessment-column-heading">
-                    <span>{column.label.replace("Midterm Recitation ", "R")}</span>
-                    <button
-                      type="button"
-                      className="assessment-column-delete"
-                      onClick={() => setAssessmentToDelete(column)}
-                      aria-label={`Delete ${column.label}`}
-                      title={`Delete ${column.label}`}
-                    >×</button>
-                  </th>
-                ))}
-                <th scope="col">Total</th>
-                {finalRecitationColumns.map((column) => (
-                  <th scope="col" key={column.id} className="assessment-column-heading">
-                    <span>{column.label.replace("Final Recitation ", "R")}</span>
-                    <button
-                      type="button"
-                      className="assessment-column-delete"
-                      onClick={() => setAssessmentToDelete(column)}
-                      aria-label={`Delete ${column.label}`}
-                      title={`Delete ${column.label}`}
-                    >×</button>
-                  </th>
-                ))}
-                <th scope="col">Total</th>
-                {midtermAttendanceColumns.map((column) => (
-                  <th scope="col" key={column.id} className="assessment-column-heading">
-                    <span>{column.label.replace("Midterm Attendance ", "A")}</span>
-                    <button
-                      type="button"
-                      className="assessment-column-delete"
-                      onClick={() => setAssessmentToDelete(column)}
-                      aria-label={`Delete ${column.label}`}
-                      title={`Delete ${column.label}`}
-                    >×</button>
-                  </th>
-                ))}
-                <th scope="col">Total</th>
-                {finalAttendanceColumns.map((column) => (
-                  <th scope="col" key={column.id} className="assessment-column-heading">
-                    <span>{column.label.replace("Final Attendance ", "A")}</span>
-                    <button
-                      type="button"
-                      className="assessment-column-delete"
-                      onClick={() => setAssessmentToDelete(column)}
-                      aria-label={`Delete ${column.label}`}
-                      title={`Delete ${column.label}`}
-                    >×</button>
-                  </th>
-                ))}
-                <th scope="col">Total</th>
+                <th scope="col" className="term-total-heading">
+                  <span>Total</span>
+                  <small>{finalProjectColumns.reduce((sum, column) => sum + maxScoreForColumn(column), 0)} items</small>
+                </th>
+                <th scope="col" className="daily-summary-heading">
+                  <span>Midterm</span>
+                  <label className="daily-summary-items-editor">
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={dailySummaryItems["midterm-recitation"]}
+                      onChange={(event) => updateDailySummaryItems("midterm-recitation", event.target.value)}
+                      aria-label="Midterm recitation number of items"
+                    />
+                    <small>items</small>
+                  </label>
+                </th>
+                <th scope="col" className="daily-summary-heading">
+                  <span>Finals</span>
+                  <label className="daily-summary-items-editor">
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={dailySummaryItems["final-recitation"]}
+                      onChange={(event) => updateDailySummaryItems("final-recitation", event.target.value)}
+                      aria-label="Finals recitation number of items"
+                    />
+                    <small>items</small>
+                  </label>
+                </th>
+                <th scope="col" className="daily-summary-heading">
+                  <span>Midterm</span>
+                  <label className="daily-summary-items-editor">
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={dailySummaryItems["midterm-attendance"]}
+                      onChange={(event) => updateDailySummaryItems("midterm-attendance", event.target.value)}
+                      aria-label="Midterm attendance number of items"
+                    />
+                    <small>items</small>
+                  </label>
+                </th>
+                <th scope="col" className="daily-summary-heading">
+                  <span>Finals</span>
+                  <label className="daily-summary-items-editor">
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={dailySummaryItems["final-attendance"]}
+                      onChange={(event) => updateDailySummaryItems("final-attendance", event.target.value)}
+                      aria-label="Finals attendance number of items"
+                    />
+                    <small>items</small>
+                  </label>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -4835,24 +5181,6 @@ function RecordsPage({
                       </div>
                     </div>
                   </td>
-                  <td>
-                    <select
-                      className={`status-select attendance ${(studentStatuses[student.id] ?? student.attendance).toLowerCase()}`}
-                      value={studentStatuses[student.id] ?? student.attendance}
-                      onChange={(event) =>
-                        setStudentStatuses((current) => ({
-                          ...current,
-                          [student.id]: event.target.value,
-                        }))
-                      }
-                      aria-label={`Set attendance status for ${student.name}`}
-                    >
-                      <option>Present</option>
-                      <option>Late</option>
-                      <option>Absent</option>
-                      <option>Excused</option>
-                    </select>
-                  </td>
                   {[
                     ["midterm-written", 0, "Midterm written"],
                     ["midterm-actual", 0, "Midterm actual"],
@@ -4862,7 +5190,7 @@ function RecordsPage({
                         className="record-score-input"
                         type="number"
                         min="0"
-                        max="100"
+                        max={examMaximums[String(id) as keyof typeof examMaximums]}
                         value={recordValue(student, String(id), Number(fallback))}
                         onChange={(event) =>
                           updateRecordValue(student.id, String(id), event.target.value)
@@ -4874,10 +5202,14 @@ function RecordsPage({
                       />
                     </td>
                   ))}
-                  <td className="term-total-cell">
+                  <td className="term-total-cell exam-total-cell">
                     <output>
-                      {examSubtotal(student, "midterm").toFixed(2)}%
+                      {examEarnedTotal(student, "midterm").toFixed(0)} / {examMaximumTotal("midterm")}
                     </output>
+                    <small>{examSubtotal(student, "midterm").toFixed(2)}%</small>
+                    <strong className="weighted-term-score">
+                      {weightedContribution(examSubtotal(student, "midterm"), 25).toFixed(2)} / 25
+                    </strong>
                   </td>
                   {[
                     ["final-written", 0, "Final written"],
@@ -4888,7 +5220,7 @@ function RecordsPage({
                         className="record-score-input"
                         type="number"
                         min="0"
-                        max="100"
+                        max={examMaximums[String(id) as keyof typeof examMaximums]}
                         value={recordValue(student, String(id), Number(fallback))}
                         onChange={(event) =>
                           updateRecordValue(student.id, String(id), event.target.value)
@@ -4900,10 +5232,14 @@ function RecordsPage({
                       />
                     </td>
                   ))}
-                  <td className="term-total-cell">
+                  <td className="term-total-cell exam-total-cell">
                     <output>
-                      {examSubtotal(student, "final").toFixed(2)}%
+                      {examEarnedTotal(student, "final").toFixed(0)} / {examMaximumTotal("final")}
                     </output>
+                    <small>{examSubtotal(student, "final").toFixed(2)}%</small>
+                    <strong className="weighted-term-score">
+                      {weightedContribution(examSubtotal(student, "final"), 25).toFixed(2)} / 25
+                    </strong>
                   </td>
                   {midtermQuizColumns.map((column) =>
                     renderAssessmentScore(student, column),
@@ -4911,8 +5247,12 @@ function RecordsPage({
                   <td className="term-total-cell">
                     <output>
                       {assessmentPoints(student, midtermQuizColumns).toFixed(0)}{" "}
-                      / {midtermQuizColumns.length * 100}
+                      / {midtermQuizColumns.reduce((total, column) => total + maxScoreForColumn(column), 0)}
                     </output>
+                    <small>{percentageFromColumns(student, midtermQuizColumns).toFixed(2)}%</small>
+                    <strong className="weighted-term-score">
+                      {weightedContribution(percentageFromColumns(student, midtermQuizColumns), 20).toFixed(2)} / 20
+                    </strong>
                   </td>
                   {finalQuizColumns.map((column) =>
                     renderAssessmentScore(student, column),
@@ -4920,8 +5260,12 @@ function RecordsPage({
                   <td className="term-total-cell">
                     <output>
                       {assessmentPoints(student, finalQuizColumns).toFixed(0)} /{" "}
-                      {finalQuizColumns.length * 100}
+                      {finalQuizColumns.reduce((total, column) => total + maxScoreForColumn(column), 0)}
                     </output>
+                    <small>{percentageFromColumns(student, finalQuizColumns).toFixed(2)}%</small>
+                    <strong className="weighted-term-score">
+                      {weightedContribution(percentageFromColumns(student, finalQuizColumns), 20).toFixed(2)} / 20
+                    </strong>
                   </td>
                   {midtermProjectColumns.map((column) =>
                     renderAssessmentScore(student, column),
@@ -4931,8 +5275,12 @@ function RecordsPage({
                       {assessmentPoints(student, midtermProjectColumns).toFixed(
                         0,
                       )}{" "}
-                      / {midtermProjectColumns.length * 100}
+                      / {midtermProjectColumns.reduce((total, column) => total + maxScoreForColumn(column), 0)}
                     </output>
+                    <small>{percentageFromColumns(student, midtermProjectColumns).toFixed(2)}%</small>
+                    <strong className="weighted-term-score">
+                      {weightedContribution(percentageFromColumns(student, midtermProjectColumns), 25).toFixed(2)} / 25
+                    </strong>
                   </td>
                   {finalProjectColumns.map((column) =>
                     renderAssessmentScore(student, column),
@@ -4942,56 +5290,64 @@ function RecordsPage({
                       {assessmentPoints(student, finalProjectColumns).toFixed(
                         0,
                       )}{" "}
-                      / {finalProjectColumns.length * 100}
+                      / {finalProjectColumns.reduce((total, column) => total + maxScoreForColumn(column), 0)}
                     </output>
+                    <small>{percentageFromColumns(student, finalProjectColumns).toFixed(2)}%</small>
+                    <strong className="weighted-term-score">
+                      {weightedContribution(percentageFromColumns(student, finalProjectColumns), 25).toFixed(2)} / 25
+                    </strong>
                   </td>
-                  {midtermRecitationColumns.map((column) =>
-                    renderAssessmentScore(student, column),
-                  )}
-                  <td className="term-total-cell">
-                    <output>
-                      {assessmentPoints(
-                        student,
-                        midtermRecitationColumns,
-                      ).toFixed(0)}{" "}
-                      / {midtermRecitationColumns.length * 10}
-                    </output>
+                  <td className="daily-summary-cell">
+                    <label className="daily-summary-score-editor">
+                      <input
+                        type="number"
+                        min="0"
+                        max={dailySummaryItems["midterm-recitation"]}
+                        value={recordValues[student.id]?.["summary-midterm-recitation"] ?? dailySummaryScore(student, "midterm-recitation", midtermRecitationColumns)}
+                        onChange={(event) => updateDailySummaryScore(student.id, "midterm-recitation", event.target.value)}
+                        aria-label="Midterm recitation score for ${student.name}"
+                      />
+                      <span>/ {dailySummaryItems["midterm-recitation"]}</span>
+                    </label>
                   </td>
-                  {finalRecitationColumns.map((column) =>
-                    renderAssessmentScore(student, column),
-                  )}
-                  <td className="term-total-cell">
-                    <output>
-                      {assessmentPoints(
-                        student,
-                        finalRecitationColumns,
-                      ).toFixed(0)}{" "}
-                      / {finalRecitationColumns.length * 10}
-                    </output>
+                  <td className="daily-summary-cell">
+                    <label className="daily-summary-score-editor">
+                      <input
+                        type="number"
+                        min="0"
+                        max={dailySummaryItems["final-recitation"]}
+                        value={recordValues[student.id]?.["summary-final-recitation"] ?? dailySummaryScore(student, "final-recitation", finalRecitationColumns)}
+                        onChange={(event) => updateDailySummaryScore(student.id, "final-recitation", event.target.value)}
+                        aria-label="Final recitation score for ${student.name}"
+                      />
+                      <span>/ {dailySummaryItems["final-recitation"]}</span>
+                    </label>
                   </td>
-                  {midtermAttendanceColumns.map((column) =>
-                    renderAssessmentScore(student, column),
-                  )}
-                  <td className="term-total-cell">
-                    <output>
-                      {assessmentPoints(
-                        student,
-                        midtermAttendanceColumns,
-                      ).toFixed(0)}{" "}
-                      / {midtermAttendanceColumns.length * 10}
-                    </output>
+                  <td className="daily-summary-cell">
+                    <label className="daily-summary-score-editor">
+                      <input
+                        type="number"
+                        min="0"
+                        max={dailySummaryItems["midterm-attendance"]}
+                        value={recordValues[student.id]?.["summary-midterm-attendance"] ?? dailySummaryScore(student, "midterm-attendance", midtermAttendanceColumns)}
+                        onChange={(event) => updateDailySummaryScore(student.id, "midterm-attendance", event.target.value)}
+                        aria-label="Midterm attendance score for ${student.name}"
+                      />
+                      <span>/ {dailySummaryItems["midterm-attendance"]}</span>
+                    </label>
                   </td>
-                  {finalAttendanceColumns.map((column) =>
-                    renderAssessmentScore(student, column),
-                  )}
-                  <td className="term-total-cell">
-                    <output>
-                      {assessmentPoints(
-                        student,
-                        finalAttendanceColumns,
-                      ).toFixed(0)}{" "}
-                      / {finalAttendanceColumns.length * 10}
-                    </output>
+                  <td className="daily-summary-cell">
+                    <label className="daily-summary-score-editor">
+                      <input
+                        type="number"
+                        min="0"
+                        max={dailySummaryItems["final-attendance"]}
+                        value={recordValues[student.id]?.["summary-final-attendance"] ?? dailySummaryScore(student, "final-attendance", finalAttendanceColumns)}
+                        onChange={(event) => updateDailySummaryScore(student.id, "final-attendance", event.target.value)}
+                        aria-label="Final attendance score for ${student.name}"
+                      />
+                      <span>/ {dailySummaryItems["final-attendance"]}</span>
+                    </label>
                   </td>
                   <td
                     className={`final-grade-cell ${
@@ -5001,7 +5357,7 @@ function RecordsPage({
                     <output>
                       <strong>{finalGrade(student).toFixed(2)}</strong>
                       <small>
-                        {finalGrade(student) >= 75 ? "Pass · 3.00" : "Fail"}
+                        {gradeResult(finalGrade(student))} · {gradeEquivalent(finalGrade(student)).toFixed(2)}
                       </small>
                     </output>
                   </td>
@@ -5075,24 +5431,28 @@ function RecordsPage({
                     </td>
                     <td>
                       <select
-                        className={`status-select attendance ${(studentStatuses[student.id] ?? student.attendance).toLowerCase()}${
+                        className={`status-select attendance ${(studentStatuses[`${recordDate}:${student.id}`] ?? "Absent").toLowerCase()}${
                           student.id === "2026-0025"
                             ? " selected-attendance-background"
                             : ""
                         }`}
                         value={
-                          studentStatuses[student.id] ?? student.attendance
+                          studentStatuses[`${recordDate}:${student.id}`] ?? "Absent"
                         }
                         onChange={(event) => {
                           const status = event.target.value
+                          const attendanceKey = `${recordDate}:${student.id}`
+                          setManualAttendanceOverrides((current) => ({
+                            ...current,
+                            [attendanceKey]: true,
+                          }))
                           setStudentStatuses((current) => ({
                             ...current,
-                            [student.id]: status,
+                            [attendanceKey]: status,
                           }))
                           updateRecordValue(
                             student.id,
-                            dailySession?.attendanceId ??
-                              "midterm-attendance-1",
+                            dailySession?.attendanceId ?? `daily-${recordDate}-attendance`,
                             String(
                               status === "Present" || status === "Excused"
                                 ? 10

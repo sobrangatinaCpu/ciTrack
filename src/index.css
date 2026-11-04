@@ -6050,46 +6050,563 @@ body > .summary-speed-dial .summary-fab { position: relative; z-index: 20002 !im
 }
 
 
-/* FINAL CIT BACKGROUND CLARITY FIX
-   Keep the original artwork vivid while preserving text readability. */
-.landing-building-image {
-  opacity: 1 !important;
-  filter: brightness(1.16) contrast(1.04) saturate(1.12) !important;
+
+/* Class-record assessment headers: show item count and maximum points. */
+.assessment-heading-content {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 66px;
+  padding: 4px 14px 4px 2px;
+}
+.assessment-heading-content > span {
+  color: #173f73;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.assessment-heading-content > small {
+  color: #647b91;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
-/* Remove the stacked dark overlays that were fading the CIT branding. */
-.landing-intro::before {
-  content: "" !important;
-  position: absolute !important;
-  inset: 0 !important;
-  z-index: 1 !important;
-  pointer-events: none !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  background:
-    linear-gradient(90deg,
-      rgba(3, 15, 48, .02) 0%,
-      rgba(3, 15, 48, .03) 48%,
-      rgba(3, 15, 48, .18) 72%,
-      rgba(3, 15, 48, .42) 100%),
-    linear-gradient(180deg,
-      rgba(3, 15, 48, .01) 0%,
-      rgba(3, 15, 48, .02) 66%,
-      rgba(3, 15, 48, .20) 100%) !important;
+
+/* Manual assessment setup uses item count and points-per-item prompts. */
+.assessment-heading-content > small:first-of-type {
+  color: #1f66a8;
 }
 
-.landing-intro::after {
-  content: none !important;
-  display: none !important;
-  background: none !important;
+
+/* Editable item counts across every Gradebook component. */
+.gradebook-items-editor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 2px;
+  color: #1f66a8;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.gradebook-items-editor input {
+  width: 48px;
+  min-height: 26px;
+  padding: 2px 4px;
+  border: 1px solid #b9cee2;
+  border-radius: 6px;
+  background: #fff;
+  color: #123f70;
+  font: inherit;
+  text-align: center;
+}
+.gradebook-items-editor input:focus {
+  border-color: #1672e8;
+  outline: 2px solid rgba(22,114,232,.18);
+  outline-offset: 1px;
 }
 
-.landing-background-overlay {
-  opacity: 0 !important;
-  background: transparent !important;
+
+/* Attendance and Recitation are entered in Daily Tracker; Gradebook is summary-only. */
+.daily-summary-heading{min-width:116px;padding:12px 10px!important;text-align:center}.daily-summary-heading span,.daily-summary-heading small{display:block}.daily-summary-heading span{color:#164d7e;font-weight:850}.daily-summary-heading small{margin-top:4px;color:#6c8195;font-size:10px;line-height:1.2}.daily-summary-cell{min-width:116px;background:#f6fbf8;text-align:center}.daily-summary-cell output{color:#08775b;font-weight:850;white-space:nowrap}
+
+/* =========================================================
+   GRADEBOOK SUMMARY SECTION ONLY
+   Scoped to Recitation, Attendance, and Final Grade cells.
+   Does not change toolbar, student, exam, quiz, or project columns.
+   ========================================================= */
+.records-card.master th.daily-summary-heading,
+.records-card.master td.daily-summary-cell {
+  box-sizing: border-box;
+  width: 150px;
+  min-width: 150px !important;
+  max-width: 150px;
+  padding: 12px 10px !important;
+  overflow: hidden;
+  text-align: center !important;
+  vertical-align: middle;
 }
 
-.landing-copy {
-  text-shadow: 0 3px 20px rgba(0, 9, 32, .62) !important;
+.records-card.master th.daily-summary-heading {
+  height: 82px;
+  color: #164d7e;
+  background: #f8fbfd;
+  white-space: normal !important;
+}
+
+.records-card.master th.daily-summary-heading > span,
+.records-card.master th.daily-summary-heading > small {
+  display: block;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: normal !important;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.records-card.master th.daily-summary-heading > span {
+  color: #164d7e;
+  font-size: 14px !important;
+  font-weight: 800;
+  line-height: 1.25 !important;
+}
+
+.records-card.master th.daily-summary-heading > small {
+  margin-top: 5px;
+  color: #6c8195;
+  font-size: 11px !important;
+  font-weight: 700;
+  line-height: 1.25 !important;
+}
+
+.records-card.master td.daily-summary-cell {
+  height: 64px;
+  background: #f6fbf8;
+}
+
+.records-card.master td.daily-summary-cell output {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  color: #08775b;
+  background: transparent;
+  font-size: 14px !important;
+  font-weight: 850;
+  line-height: 1.3 !important;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep only the four summary group labels on one readable line. */
+.records-card.master thead tr:first-child th:nth-last-child(5),
+.records-card.master thead tr:first-child th:nth-last-child(4),
+.records-card.master thead tr:first-child th:nth-last-child(3),
+.records-card.master thead tr:first-child th:nth-last-child(2) {
+  min-width: 150px;
+  padding: 10px 12px !important;
+  overflow: hidden;
+  font-size: 13px !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+  text-overflow: ellipsis;
+  white-space: nowrap !important;
+}
+
+/* Keep the final-grade column aligned beside the summaries. */
+.records-card.master th.final-grade-heading,
+.records-card.master td.final-grade-cell {
+  box-sizing: border-box;
+  width: 112px;
+  min-width: 112px !important;
+  max-width: 112px;
+  padding: 12px 10px !important;
+  text-align: center !important;
+  vertical-align: middle;
+}
+
+.records-card.master td.final-grade-cell output {
+  margin: 0 auto;
+}
+
+
+
+/* Editable item totals for Recitation and Attendance summary columns only. */
+.daily-summary-items-editor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 7px;
+  color: #60788f;
+  font-size: 11px;
+  font-weight: 750;
+}
+.daily-summary-items-editor input {
+  box-sizing: border-box;
+  width: 52px;
+  min-height: 30px;
+  padding: 3px 5px;
+  border: 1px solid #aec4d8;
+  border-radius: 6px;
+  background: #dbe9fb;
+  color: #123f70;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  text-align: center;
+}
+.daily-summary-items-editor input:focus {
+  border-color: #1672e8;
+  outline: 2px solid rgba(22,114,232,.18);
+  outline-offset: 1px;
+}
+.daily-summary-items-editor small {
+  margin: 0 !important;
+  color: #60788f !important;
+  font-size: 10px !important;
+  white-space: nowrap !important;
+}
+
+
+/* Editable Recitation and Attendance summary scores. */
+.daily-summary-score-editor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  color: #08775b;
+  font-size: 14px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.daily-summary-score-editor input {
+  box-sizing: border-box;
+  width: 64px;
+  min-height: 38px;
+  padding: 6px 7px;
+  border: 1px solid #a9c8bb;
+  border-radius: 8px;
+  background: #fff;
+  color: #08775b;
+  font: inherit;
+  text-align: center;
+}
+.daily-summary-score-editor input:focus {
+  border-color: #0b8b68;
+  outline: 2px solid rgba(11,139,104,.18);
+  outline-offset: 1px;
+}
+
+
+/* Reference class-record slot limits: 8 quizzes per term, 10/12 projects. */
+.assessment-slot-limit {
+  color: #60788f;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+
+/* Editable Project/Activity names in the Gradebook header. */
+.gradebook-project-name-editor {
+  box-sizing: border-box;
+  display: block;
+  width: 132px;
+  max-width: 100%;
+  min-height: 32px;
+  margin: 0 auto 5px;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #123f70;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-align: center;
+  text-transform: uppercase;
+}
+.gradebook-project-name-editor:hover {
+  border-color: #bfd1e3;
+  background: #fff;
+}
+.gradebook-project-name-editor:focus {
+  border-color: #1672e8;
+  outline: 2px solid rgba(22, 114, 232, .18);
+  outline-offset: 1px;
+  background: #fff;
+  text-transform: none;
+}
+
+
+/* Excel-style Project/Activity header: number, yellow description, item count. */
+.project-assessment-heading {
+  min-width: 150px !important;
+  padding: 0 !important;
+}
+.project-assessment-heading .assessment-heading-content {
+  gap: 0;
+  min-width: 150px;
+  padding: 0 14px 8px 0;
+}
+.project-column-number {
+  display: block;
+  width: 100%;
+  padding: 8px 6px;
+  color: #123f70;
+  background: #f8fbfd;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1;
+  text-align: center;
+}
+.gradebook-project-description-editor {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 70px;
+  padding: 8px 7px;
+  resize: vertical;
+  overflow: auto;
+  border: 1px solid #e4bd53;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+  background: #ffe79b;
+  color: #5f4700;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-align: center;
+}
+.gradebook-project-description-editor::placeholder {
+  color: #8d7428;
+  opacity: .82;
+}
+.gradebook-project-description-editor:focus {
+  border-color: #c49100;
+  outline: 2px solid rgba(196,145,0,.22);
+  outline-offset: -2px;
+  background: #fff0b8;
+}
+.project-assessment-heading .gradebook-items-editor {
+  margin-top: 8px;
+}
+
+/* =========================================================
+   PROJECT DESCRIPTION BOXES: CiTracker design language
+   Keeps the Excel-style information hierarchy while matching
+   the system's blue, white, rounded, accessible interface.
+   ========================================================= */
+.project-assessment-heading {
+  min-width: 164px !important;
+  padding: 0 !important;
+  background: #f8fbfe;
+}
+
+.project-assessment-heading .assessment-heading-content {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 8px;
+  min-width: 164px;
+  padding: 10px 10px 12px;
+}
+
+.project-column-number {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 28px;
+  margin: 0 auto;
+  padding: 0;
+  border: 1px solid #c8dcef;
+  border-radius: 8px;
+  color: #0f4f88;
+  background: #edf6ff;
+  box-shadow: 0 2px 8px rgba(15, 79, 136, .08);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1;
+  text-align: center;
+}
+
+.gradebook-project-description-editor {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 76px;
+  padding: 10px 11px;
+  resize: vertical;
+  overflow: auto;
+  border: 1px solid #e2c66f;
+  border-radius: 10px;
+  color: #5f4a12;
+  background: linear-gradient(180deg, #fff8dc 0%, #ffefb7 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .75),
+    0 4px 12px rgba(109, 79, 0, .08);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: left;
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.gradebook-project-description-editor::placeholder {
+  color: #9a7a24;
+  opacity: .82;
+  text-align: center;
+}
+
+.gradebook-project-description-editor:hover {
+  border-color: #d1ad43;
+  background: linear-gradient(180deg, #fff9e5 0%, #fff1bf 100%);
+}
+
+.gradebook-project-description-editor:focus {
+  border-color: #1672e8;
+  outline: 0;
+  background: #fffdf5;
+  box-shadow:
+    0 0 0 3px rgba(22, 114, 232, .16),
+    0 6px 16px rgba(15, 79, 136, .10);
+}
+
+.project-assessment-heading .gradebook-items-editor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 0 auto;
+  color: #1769ad;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.project-assessment-heading .gradebook-items-editor input {
+  width: 52px;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: 1px solid #b9cee2;
+  border-radius: 8px;
+  color: #123f70;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(15, 79, 136, .06);
+  font-size: 12px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.project-assessment-heading .gradebook-items-editor input:focus {
+  border-color: #1672e8;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(22, 114, 232, .14);
+}
+
+@media (max-width: 760px) {
+  .project-assessment-heading,
+  .project-assessment-heading .assessment-heading-content {
+    min-width: 150px !important;
+  }
+
+  .gradebook-project-description-editor {
+    min-height: 68px;
+  }
+}
+
+
+/* FINAL PROJECT DESCRIPTION COLOR OVERRIDE: CiTracker blue, no yellow. */
+.gradebook-project-description-editor {
+  border-color: #bdd3e7 !important;
+  color: #173f68 !important;
+  background: linear-gradient(180deg, #f7fbff 0%, #eaf4fc 100%) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .9),
+    0 4px 12px rgba(15, 79, 136, .08) !important;
+}
+.gradebook-project-description-editor::placeholder {
+  color: #66839d !important;
+  opacity: .9;
+}
+.gradebook-project-description-editor:hover {
+  border-color: #8fb6d8 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #eef7ff 100%) !important;
+}
+.gradebook-project-description-editor:focus {
+  border-color: #1672e8 !important;
+  outline: 0;
+  color: #123f70 !important;
+  background: #ffffff !important;
+  box-shadow:
+    0 0 0 3px rgba(22, 114, 232, .16),
+    0 6px 16px rgba(15, 79, 136, .10) !important;
+}
+
+
+/* Excel-style term totals across Exams, Quizzes, and Projects. */
+.term-total-heading {
+  min-width: 118px !important;
+  padding: 10px 9px !important;
+  color: #0f4f88;
+  background: #eef6fb;
+  text-align: center !important;
+  vertical-align: middle;
+}
+.term-total-heading > span,
+.term-total-heading > small {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+.term-total-heading > span {
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.term-total-heading > small {
+  margin-top: 5px;
+  color: #60788f;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.term-total-cell {
+  min-width: 118px;
+  padding: 12px 9px !important;
+  background: #f3f8fc;
+  text-align: center;
+  vertical-align: middle;
+}
+.term-total-cell output {
+  display: block;
+  color: #0f4f88;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.exam-total-cell small {
+  display: block;
+  margin-top: 4px;
+  color: #60788f;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+
+/* Weighted term contribution displayed under every Gradebook total. */
+.term-total-cell > small {
+  display: block;
+  margin-top: 5px;
+  color: #60788f;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.weighted-term-score {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 70px;
+  min-height: 25px;
+  margin-top: 6px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  color: #08775b;
+  background: #e6f6ef;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
 }
