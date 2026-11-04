@@ -8031,12 +8031,12 @@ function ActiveClass({
   }
   type RubricCriterion = { id: string; name: string; max: number }
   const defaultRubric: RubricCriterion[] = [
-    { id: "accuracy", name: "Accuracy", max: 5 },
-    { id: "technique", name: "Technique", max: 5 },
-    { id: "completion", name: "Completion", max: 5 },
-    { id: "safety", name: "Safety", max: 5 },
+    { id: "problem-identification", name: "Problem Identification", max: 25 },
+    { id: "design-quality", name: "Design Quality", max: 40 },
+    { id: "creativity-innovation", name: "Creativity & Innovation", max: 15 },
+    { id: "explanation-justification", name: "Explanation & Justification", max: 20 },
   ]
-  const rubricStorageKey = `cit-portal:performance-rubric:${item.id}`
+  const rubricStorageKey = `cit-portal:performance-rubric:v2:${item.id}`
   const [performanceStudent, setPerformanceStudent] = useState<PerformanceStudent | null>(null)
   const [performanceTerm, setPerformanceTerm] = useState<"midterm" | "final">("midterm")
   const performanceTermRef = useRef(performanceTerm)
@@ -8174,6 +8174,22 @@ function ActiveClass({
         p_points: scaledPoints,
         p_note: note,
       })
+      const { error: laboratoryRecordError } = await supabase.rpc(
+        "save_laboratory_performance_record",
+        {
+          p_class_id: item.id,
+          p_assessment_id: performanceColumn.id,
+          p_student_id: performanceStudent.id,
+          p_term: performanceTerm,
+          p_problem_identification: rubricScores["problem-identification"] ?? 0,
+          p_design_quality: rubricScores["design-quality"] ?? 0,
+          p_creativity_innovation: rubricScores["creativity-innovation"] ?? 0,
+          p_explanation_justification: rubricScores["explanation-justification"] ?? 0,
+          p_scaled_score: scaledPoints,
+          p_remarks: performanceRemarks.trim() || null,
+        },
+      )
+      if (laboratoryRecordError) throw laboratoryRecordError
       setPerformanceColumns((columns) => columns.map((column) =>
         column.id === performanceColumn.id
           ? { ...column, currentScore: Number(result.score) }
@@ -9115,7 +9131,7 @@ function ActiveClass({
 
                           <div className="performance-rubric">
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                              <h5>Rubric</h5>
+                              <h5>Laboratory rubric</h5>
                               <button
                                 type="button"
                                 className="secondary-button compact"
@@ -9197,7 +9213,7 @@ function ActiveClass({
                               })
                             )}
                             <strong className="performance-total">
-                              Total: {rubricTotal} / {rubricMax} → {scaledPoints} / {performanceColumn?.maxScore ?? 100} in the column
+                              Laboratory total: {rubricTotal} / {rubricMax} → {scaledPoints} / {performanceColumn?.maxScore ?? 100} in the gradebook
                             </strong>
                           </div>
 
