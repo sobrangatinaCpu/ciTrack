@@ -6700,3 +6700,60 @@ body > .summary-speed-dial .summary-fab { position: relative; z-index: 20002 !im
 
 /* Post-NFC performance record UI and Gradebook synchronization controls. */
 .performance-detected-banner{display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid #a7dfcc;border-radius:12px;background:#ecfaf5;color:#08775b}.performance-detected-banner>span{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#0b9873;color:#fff;font-weight:900}.performance-detected-banner div{display:grid;gap:2px;flex:1}.performance-detected-banner small{color:#4f7b70}.performance-detected-banner time{font-size:11px;color:#426e65}.performance-sync-controls{display:flex;gap:10px;flex-wrap:wrap}.performance-sync-controls label{display:grid;gap:5px;min-width:150px;color:#49657e;font-size:11px;font-weight:800}.performance-sync-controls select{min-height:40px;padding:8px 10px;border:1px solid #bfd3e4;border-radius:9px;background:#fff;color:#123f70;font-weight:750}.performance-remarks-field{display:grid;gap:6px;position:relative}.performance-remarks-field>span{color:#334f69;font-size:12px;font-weight:800}.performance-remarks-field textarea{min-height:86px;padding:10px 12px 24px;border:1px solid #c7d9e8;border-radius:10px;resize:vertical;font:inherit}.performance-remarks-field>small{position:absolute;right:10px;bottom:7px;color:#7890a5}.performance-form-actions{display:flex;justify-content:space-between;gap:12px}.performance-save-button.hands-on{background:#0a9872}.performance-student-form:has(.performance-save-button.hands-on){border-color:#b8e3d6;background:#f5fcf9}@media(max-width:680px){.performance-detected-banner{align-items:flex-start;flex-wrap:wrap}.performance-detected-banner time{width:100%;padding-left:46px}.performance-form-actions{flex-direction:column-reverse}.performance-form-actions button{width:100%}}
+
+
+/* Gradebook automatic saving, replacing Draft/Published controls. */
+.gradebook-autosave-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-left: auto;
+  padding: 8px 13px;
+  border: 1px solid #d5e3ee;
+  border-radius: 11px;
+  color: #31536f;
+  background: #f8fbfd;
+}
+.gradebook-autosave-status > span:last-child {
+  display: grid;
+  gap: 1px;
+}
+.gradebook-autosave-status strong {
+  color: #173f68;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.gradebook-autosave-status small {
+  color: #70869a;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.gradebook-autosave-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: #08775b;
+  background: #e2f6ef;
+  font-size: 15px;
+  font-weight: 900;
+}
+.gradebook-autosave-icon.saving {
+  color: #1769ad;
+  background: #e8f3fe;
+  animation: gradebook-save-spin .8s linear infinite;
+}
+@keyframes gradebook-save-spin {
+  to { transform: rotate(360deg); }
+}
+@media (max-width: 680px) {
+  .gradebook-autosave-status {
+    width: 100%;
+    margin-left: 0;
+  }
+}

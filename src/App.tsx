@@ -2563,6 +2563,7 @@ function RecordsPage({
   const [lastPublishedAt, setLastPublishedAt] = useState<string | null>(null)
   const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false)
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null)
+  const [gradebookSaveState, setGradebookSaveState] = useState<"saving" | "saved">("saved")
   const localDraftValuesRef = useRef<Record<string, Record<string, number | "">>>({})
   const scoreSaveTimersRef = useRef<Record<string, number>>({})
   const assessmentIdByColumnRef = useRef<Record<string, string>>({})
@@ -3498,6 +3499,7 @@ function RecordsPage({
   }, [])
 
   useEffect(() => {
+    setGradebookSaveState("saving")
     const timer = window.setTimeout(() => {
       localStorage.setItem("cit-portal:gradebook", JSON.stringify({
         students: recordStudents,
@@ -3513,7 +3515,8 @@ function RecordsPage({
         savedAt: new Date().toISOString(),
       }))
       setDraftSavedAt(new Date().toISOString())
-    }, 250)
+      setGradebookSaveState("saved")
+    }, 500)
     return () => window.clearTimeout(timer)
   }, [recordStudents, recordValues, studentStatuses, manualAttendanceOverrides, assessmentColumns, dailySessions, dailySummaryItems, dailyRemarks, recordPublicationStatus, selectedSectionId])
 
@@ -4837,32 +4840,18 @@ function RecordsPage({
               </section>
             )}
           </div>
-          <div className="record-publication-control">
-            <span>Record status</span>
-            <select
-              className="record-publication-select"
-              value={recordPublicationStatus}
-              aria-label="Set record publication status"
-              onChange={(event) => void changeRecordStatus(event.target.value as "Draft" | "Published")}
-            >
-              <option>Draft</option>
-              <option>Published</option>
-            </select>
-            <button
-              type="button"
-              className="primary-button compact record-publish-button"
-              disabled={publishingRecords || !selectedSectionId}
-              onClick={() => setPublishConfirmationOpen(true)}
-              title={lastPublishedAt ? `Last published ${new Date(lastPublishedAt).toLocaleString()}` : "Publish grades"}
-            >
-              <Icon name="check" size={15} />
-              {publishingRecords ? "Saving..." : recordPublicationStatus === "Published" ? "Republish grades" : "Publish grades"}
-            </button>
-            <small>
-              {recordPublicationStatus === "Published"
-                ? "Visible to students"
-                : `Private to instructor · Draft saved${draftSavedAt ? ` at ${new Date(draftSavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`}
-            </small>
+          <div className="gradebook-autosave-status" role="status" aria-live="polite">
+            <span className={`gradebook-autosave-icon ${gradebookSaveState}`}>
+              {gradebookSaveState === "saving" ? "↻" : "✓"}
+            </span>
+            <span>
+              <strong>{gradebookSaveState === "saving" ? "Saving changes..." : "Saved"}</strong>
+              <small>
+                {gradebookSaveState === "saved" && draftSavedAt
+                  ? `Last saved at ${new Date(draftSavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                  : "Changes are saved automatically"}
+              </small>
+            </span>
           </div>
         </div>
         <div className="table-wrap">
@@ -5544,26 +5533,6 @@ function RecordsPage({
           </div>
         </section>
       </div>
-      {publishConfirmationOpen && (
-        <div className="modal-backdrop class-confirm-backdrop" onMouseDown={(event) => {
-          if (event.target === event.currentTarget && !publishingRecords) setPublishConfirmationOpen(false)
-        }}>
-          <section className="class-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="publish-grades-title" aria-describedby="publish-grades-description">
-            <button type="button" className="class-confirm-close" onClick={() => setPublishConfirmationOpen(false)} disabled={publishingRecords} aria-label="Close publish grades dialog">×</button>
-            <div className="class-confirm-header">
-              <span className="class-confirm-icon" aria-hidden="true"><Icon name="check" size={18} /></span>
-              <div>
-                <h2 id="publish-grades-title">{recordPublicationStatus === "Published" ? "Republish grades?" : "Publish grades?"}</h2>
-                <p id="publish-grades-description"><strong>{recordStudents.length} students</strong> in {selectedSection.subject} - {selectedSection.code} will be able to see their final grade and Passed/Failed result.</p>
-              </div>
-            </div>
-            <div className="class-confirm-actions">
-              <button type="button" className="secondary-button" onClick={() => setPublishConfirmationOpen(false)} disabled={publishingRecords}>Cancel</button>
-              <button type="button" className="primary-button" onClick={() => void publishGrades()} disabled={publishingRecords}>{publishingRecords ? "Publishing..." : recordPublicationStatus === "Published" ? "Republish grades" : "Publish grades"}</button>
-            </div>
-          </section>
-        </div>
-      )}
       {assessmentToDelete && (
         <div className="modal-backdrop class-confirm-backdrop" onMouseDown={(event) => {
           if (event.target === event.currentTarget && !assessmentDeleting) setAssessmentToDelete(null)
